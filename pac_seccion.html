@@ -1,0 +1,1546 @@
+<style>
+#pac-module * { box-sizing: border-box; }
+#pac-module {
+  --pac-verde:#27ae60;
+  --pac-amarillo:#f39c12;
+  --pac-naranja:#e67e22;
+  --pac-rojo:#c0392b;
+  --pac-azul:#3498db;
+  --pac-oscuro:#2c3e50;
+  --pac-bg:#f8f9fa;
+  font-family:'Inter',sans-serif;
+  font-size:.88rem;
+}
+.pac-header {
+  background:linear-gradient(135deg,#2c3e50 0%,#1a252f 100%);
+  color:#fff;padding:18px 22px;border-radius:10px;margin-bottom:18px;
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;
+}
+.pac-header h3 { margin:0;font-weight:800;font-size:1.2rem; }
+.pac-header-actions { display:flex;gap:8px;flex-wrap:wrap; }
+.pac-toggle-ejecucion {
+  display:flex;background:rgba(255,255,255,.1);border-radius:20px;padding:3px;gap:2px;
+}
+.pac-toggle-btn {
+  padding:6px 14px;border:none;border-radius:16px;cursor:pointer;font-weight:700;
+  font-size:.78rem;transition:all .25s ease;background:transparent;color:rgba(255,255,255,.75);
+}
+.pac-toggle-btn.active {
+  background:#fff;color:#2c3e50;box-shadow:0 2px 8px rgba(0,0,0,.2);
+}
+
+.pac-kpi-row {
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:12px;margin-bottom:18px;
+}
+.pac-kpi {
+  background:#fff;border-radius:8px;padding:14px;border-left:4px solid #ddd;
+  box-shadow:0 2px 6px rgba(0,0,0,.06);
+}
+.pac-kpi-title {
+  font-size:.68rem;font-weight:700;text-transform:uppercase;color:#666;margin-bottom:6px;letter-spacing:.5px;
+}
+.pac-kpi-value {
+  font-size:1.75rem;font-weight:800;line-height:1;
+}
+.pac-kpi-sub {
+  font-size:.7rem;color:#999;margin-top:5px;
+}
+.pac-kpi.verde{border-left-color:var(--pac-verde)}
+.pac-kpi.amarillo{border-left-color:var(--pac-amarillo)}
+.pac-kpi.naranja{border-left-color:var(--pac-naranja)}
+.pac-kpi.rojo{border-left-color:var(--pac-rojo)}
+.pac-kpi.azul{border-left-color:var(--pac-azul)}
+
+.pac-badge {
+  display:inline-block;padding:3px 10px;border-radius:12px;
+  font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+}
+.pac-badge.VERDE{background:rgba(39,174,96,.15);color:#27ae60}
+.pac-badge.AMARILLO{background:rgba(243,156,18,.15);color:#d68910}
+.pac-badge.NARANJA{background:rgba(230,126,34,.15);color:#ca6f1e}
+.pac-badge.ROJO{background:rgba(192,57,43,.15);color:#c0392b}
+
+.pac-filtros {
+  background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;
+  border-left:4px solid var(--pac-azul);box-shadow:0 2px 6px rgba(0,0,0,.05);
+}
+.pac-filtros-grid {
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;align-items:end;
+}
+.pac-filtro-group label {
+  display:block;font-size:.72rem;font-weight:700;color:#666;margin-bottom:4px;text-transform:uppercase;
+}
+.pac-filtro-group select,.pac-filtro-group input {
+  width:100%;padding:8px 10px;border:1px solid #dee2e6;border-radius:6px;font-size:.82rem;
+}
+.pac-filtro-group select:focus,.pac-filtro-group input:focus {
+  outline:none;border-color:var(--pac-azul);box-shadow:0 0 0 3px rgba(52,152,219,.1);
+}
+
+.pac-tabla-wrap {
+  background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.06);
+  overflow:hidden;margin-bottom:18px;
+}
+.pac-tabla { width:100%;border-collapse:collapse;font-size:.75rem; }
+.pac-tabla th {
+  background:#34495e;color:#fff;padding:9px 6px;text-align:center;font-weight:700;
+  white-space:nowrap;font-size:.68rem;text-transform:uppercase;
+}
+.pac-tabla th.pac-th-fijo {
+  background:#2c3e50;text-align:left;padding-left:12px;min-width:140px;
+  position:sticky;left:0;z-index:5;
+}
+.pac-tabla td {
+  padding:7px 5px;border-bottom:1px solid #f0f0f0;text-align:center;vertical-align:middle;
+}
+.pac-tabla td.pac-td-fijo {
+  background:#f8f9fa;text-align:left;padding-left:10px;font-weight:700;
+  position:sticky;left:0;z-index:4;border-right:2px solid #dee2e6;
+}
+.pac-tabla tbody tr:hover { background:#f8f9fa; }
+.pac-cell-prog{background:rgba(52,152,219,.08);color:#2980b9;font-weight:700}
+.pac-cell-rad{background:rgba(39,174,96,.08);color:#27ae60;font-weight:700}
+.pac-cell-ejec{background:rgba(46,204,113,.12);color:#1e8449;font-weight:700}
+.pac-cell-vacio{color:#ccc}
+.pac-prog-bar-wrap { height:3px;background:#eee;border-radius:2px;margin-top:2px; }
+.pac-prog-bar { height:100%;border-radius:2px;transition:width .3s; }
+
+.pac-tmm-panel {
+  background:linear-gradient(135deg,#8e44ad 0%,#6c3483 100%);
+  color:#fff;border-radius:8px;padding:16px;margin-bottom:18px;
+}
+.pac-tmm-panel h6 { font-weight:800;margin-bottom:10px; }
+.pac-tmm-badge {
+  display:inline-block;background:rgba(255,255,255,.2);padding:4px 10px;border-radius:12px;
+  font-size:.72rem;font-weight:700;margin-bottom:10px;
+}
+.pac-tmm-grid {
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:10px;
+}
+.pac-tmm-mes {
+  background:rgba(255,255,255,.1);border-radius:6px;padding:8px;text-align:center;
+}
+.pac-tmm-mes-nombre { font-size:.65rem;font-weight:700;opacity:.8;text-transform:uppercase; }
+.pac-tmm-mes-valor { font-size:1rem;font-weight:800;margin:4px 0; }
+.pac-tmm-mes-sub { font-size:.62rem;opacity:.7; }
+
+.pac-reemplazo-panel {
+  background:#fff;border-radius:8px;border-left:4px solid var(--pac-naranja);
+  box-shadow:0 2px 6px rgba(0,0,0,.06);margin-bottom:18px;overflow:hidden;
+}
+.pac-reemplazo-header {
+  background:#fdf2e9;padding:12px 16px;display:flex;justify-content:space-between;
+  align-items:center;border-bottom:1px solid #fde8d8;gap:10px;flex-wrap:wrap;
+}
+.pac-reemplazo-header h6 { margin:0;font-weight:800;color:#ca6f1e; }
+.pac-reemplazo-body { padding:14px; }
+.pac-candidato-card {
+  border:1px solid #eee;border-radius:6px;padding:10px 12px;margin-bottom:8px;background:#fafafa;
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;
+}
+.pac-candidato-rt { font-weight:800;color:var(--pac-azul);font-size:.9rem; }
+.pac-candidato-info { font-size:.72rem;color:#666; }
+
+.pac-motor-panel {
+  background:#fff;border-radius:8px;border-left:4px solid #9b59b6;
+  box-shadow:0 2px 6px rgba(0,0,0,.06);margin-bottom:18px;
+}
+.pac-motor-header {
+  background:#f5eef8;padding:12px 16px;border-bottom:1px solid #e8daef;
+  display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+}
+.pac-motor-header h6 { margin:0;font-weight:800;color:#7d3c98; }
+.pac-regla-row {
+  display:grid;grid-template-columns:1.2fr 1fr 1fr .8fr auto;
+  gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid #f5f5f5;
+}
+.pac-regla-row input,.pac-regla-row select {
+  padding:5px 8px;border:1px solid #dee2e6;border-radius:4px;font-size:.78rem;width:100%;
+}
+
+.pac-obs-list { max-height:180px;overflow-y:auto; }
+.pac-obs-item {
+  padding:6px 10px;border-left:3px solid var(--pac-azul);background:#f8f9fa;
+  margin-bottom:5px;border-radius:0 4px 4px 0;font-size:.78rem;
+}
+.pac-obs-fecha { font-size:.68rem;color:#999;font-weight:700; }
+.pac-obs-texto { color:#333;margin-top:2px; }
+
+.pac-art-row {
+  display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:center;
+  padding:6px 0;border-bottom:1px solid #f0f0f0;
+}
+
+#pac-loader { display:none;text-align:center;padding:40px;color:#666; }
+#pac-loader .pac-spinner {
+  width:36px;height:36px;border:3px solid #eee;border-top-color:var(--pac-azul);
+  border-radius:50%;animation:pac-spin .8s linear infinite;margin:0 auto 12px;
+}
+@keyframes pac-spin { to { transform:rotate(360deg);} }
+
+.pac-col-selector {
+  background:#fff;border:1px solid #dee2e6;border-radius:8px;padding:12px;
+  max-height:300px;overflow-y:auto;
+}
+.pac-col-item {
+  display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f0f0f0;font-size:.78rem;
+}
+.pac-col-categoria {
+  font-size:.65rem;font-weight:700;text-transform:uppercase;color:#fff;padding:2px 8px;
+  border-radius:10px;margin-left:auto;
+}
+
+.pac-escala-btn {
+  padding:6px 14px;border:none;border-radius:16px;cursor:pointer;font-weight:700;font-size:.72rem;
+  transition:all .2s;background:transparent;color:#3498db;
+}
+.pac-escala-btn.active {
+  background:#3498db;color:#fff;box-shadow:0 2px 6px rgba(52,152,219,.35);
+}
+
+@media (max-width: 768px) {
+  .pac-kpi-row { grid-template-columns:repeat(2,1fr); }
+  .pac-filtros-grid { grid-template-columns:1fr 1fr; }
+  .pac-regla-row { grid-template-columns:1fr 1fr; }
+}
+</style>
+
+<div id="pac-module">
+  <div id="pac-loader">
+    <div class="pac-spinner"></div>
+    <p style="font-weight:700;">Cargando módulo PAC...</p>
+    <small>Actualizando estados prediales y calculando semáforo</small>
+  </div>
+
+  <div id="pac-contenido" style="display:none;">
+
+    <div class="pac-header">
+      <div>
+        <h3><i class="fas fa-money-bill-trend-up"></i> Seguimiento PAC 2026</h3>
+        <small style="opacity:.7;" id="pac-timestamp">Cargando...</small>
+      </div>
+      <div class="pac-header-actions">
+        <div class="pac-toggle-ejecucion" title="Cambiar modo de ejecución">
+          <button class="pac-toggle-btn active" id="btn-modo-rad" onclick="pac_setModoEjecucion('RADICADO')">
+            <i class="fas fa-file-invoice"></i> Radicado
+          </button>
+          <button class="pac-toggle-btn" id="btn-modo-ejec" onclick="pac_setModoEjecucion('EJECUTADO')">
+            <i class="fas fa-check-double"></i> Ejecutado
+          </button>
+        </div>
+        <button class="btn btn-sm btn-light fw-bold" onclick="pac_cargarDatos()" title="Recargar">
+          <i class="fas fa-rotate"></i>
+        </button>
+        <button class="btn btn-sm btn-warning fw-bold" onclick="pac_abrirMotorReglas()" title="Motor de Reglas">
+          <i class="fas fa-cogs"></i> Reglas
+        </button>
+        <button class="btn btn-sm btn-info fw-bold text-white" onclick="pac_abrirArticuladores()" title="Articuladores">
+          <i class="fas fa-users"></i>
+        </button>
+        <button class="btn btn-sm btn-success fw-bold" onclick="pac_enviarReportesSeguimiento()" title="Enviar reportes manuales">
+          <i class="fas fa-paper-plane"></i> Reportes
+        </button>
+
+        <button class="btn btn-sm btn-danger fw-bold" onclick="pac_sincronizar()" title="Sincronizar PAC externo">
+          <i class="fas fa-sync"></i> Sync
+        </button>
+      </div>
+    </div>
+
+    <div class="pac-kpi-row" id="pac-kpis">
+      <div class="pac-kpi verde">
+        <div class="pac-kpi-title">🟢 En Tiempo</div>
+        <div class="pac-kpi-value" id="pac-kpi-verde" style="color:var(--pac-verde);">0</div>
+        <div class="pac-kpi-sub">Predios visibles al día</div>
+      </div>
+      <div class="pac-kpi amarillo">
+        <div class="pac-kpi-title">🟡 En Riesgo</div>
+        <div class="pac-kpi-value" id="pac-kpi-amarillo" style="color:var(--pac-amarillo);">0</div>
+        <div class="pac-kpi-sub">Predios visibles</div>
+      </div>
+      <div class="pac-kpi naranja">
+        <div class="pac-kpi-title">🟠 Crítico</div>
+        <div class="pac-kpi-value" id="pac-kpi-naranja" style="color:var(--pac-naranja);">0</div>
+        <div class="pac-kpi-sub">Atención prioritaria</div>
+      </div>
+      <div class="pac-kpi rojo">
+        <div class="pac-kpi-title">🔴 Incumplimiento</div>
+        <div class="pac-kpi-value" id="pac-kpi-rojo" style="color:var(--pac-rojo);">0</div>
+        <div class="pac-kpi-sub">Predios vencidos</div>
+      </div>
+      <div class="pac-kpi azul">
+        <div class="pac-kpi-title">% Cumplimiento período</div>
+        <div class="pac-kpi-value" id="pac-kpi-pct" style="color:var(--pac-azul);">0%</div>
+        <div class="pac-kpi-sub" id="pac-kpi-pct-label">Período visible</div>
+      </div>
+      <div class="pac-kpi" style="border-left-color:#555;">
+        <div class="pac-kpi-title">Total Programado período</div>
+        <div class="pac-kpi-value" id="pac-kpi-prog" style="color:#555;font-size:1.1rem;">$0</div>
+        <div class="pac-kpi-sub" id="pac-mes-label">Mes actual</div>
+      </div>
+    </div>
+
+    <div class="pac-filtros">
+      <div style="font-size:.75rem;font-weight:700;color:#555;margin-bottom:10px;text-transform:uppercase;">
+        <i class="fas fa-filter"></i> Filtros
+      </div>
+      <div class="pac-filtros-grid">
+        <div class="pac-filtro-group">
+          <label>Proyecto</label>
+          <select id="pac-fil-proyecto" onchange="pac_aplicarFiltros()">
+            <option value="ALL">Todos los proyectos</option>
+          </select>
+        </div>
+        <div class="pac-filtro-group">
+          <label>Fuente</label>
+          <select id="pac-fil-fuente" onchange="pac_aplicarFiltros()">
+            <option value="ALL">IDU + TM</option>
+            <option value="IDU">IDU</option>
+            <option value="TM">Transmilenio</option>
+          </select>
+        </div>
+        <div class="pac-filtro-group">
+          <label>Semáforo</label>
+          <select id="pac-fil-semaforo" onchange="pac_aplicarFiltros()">
+            <option value="ALL">Todos</option>
+            <option value="ROJO">🔴 Rojo</option>
+            <option value="NARANJA">🟠 Naranja</option>
+            <option value="AMARILLO">🟡 Amarillo</option>
+            <option value="VERDE">🟢 Verde</option>
+          </select>
+        </div>
+        <div class="pac-filtro-group">
+          <label>RT específico</label>
+          <input type="text" id="pac-fil-rt" placeholder="Ej: 47442" onkeyup="pac_debounceFiltros()">
+        </div>
+        <div class="pac-filtro-group">
+          <label>Articulador</label>
+          <select id="pac-fil-articulador" onchange="pac_aplicarFiltros()">
+            <option value="ALL">Todos</option>
+          </select>
+        </div>
+        <div class="pac-filtro-group">
+          <label>Gestor</label>
+          <select id="pac-fil-gestor" onchange="pac_aplicarFiltros()">
+            <option value="ALL">Todos</option>
+          </select>
+        </div>
+        <div class="pac-filtro-group">
+          <label>Tipo Negociación</label>
+          <select id="pac-fil-tiponeg" onchange="pac_aplicarFiltros()">
+            <option value="ALL">Todos</option>
+            <option value="ENAJENACION VOLUNTARIA">Enajenación Voluntaria</option>
+            <option value="EXPROPIACION ADMINISTRATIVA">Expropiación Adm.</option>
+            <option value="EXPROPIACION JUDICIAL">Expropiación Judicial</option>
+            <option value="COMPENSACION">Compensación</option>
+            <option value="CONTRATO">Contrato</option>
+          </select>
+        </div>
+        <div class="pac-filtro-group" style="display:flex;align-items:flex-end;gap:6px;">
+          <button class="btn btn-sm btn-primary fw-bold w-100" onclick="pac_aplicarFiltros()">
+            <i class="fas fa-check"></i> Aplicar
+          </button>
+          <button class="btn btn-sm btn-outline-secondary fw-bold w-100" onclick="pac_limpiarFiltros()">
+            <i class="fas fa-times"></i> Limpiar
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pac-escala-panel" style="background:white;border-radius:8px;padding:12px 16px;margin-bottom:14px;border-left:4px solid #3498db;box-shadow:0 2px 6px rgba(0,0,0,.05);">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+        <div style="font-size:.72rem;font-weight:800;color:#555;text-transform:uppercase;">
+          <i class="fas fa-calendar-week"></i> Vista temporal:
+        </div>
+
+        <div style="display:flex;background:#f0f4ff;border-radius:20px;padding:3px;gap:2px;">
+          <button id="pac-escala-mes" class="pac-escala-btn active" onclick="pac_cambiarEscala('mes')">
+            <i class="fas fa-calendar-day"></i> Mensual
+          </button>
+          <button id="pac-escala-trimestre" class="pac-escala-btn" onclick="pac_cambiarEscala('trimestre')">
+            <i class="fas fa-calendar-week"></i> Trimestral
+          </button>
+          <button id="pac-escala-semestre" class="pac-escala-btn" onclick="pac_cambiarEscala('semestre')">
+            <i class="fas fa-calendar-half"></i> Semestral
+          </button>
+          <button id="pac-escala-acumulado" class="pac-escala-btn" onclick="pac_cambiarEscala('acumulado')">
+            <i class="fas fa-sigma"></i> Acumulado
+          </button>
+        </div>
+
+        <div id="pac-periodo-selector" style="display:none;align-items:center;gap:8px;">
+          <span style="font-size:.72rem;font-weight:700;color:#666;">Período:</span>
+          <select id="pac-periodo-select" onchange="pac_cambiarPeriodo(this.value)"
+            style="padding:5px 10px;border:1px solid #dee2e6;border-radius:16px;font-size:.78rem;font-weight:700;color:#2c3e50;background:#f8f9fa;cursor:pointer;">
+          </select>
+        </div>
+
+        <div id="pac-escala-indicadores" style="display:flex;gap:14px;flex-wrap:wrap;margin-left:auto;">
+          <div style="text-align:center;">
+            <div style="font-size:.6rem;font-weight:700;color:#666;text-transform:uppercase;">Programado período</div>
+            <div id="pac-esc-prog" style="font-size:1rem;font-weight:800;color:#2980b9;">$0</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:.6rem;font-weight:700;color:#666;text-transform:uppercase;">Radicado período</div>
+            <div id="pac-esc-rad" style="font-size:1rem;font-weight:800;color:#27ae60;">$0</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:.6rem;font-weight:700;color:#666;text-transform:uppercase;">Ejecutado período</div>
+            <div id="pac-esc-ejec" style="font-size:1rem;font-weight:800;color:#1e8449;">$0</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:.6rem;font-weight:700;color:#666;text-transform:uppercase;">% Cumplimiento</div>
+            <div id="pac-esc-pct" style="font-size:1rem;font-weight:800;color:#e67e22;">0%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pac-tmm-panel" id="pac-tmm-panel" style="display:none;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <div>
+          <h6><i class="fas fa-train"></i> PAC VIGENCIA TMM — Resumen Agregado</h6>
+          <span class="pac-tmm-badge">
+            <i class="fas fa-info-circle"></i> Sin detalle por RT — Datos consolidados
+          </span>
+        </div>
+        <button class="btn btn-sm btn-light fw-bold" onclick="pac_toggleTMM()">
+          <i class="fas fa-chevron-down" id="pac-tmm-chevron"></i> Ver detalle
+        </button>
+      </div>
+      <div id="pac-tmm-detalle" style="display:none;margin-top:12px;">
+        <div class="pac-tmm-grid" id="pac-tmm-meses"></div>
+      </div>
+    </div>
+
+    <ul class="nav nav-tabs mb-3" id="pac-tabs" role="tablist">
+      <li class="nav-item">
+        <button class="nav-link active fw-bold" id="tab-calendario-btn" data-bs-toggle="tab" data-bs-target="#tab-calendario" type="button">
+          <i class="fas fa-calendar-alt"></i> Calendario PAC
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link fw-bold" id="tab-reemplazos-btn" data-bs-toggle="tab" data-bs-target="#tab-reemplazos" type="button">
+          <i class="fas fa-exchange-alt"></i> Candidatos Reemplazo
+          <span class="badge bg-warning text-dark ms-1" id="pac-badge-reemplazos">0</span>
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link fw-bold" id="tab-motor-btn" data-bs-toggle="tab" data-bs-target="#tab-motor" type="button">
+          <i class="fas fa-cogs"></i> Motor de Reglas
+        </button>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+      <div class="tab-pane fade show active" id="tab-calendario">
+        <div class="pac-tabla-wrap">
+          <div style="overflow-x:auto;">
+            <table class="pac-tabla" id="pac-tabla-main">
+              <thead id="pac-tabla-head"></thead>
+              <tbody id="pac-tabla-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-reemplazos">
+        <div style="background:#fff3cd;border-left:4px solid #f39c12;padding:12px 16px;border-radius:6px;margin-bottom:14px;font-size:.82rem;">
+          <i class="fas fa-lightbulb"></i>
+          <strong>¿Cómo funciona?</strong> El motor identifica RTs en riesgo y propone candidatos del mismo proyecto y fuente,
+          priorizados por estado predial, saldo disponible real, menor ocupación del período y soporte jurídico.
+        </div>
+        <div id="pac-reemplazos-container">
+          <div class="text-center text-muted p-4">
+            <i class="fas fa-exchange-alt fa-2x mb-2" style="opacity:.3;"></i>
+            <p>Cargando análisis de reemplazos...</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-motor">
+        <div class="pac-motor-panel">
+          <div class="pac-motor-header">
+            <h6><i class="fas fa-cogs"></i> Reglas del Motor de Reemplazo</h6>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-sm btn-success fw-bold" onclick="pac_agregarRegla()">
+                <i class="fas fa-plus"></i> Nueva Regla
+              </button>
+              <button class="btn btn-sm btn-primary fw-bold" onclick="pac_guardarReglas()">
+                <i class="fas fa-save"></i> Guardar
+              </button>
+            </div>
+          </div>
+          <div style="padding:12px 14px;">
+            <div style="font-size:.72rem;color:#666;margin-bottom:10px;">
+              Define qué condiciones debe cumplir un RT candidato. Proyecto y fuente se respetan como base comparativa.
+            </div>
+            <div class="pac-regla-row" style="background:#f8f9fa;font-weight:700;font-size:.7rem;text-transform:uppercase;color:#555;">
+              <div>Campo</div><div>Operador</div><div>Valor(es)</div><div>Activa</div><div>Acción</div>
+            </div>
+            <div id="pac-reglas-container"></div>
+          </div>
+          <div style="padding:0 14px 14px;">
+            <div style="font-size:.72rem;font-weight:700;color:#7d3c98;margin-bottom:6px;">
+              <i class="fas fa-database"></i> Campos disponibles
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px;" id="pac-campos-matriz"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="pac-modal-cols" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#2c3e50;color:white;">
+        <h5 class="modal-title fw-bold"><i class="fas fa-table-columns"></i> Configurar columnas — Datos Matriz Predial</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:.8rem;color:#666;margin-bottom:12px;">
+          Selecciona las columnas que quieres ver en la pestaña <strong>Datos Matriz Predial</strong>.
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+          <div>
+            <button class="btn btn-sm btn-outline-primary fw-bold me-2" onclick="pac_seleccionarTodasCols(true)">✅ Seleccionar todas</button>
+            <button class="btn btn-sm btn-outline-secondary fw-bold" onclick="pac_seleccionarTodasCols(false)">❌ Deseleccionar todas</button>
+          </div>
+          <span id="pac-cols-contador" style="font-size:.78rem;color:#666;"></span>
+        </div>
+        <div class="pac-col-selector" id="pac-cols-lista"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary fw-bold" onclick="pac_guardarConfigCols()">
+          <i class="fas fa-save"></i> Guardar configuración
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="pac-modal-rt" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-xl modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#2c3e50;color:white;">
+        <h5 class="modal-title fw-bold">
+          <i class="fas fa-file-invoice-dollar"></i>
+          Detalle PAC — RT: <span id="pac-modal-rt-num"></span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" style="background:#f8f9fa;padding:20px;">
+        <div class="row g-3 mb-3" id="pac-modal-info-general"></div>
+        <ul class="nav nav-tabs mb-3">
+          <li class="nav-item">
+            <button class="nav-link active fw-bold" data-bs-toggle="tab" data-bs-target="#pac-modal-tab-meses">
+              <i class="fas fa-calendar"></i> Programación
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#pac-modal-tab-obs">
+              <i class="fas fa-comments"></i> Observaciones
+              <span class="badge bg-secondary ms-1" id="pac-modal-obs-count">0</span>
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link fw-bold" data-bs-toggle="tab" data-bs-target="#pac-modal-tab-matriz">
+              <i class="fas fa-table"></i> Datos Matriz Predial
+            </button>
+          </li>
+        </ul>
+
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="pac-modal-tab-meses">
+            <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+              <div id="pac-modal-vista-selector" style="display:inline-flex;background:#e8f0fe;border-radius:16px;padding:3px;gap:2px;">
+                <button id="pac-vista-mes-btn" onclick="pac_cambiarVistaModal('mes')" style="padding:4px 12px;border:none;border-radius:12px;font-size:.72rem;font-weight:700;cursor:pointer;background:#1a73e8;color:white;">Mensual</button>
+                <button id="pac-vista-tri-btn" onclick="pac_cambiarVistaModal('trimestre')" style="padding:4px 12px;border:none;border-radius:12px;font-size:.72rem;font-weight:700;cursor:pointer;background:transparent;color:#1a73e8;">Trimestral</button>
+              </div>
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="table table-bordered table-sm" id="pac-modal-tabla-meses">
+                <thead class="table-dark">
+                  <tr>
+                    <th>Mes / Período</th>
+                    <th>Programado</th>
+                    <th>Radicado</th>
+                    <th>Fecha Radicado</th>
+                    <th>OP</th>
+                    <th>Ejecutado</th>
+                    <th>Liberación</th>
+                    <th>%</th>
+                    <th>Estado</th>
+                  </tr>
+                </thead>
+                <tbody id="pac-modal-meses-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-pane fade" id="pac-modal-tab-obs">
+            <div class="pac-obs-list" id="pac-modal-obs-list" style="max-height:350px;overflow-y:auto;"></div>
+          </div>
+
+          <div class="tab-pane fade" id="pac-modal-tab-matriz">
+            <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+              <button class="btn btn-sm btn-outline-secondary fw-bold" onclick="pac_abrirConfigCols()">
+                <i class="fas fa-sliders"></i> Configurar columnas
+              </button>
+            </div>
+            <div class="row g-2" id="pac-modal-matriz-info"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="background:#f8f9fa;">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="pac-modal-art" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#2c3e50;color:white;">
+        <h5 class="modal-title fw-bold">
+          <i class="fas fa-users"></i> Gestión de Articuladores / Gestores PAC
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:.8rem;color:#666;margin-bottom:14px;">
+          Vista informativa de los actores tomados desde la MATRIZ. Los nombres visibles en filtros salen del archivo padre.
+        </div>
+        <div id="pac-art-lista"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var pacState = {
+  datos:null,
+  registrosFiltrados:[],
+  modoEjecucion:'RADICADO',
+  filtros:{ proyecto:'ALL', fuente:'ALL', semaforo:'ALL', rt:'', articulador:'ALL', gestor:'ALL', tipoNeg:'ALL' },
+  reglasMotor:[],
+  articuladores:[],
+  gestores:[],
+  tmmData:null,
+  cargado:false
+};
+
+var pac_rtDetalleActual = null;
+var PAC_COLS_CONFIG_KEY = 'pac_matriz_cols_config_v3';
+var pac_matrizColsActivas = {};
+var pac_matrizColsDisponibles = [];
+var pac_modalVista = 'mes';
+var pac_escalaActual = 'mes';
+var pac_periodoActual = null;
+var pacFiltroTimer = null;
+
+var PAC_MESES = ['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
+
+var PAC_ESCALAS = {
+  trimestre: [
+    { id:'T1', label:'T1 — Ene/Feb/Mar', meses:['ENERO','FEBRERO','MARZO'], color:'#1a73e8' },
+    { id:'T2', label:'T2 — Abr/May/Jun', meses:['ABRIL','MAYO','JUNIO'], color:'#34a853' },
+    { id:'T3', label:'T3 — Jul/Ago/Sep', meses:['JULIO','AGOSTO','SEPTIEMBRE'], color:'#f9ab00' },
+    { id:'T4', label:'T4 — Oct/Nov/Dic', meses:['OCTUBRE','NOVIEMBRE','DICIEMBRE'], color:'#ea4335' }
+  ],
+  semestre: [
+    { id:'S1', label:'S1 — Ene a Jun', meses:['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO'], color:'#1a73e8' },
+    { id:'S2', label:'S2 — Jul a Dic', meses:['JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'], color:'#ea4335' }
+  ],
+  acumulado: [
+    { id:'AÑO', label:'Acumulado 2026', meses:PAC_MESES.slice(), color:'#2c3e50' }
+  ]
+};
+
+var PAC_OPERADORES = [
+  { val:'EN_LISTA', label:'Está en lista' },
+  { val:'IGUAL_A', label:'Igual a' },
+  { val:'IGUAL_A_RT_ORIGEN', label:'Igual al RT origen' },
+  { val:'MAYOR_QUE', label:'Mayor que' },
+  { val:'MENOR_QUE', label:'Menor que' },
+  { val:'CONTIENE', label:'Contiene' },
+  { val:'NO_CONTIENE', label:'No contiene' }
+];
+
+var PAC_CAMPOS_MATRIZ = [
+  'ESTADO PREDIAL AJUSTADO','PROYECTO','FUENTE','SALDO_REEMPLAZO',
+  'PROGRAMADO_PERIODO','VALOR_RADICADO_MES','VALOR_EJECUTADO_MES',
+  'ESTADO TITULOS','ESTADO AVALUO','FORMA DE PAGO','NUMERO DE PAGOS',
+  'PREDIOS DISPONIBLES (INCLUYE CESIONES)','ESCRITURA','SITUACIONES ESPECIALES'
+];
+
+function pac_init() {
+  if (!pacState.cargado) pac_cargarDatos();
+}
+
+function pac_cargarDatos() {
+  pac_mostrarLoader(true);
+
+  var filtros = {
+    proyecto: pacState.filtros.proyecto !== 'ALL' ? pacState.filtros.proyecto : null,
+    fuente: pacState.filtros.fuente !== 'ALL' ? pacState.filtros.fuente : null,
+    semaforo: pacState.filtros.semaforo !== 'ALL' ? pacState.filtros.semaforo : null,
+    rt: pacState.filtros.rt || null,
+    articulador: pacState.filtros.articulador !== 'ALL' ? pacState.filtros.articulador : null,
+    gestor: pacState.filtros.gestor !== 'ALL' ? pacState.filtros.gestor : null,
+    tipoNeg: pacState.filtros.tipoNeg !== 'ALL' ? pacState.filtros.tipoNeg : null
+  };
+
+  google.script.run
+    .withSuccessHandler(function(resp) {
+      try {
+        var data = JSON.parse(resp);
+        if (!data.success) {
+          pac_mostrarError(data.error || 'Error cargando PAC');
+          return;
+        }
+
+        pacState.datos = data;
+        pacState.reglasMotor = data.reglasMotor || [];
+        pacState.articuladores = data.articuladores || [];
+        pacState.gestores = data.gestores || [];
+        pacState.cargado = true;
+
+        pac_periodoActual = pac_detectarPeriodoActual(pac_escalaActual, data.mesActual);
+        pac_renderTodo();
+        pac_mostrarLoader(false);
+      } catch(e) {
+        pac_mostrarError('Error procesando datos: ' + e.message);
+      }
+    })
+    .withFailureHandler(function(err) {
+      pac_mostrarError('Error del servidor: ' + (err.message || err));
+    })
+    .getPACData(filtros, pacState.modoEjecucion);
+}
+
+function pac_renderTodo() {
+  var d = pacState.datos;
+  if (!d) return;
+
+  pac_poblarFiltros(d);
+  pac_poblarSelectorPeriodo(pac_escalaActual, d.mesActual);
+  pac_aplicarFiltros();
+  pac_renderMotorReglas(pacState.reglasMotor);
+  pac_renderCamposMatriz();
+
+  document.getElementById('pac-timestamp').textContent =
+    'Actualizado: ' + new Date(d.timestamp).toLocaleString('es-CO') + ' | Mes base: ' + d.mesActual;
+
+  document.getElementById('pac-contenido').style.display = 'block';
+}
+
+function pac_poblarFiltros(d) {
+  pac_fillSelect('pac-fil-proyecto', ['ALL'].concat(d.proyectos || []), 'Todos los proyectos', pacState.filtros.proyecto);
+  pac_fillSelect('pac-fil-articulador', ['ALL'].concat(d.articuladores || []), 'Todos', pacState.filtros.articulador);
+  pac_fillSelect('pac-fil-gestor', ['ALL'].concat(d.gestores || []), 'Todos', pacState.filtros.gestor);
+}
+
+function pac_fillSelect(id, values, defaultLabel, selectedValue) {
+  var el = document.getElementById(id);
+  if (!el) return;
+
+  var actual = selectedValue || el.value || 'ALL';
+  el.innerHTML = '';
+
+  values.forEach(function(v, idx) {
+    var opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = (idx === 0 && v === 'ALL') ? defaultLabel : v;
+    el.appendChild(opt);
+  });
+
+  el.value = actual;
+}
+
+function pac_debounceFiltros() {
+  clearTimeout(pacFiltroTimer);
+  pacFiltroTimer = setTimeout(pac_aplicarFiltros, 250);
+}
+
+function pac_aplicarFiltros() {
+  if (!pacState.datos) return;
+
+  pacState.filtros.proyecto = document.getElementById('pac-fil-proyecto').value;
+  pacState.filtros.fuente = document.getElementById('pac-fil-fuente').value;
+  pacState.filtros.semaforo = document.getElementById('pac-fil-semaforo').value;
+  pacState.filtros.rt = document.getElementById('pac-fil-rt').value.trim().toUpperCase();
+  pacState.filtros.articulador = document.getElementById('pac-fil-articulador').value;
+  pacState.filtros.gestor = document.getElementById('pac-fil-gestor').value;
+  pacState.filtros.tipoNeg = document.getElementById('pac-fil-tiponeg').value;
+
+  var registros = pacState.datos.registros || [];
+  pacState.registrosFiltrados = registros.filter(function(r) {
+    if (pacState.filtros.proyecto !== 'ALL' && r.proyecto !== pacState.filtros.proyecto) return false;
+    if (pacState.filtros.fuente !== 'ALL' && r.fuente !== pacState.filtros.fuente) return false;
+    if (pacState.filtros.semaforo !== 'ALL' && r.semaforo !== pacState.filtros.semaforo) return false;
+    if (pacState.filtros.articulador !== 'ALL' && r.articulador !== pacState.filtros.articulador) return false;
+    if (pacState.filtros.gestor !== 'ALL' && r.gestor !== pacState.filtros.gestor) return false;
+    if (pacState.filtros.tipoNeg !== 'ALL' && pac_norm(r.tipoNeg) !== pac_norm(pacState.filtros.tipoNeg)) return false;
+    if (pacState.filtros.rt && String(r.rt).toUpperCase().indexOf(pacState.filtros.rt) < 0) return false;
+    return true;
+  });
+
+  pac_renderTablaCalendario(pacState.registrosFiltrados);
+  pac_renderKPIsPeriodo(pacState.registrosFiltrados);
+  pac_renderReemplazosFiltrados(pacState.datos.recomendaciones || [], pacState.registrosFiltrados);
+}
+
+function pac_limpiarFiltros() {
+  document.getElementById('pac-fil-proyecto').value = 'ALL';
+  document.getElementById('pac-fil-fuente').value = 'ALL';
+  document.getElementById('pac-fil-semaforo').value = 'ALL';
+  document.getElementById('pac-fil-rt').value = '';
+  document.getElementById('pac-fil-articulador').value = 'ALL';
+  document.getElementById('pac-fil-gestor').value = 'ALL';
+  document.getElementById('pac-fil-tiponeg').value = 'ALL';
+
+  pacState.filtros = { proyecto:'ALL', fuente:'ALL', semaforo:'ALL', rt:'', articulador:'ALL', gestor:'ALL', tipoNeg:'ALL' };
+  pac_aplicarFiltros();
+}
+
+function pac_enviarReportesSeguimiento() {
+  if (!confirm('¿Enviar reportes manuales de seguimiento PAC a los usuarios activos?')) return;
+
+  pac_mostrarLoader(true);
+  google.script.run
+    .withSuccessHandler(function(resp) {
+      pac_mostrarLoader(false);
+      var r = JSON.parse(resp);
+      if (r.success) pac_toast('✅ Reportes enviados: ' + (r.enviados || 0), 'success');
+      else pac_toast('❌ Error: ' + r.error, 'danger');
+    })
+    .withFailureHandler(function(e) {
+      pac_mostrarLoader(false);
+      pac_toast('❌ Error: ' + (e.message || e), 'danger');
+    })
+    .enviarReportesSeguimientoPACApi();
+}
+
+function pac_detectarPeriodoActual(escala, mesActual) {
+  if (escala === 'mes') return mesActual || PAC_MESES[0];
+  if (escala === 'acumulado') return 'AÑO';
+
+  var periodos = PAC_ESCALAS[escala] || [];
+  var p = periodos.find(function(x) { return x.meses.indexOf(mesActual) >= 0; });
+  return p ? p.id : (periodos[0] ? periodos[0].id : null);
+}
+
+function pac_poblarSelectorPeriodo(escala, mesActual) {
+  var cont = document.getElementById('pac-periodo-selector');
+  var sel = document.getElementById('pac-periodo-select');
+  if (!cont || !sel) return;
+
+  if (escala === 'mes') {
+    cont.style.display = 'flex';
+    sel.innerHTML = PAC_MESES.map(function(m) {
+      return '<option value="' + m + '"' + ((pac_periodoActual || mesActual) === m ? ' selected' : '') + '>' + m + '</option>';
+    }).join('');
+    if (!pac_periodoActual || PAC_MESES.indexOf(pac_periodoActual) < 0) pac_periodoActual = mesActual;
+    return;
+  }
+
+  if (escala === 'acumulado') {
+    cont.style.display = 'none';
+    pac_periodoActual = 'AÑO';
+    return;
+  }
+
+  var periodos = PAC_ESCALAS[escala] || [];
+  cont.style.display = 'flex';
+  sel.innerHTML = periodos.map(function(p) {
+    return '<option value="' + p.id + '"' + (p.id === pac_periodoActual ? ' selected' : '') + '>' + p.label + '</option>';
+  }).join('');
+}
+
+function pac_cambiarEscala(escala) {
+  pac_escalaActual = escala;
+  ['mes','trimestre','semestre','acumulado'].forEach(function(e) {
+    var btn = document.getElementById('pac-escala-' + e);
+    if (btn) btn.className = 'pac-escala-btn' + (e === escala ? ' active' : '');
+  });
+
+  pac_periodoActual = pac_detectarPeriodoActual(escala, pacState.datos.mesActual);
+  pac_poblarSelectorPeriodo(escala, pacState.datos.mesActual);
+  pac_renderTablaCalendario(pacState.registrosFiltrados);
+  pac_renderKPIsPeriodo(pacState.registrosFiltrados);
+}
+
+function pac_cambiarPeriodo(periodoId) {
+  pac_periodoActual = periodoId;
+  pac_renderTablaCalendario(pacState.registrosFiltrados);
+  pac_renderKPIsPeriodo(pacState.registrosFiltrados);
+}
+
+function pac_getMesesEscalaActual() {
+  if (pac_escalaActual === 'mes') return [pac_periodoActual || pacState.datos.mesActual];
+  if (pac_escalaActual === 'acumulado') return PAC_MESES.slice();
+
+  var periodos = PAC_ESCALAS[pac_escalaActual] || [];
+  var p = periodos.find(function(x) { return x.id === pac_periodoActual; });
+  return p ? p.meses.slice() : [];
+}
+
+function pac_getPeriodosEscala() {
+  if (pac_escalaActual === 'mes') {
+    var mes = pac_periodoActual || pacState.datos.mesActual;
+    return [{ id:mes, label:mes, meses:[mes], color:'#3498db' }];
+  }
+  if (pac_escalaActual === 'acumulado') return PAC_ESCALAS.acumulado.slice();
+
+  var periodos = PAC_ESCALAS[pac_escalaActual] || [];
+  var p = periodos.find(function(x) { return x.id === pac_periodoActual; });
+  return p ? [p] : [];
+}
+
+function pac_renderKPIsPeriodo(registros) {
+  registros = registros || [];
+  var mesesPeriodo = pac_getMesesEscalaActual();
+
+  var t = { VERDE:0, AMARILLO:0, NARANJA:0, ROJO:0, prog:0, rad:0, ejec:0 };
+  registros.forEach(function(r) {
+    if (t[r.semaforo] !== undefined) t[r.semaforo]++;
+    mesesPeriodo.forEach(function(mes) {
+      var m = (r.datosMensuales || {})[mes] || {};
+      t.prog += m.PROGRAMADO || 0;
+      t.rad += m.VALOR_RADICADO || 0;
+      t.ejec += m.VALOR_EJECUTADO || 0;
+    });
+  });
+
+  var cumpl = pacState.modoEjecucion === 'EJECUTADO' ? t.ejec : t.rad;
+  var pct = t.prog > 0 ? Math.min(100, (cumpl / t.prog) * 100) : (cumpl > 0 ? 100 : 0);
+  var labelPeriodo = pac_escalaActual === 'mes' ? (mesesPeriodo[0] || pacState.datos.mesActual) : (pac_periodoActual || pac_escalaActual);
+
+  document.getElementById('pac-kpi-verde').textContent = t.VERDE;
+  document.getElementById('pac-kpi-amarillo').textContent = t.AMARILLO;
+  document.getElementById('pac-kpi-naranja').textContent = t.NARANJA;
+  document.getElementById('pac-kpi-rojo').textContent = t.ROJO;
+  document.getElementById('pac-kpi-pct').textContent = pct.toFixed(1) + '%';
+  document.getElementById('pac-kpi-pct-label').textContent =
+    (pacState.modoEjecucion === 'EJECUTADO' ? 'Ejecutado' : 'Radicado') + ' del período';
+  document.getElementById('pac-kpi-prog').textContent = pac_fmt(t.prog);
+  document.getElementById('pac-mes-label').textContent = labelPeriodo;
+
+  document.getElementById('pac-esc-prog').textContent = pac_fmtK(t.prog);
+  document.getElementById('pac-esc-rad').textContent = pac_fmtK(t.rad);
+  document.getElementById('pac-esc-ejec').textContent = pac_fmtK(t.ejec);
+  document.getElementById('pac-esc-pct').textContent = pct.toFixed(1) + '%';
+  document.getElementById('pac-esc-pct').style.color = pct >= 95 ? '#27ae60' : pct >= 50 ? '#f39c12' : '#c0392b';
+}
+
+function pac_renderTablaCalendario(registros) {
+  var thead = document.getElementById('pac-tabla-head');
+  var tbody = document.getElementById('pac-tabla-body');
+
+  if (!registros || !registros.length) {
+    thead.innerHTML = '';
+    tbody.innerHTML = '<tr><td colspan="20" style="text-align:center;padding:30px;color:#999;">Sin registros con filtros aplicados</td></tr>';
+    return;
+  }
+
+  var periodos = pac_getPeriodosEscala();
+  var htmlHead = '<tr>';
+  htmlHead += '<th class="pac-th-fijo">RT / Beneficiario</th>';
+  htmlHead += '<th>Proyecto</th><th>Articulador</th><th>Gestor</th><th>Fuente</th><th>Estado Predial</th><th>Semáforo</th>';
+
+  periodos.forEach(function(p) {
+    htmlHead += '<th colspan="4" style="background:' + p.color + ';border-left:2px solid rgba(255,255,255,.2);">' + p.label + '</th>';
+  });
+  htmlHead += '<th>% Acum.</th><th>Obs.</th></tr>';
+
+  htmlHead += '<tr>';
+  htmlHead += '<th class="pac-th-fijo" style="font-size:.6rem;">—</th><th></th><th></th><th></th><th></th><th></th><th></th>';
+  periodos.forEach(function() {
+    htmlHead += '<th style="font-size:.62rem;background:#2c3e50;">Prog.</th>';
+    htmlHead += '<th style="font-size:.62rem;background:#2c3e50;">Rad.</th>';
+    htmlHead += '<th style="font-size:.62rem;background:#2c3e50;">Ejec.</th>';
+    htmlHead += '<th style="font-size:.62rem;background:#2c3e50;">%</th>';
+  });
+  htmlHead += '<th></th><th></th></tr>';
+  thead.innerHTML = htmlHead;
+
+  var htmlBody = '';
+  registros.forEach(function(r) {
+    var ultimaObs = '';
+    if (r.observaciones && r.observaciones.length) {
+      ultimaObs = String(r.observaciones[0].obs || '').substring(0, 55);
+      if (String(r.observaciones[0].obs || '').length > 55) ultimaObs += '...';
+    }
+
+    htmlBody += '<tr style="cursor:pointer;" onclick="pac_abrirDetalleRT(\'' + (r.llavePac || r.rt).replace(/'/g, "\\'") + '\')">';
+    htmlBody += '<td class="pac-td-fijo">' +
+      '<div style="font-weight:800;color:#3498db;">' + r.rt + '</div>' +
+      '<div style="font-size:.68rem;color:#666;">' + (r.beneficiario || '').substring(0, 22) + '</div>' +
+      (r.crp ? '<div style="font-size:.6rem;color:#aaa;">CRP: ' + r.crp + '</div>' : '') +
+      '</td>';
+
+    htmlBody += '<td style="max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + (r.proyecto || '') + '">' + (r.proyecto || '—') + '</td>';
+    htmlBody += '<td style="font-size:.68rem;">' + (r.articulador || '—') + '</td>';
+    htmlBody += '<td style="font-size:.68rem;">' + (r.gestor || '—') + '</td>';
+    htmlBody += '<td><span style="background:' + (r.fuente==='IDU'?'#d5e8d4':'#dae8fc') + ';color:' + (r.fuente==='IDU'?'#27ae60':'#2980b9') + ';padding:2px 6px;border-radius:10px;font-weight:700;font-size:.65rem;">' + r.fuente + '</span></td>';
+    htmlBody += '<td style="font-size:.68rem;"><span style="background:#eee;padding:2px 5px;border-radius:4px;">' + (r.estadoPredial || 'Sin estado') + '</span></td>';
+    htmlBody += '<td><span class="pac-badge ' + r.semaforo + '" title="' + (r.semaforoRazon || '') + '">' + pac_iconoSemaforo(r.semaforo) + ' ' + r.semaforo + '</span></td>';
+
+    periodos.forEach(function(p) {
+      var totalProg = 0, totalRad = 0, totalEjec = 0;
+      p.meses.forEach(function(mes) {
+        var m = (r.datosMensuales || {})[mes] || {};
+        totalProg += m.PROGRAMADO || 0;
+        totalRad += m.VALOR_RADICADO || 0;
+        totalEjec += m.VALOR_EJECUTADO || 0;
+      });
+
+      var actual = pacState.modoEjecucion === 'EJECUTADO' ? totalEjec : totalRad;
+      var pct = totalProg > 0 ? Math.min(100, (actual / totalProg) * 100) : (actual > 0 ? 100 : 0);
+      var pctColor = pct >= 95 ? '#27ae60' : pct >= 50 ? '#f39c12' : (totalProg > 0 ? '#c0392b' : '#999');
+
+      htmlBody += '<td class="' + (totalProg > 0 ? 'pac-cell-prog' : 'pac-cell-vacio') + '">' + (totalProg > 0 ? pac_fmtK(totalProg) : '—') + '</td>';
+      htmlBody += '<td class="' + (totalRad > 0 ? 'pac-cell-rad' : 'pac-cell-vacio') + '">' + (totalRad > 0 ? pac_fmtK(totalRad) : '—') + '</td>';
+      htmlBody += '<td class="' + (totalEjec > 0 ? 'pac-cell-ejec' : 'pac-cell-vacio') + '">' + (totalEjec > 0 ? pac_fmtK(totalEjec) : '—') + '</td>';
+      htmlBody += '<td style="font-weight:800;color:' + pctColor + ';">' + ((totalProg > 0 || actual > 0) ? pct.toFixed(0) + '%' : '—') + '</td>';
+    });
+
+    var pctAcum = parseFloat(r.pctEjecAcum || r.pctEjecucion || 0);
+    var colorAcum = pctAcum >= 95 ? '#27ae60' : pctAcum >= 50 ? '#f39c12' : '#c0392b';
+
+    htmlBody += '<td style="font-weight:800;color:' + colorAcum + ';">' + pctAcum.toFixed(1) + '%</td>';
+    htmlBody += '<td style="max-width:140px;"><div style="font-size:.67rem;background:#fffbea;padding:3px 5px;border-left:2px solid #f39c12;border-radius:2px;white-space:normal;">' + (ultimaObs || '—') + '</div></td>';
+    htmlBody += '</tr>';
+  });
+
+  tbody.innerHTML = htmlBody;
+}
+
+function pac_renderReemplazosFiltrados(recomendaciones, registrosFiltrados) {
+  var container = document.getElementById('pac-reemplazos-container');
+  var badge = document.getElementById('pac-badge-reemplazos');
+
+  var mapFiltrados = {};
+  (registrosFiltrados || []).forEach(function(r) {
+    mapFiltrados[r.rt] = true;
+  });
+
+  var recs = (recomendaciones || []).filter(function(r) {
+    return mapFiltrados[r.rtEnRiesgo];
+  });
+
+  badge.textContent = recs.length;
+
+  if (!recs.length) {
+    container.innerHTML = '<div style="text-align:center;padding:30px;color:#999;"><i class="fas fa-check-circle fa-2x" style="color:#27ae60;opacity:.5;"></i><p style="margin-top:10px;">No hay recomendaciones para los filtros actuales</p></div>';
+    return;
+  }
+
+  var html = '';
+  recs.forEach(function(rec) {
+    html += '<div class="pac-reemplazo-panel">';
+    html += '<div class="pac-reemplazo-header"><div>';
+    html += '<h6><i class="fas fa-exclamation-triangle"></i> RT en Riesgo: <strong>' + rec.rtEnRiesgo + '</strong></h6>';
+    html += '<div style="font-size:.75rem;color:#666;margin-top:3px;">Proyecto: <strong>' + rec.proyecto + '</strong> | Fuente: <strong>' + rec.fuente + '</strong> | Articulador: <strong>' + (rec.articulador || '—') + '</strong> | Gestor: <strong>' + (rec.gestor || '—') + '</strong></div>';
+    html += '</div><span style="font-size:.75rem;color:#999;">' + rec.candidatos.length + ' candidato(s)</span></div>';
+    html += '<div class="pac-reemplazo-body">';
+          var dx = rec.diagnostico || {};
+      html += '<div style="background:#f8f9fa;border:1px solid #eee;border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:.72rem;color:#666;">' +
+              '<strong>Diagnóstico motor:</strong> ' +
+              'Evaluados: <strong>' + (dx.totalEvaluados || 0) + '</strong> | ' +
+              'Proyecto: <strong>' + (dx.descartadosProyecto || 0) + '</strong> | ' +
+              'Fuente: <strong>' + (dx.descartadosFuente || 0) + '</strong> | ' +
+              'Saldo: <strong>' + (dx.descartadosSaldo || 0) + '</strong> | ' +
+              'Reglas: <strong>' + (dx.descartadosReglas || 0) + '</strong> | ' +
+              'Finales: <strong style="color:#27ae60;">' + (dx.candidatosFinales || 0) + '</strong>' +
+              '</div>';
+
+
+    rec.candidatos.forEach(function(c) {
+      html += '<div class="pac-candidato-card">';
+      html += '<div><div class="pac-candidato-rt">' + c.rt + '</div><div class="pac-candidato-info">' + (c.beneficiario || '') + '</div></div>';
+      html += '<div style="text-align:center;"><div style="font-size:.68rem;color:#666;">Estado</div><span class="pac-badge ' + (c.semaforo || 'VERDE') + '">' + (c.estadoPredial || '—') + '</span></div>';
+      html += '<div style="text-align:right;"><div style="font-size:.68rem;color:#666;">Saldo disponible</div><div style="font-weight:800;color:#2c3e50;">' + pac_fmt(c.saldoReemplazo || c.saldo2026 || 0) + '</div></div>';
+      html += '<div style="text-align:center;"><div style="font-size:.68rem;color:#666;">Score</div><div style="font-size:.9rem;font-weight:800;color:#27ae60;">' + (c.score || 0) + '</div></div>';
+      html += '<div style="flex:1;min-width:180px;font-size:.68rem;color:#666;">' +
+        '<strong>Razones:</strong> ' + ((c.razones || []).join(', ') || 'Sin detalle') +
+        '</div>';
+      html += '<button class="btn btn-sm btn-outline-primary fw-bold" onclick="pac_abrirDetalleRT(\'' + (c.llavePac || c.rt).replace(/'/g, "\\'") + '\');event.stopPropagation();"><i class="fas fa-eye"></i></button>';
+      html += '</div>';
+    });
+
+    html += '</div></div>';
+  });
+
+  container.innerHTML = html;
+}
+
+function pac_renderMotorReglas(reglas) {
+  var container = document.getElementById('pac-reglas-container');
+  if (!reglas || !reglas.length) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">Sin reglas configuradas</div>';
+    return;
+  }
+
+  var html = '';
+  reglas.forEach(function(r, idx) {
+    var optsOp = PAC_OPERADORES.map(function(o) {
+      return '<option value="' + o.val + '"' + (r.operador === o.val ? ' selected' : '') + '>' + o.label + '</option>';
+    }).join('');
+
+    var optsCampo = PAC_CAMPOS_MATRIZ.map(function(c) {
+      return '<option value="' + c + '"' + (r.campo === c ? ' selected' : '') + '>' + c + '</option>';
+    }).join('');
+
+    html += '<div class="pac-regla-row">';
+    html += '<select onchange="pac_actualizarRegla(' + idx + ',\'campo\',this.value)">' + optsCampo + '</select>';
+    html += '<select onchange="pac_actualizarRegla(' + idx + ',\'operador\',this.value)">' + optsOp + '</select>';
+    html += '<input type="text" value="' + (Array.isArray(r.valores) ? r.valores.join('|') : (r.valores || '')) + '" onchange="pac_actualizarRegla(' + idx + ',\'valores\',this.value)">';
+    html += '<select onchange="pac_actualizarRegla(' + idx + ',\'activa\',this.value)"><option value="true"' + (r.activa ? ' selected' : '') + '>✅ Activa</option><option value="false"' + (!r.activa ? ' selected' : '') + '>❌ Inactiva</option></select>';
+    html += '<button class="btn btn-sm btn-outline-danger" onclick="pac_eliminarRegla(' + idx + ')"><i class="fas fa-trash"></i></button>';
+    html += '</div>';
+  });
+
+  container.innerHTML = html;
+}
+
+function pac_renderCamposMatriz() {
+  var container = document.getElementById('pac-campos-matriz');
+  container.innerHTML = PAC_CAMPOS_MATRIZ.map(function(c) {
+    return '<span style="background:#f5eef8;color:#7d3c98;padding:2px 8px;border-radius:10px;font-size:.68rem;font-weight:700;cursor:pointer;" onclick="pac_usarCampo(\'' + c.replace(/'/g,"\\'") + '\')">' + c + '</span>';
+  }).join('');
+}
+
+function pac_actualizarRegla(idx, campo, valor) {
+  if (!pacState.reglasMotor[idx]) return;
+  if (campo === 'valores') pacState.reglasMotor[idx].valores = String(valor).split('|').map(function(v) { return v.trim(); });
+  else if (campo === 'activa') pacState.reglasMotor[idx].activa = valor === 'true';
+  else pacState.reglasMotor[idx][campo] = valor;
+}
+
+function pac_agregarRegla() {
+  pacState.reglasMotor.push({
+    id:'R' + String(pacState.reglasMotor.length + 1).padStart(3,'0'),
+    nombre:'Nueva Regla',
+    campo:'ESTADO PREDIAL AJUSTADO',
+    operador:'EN_LISTA',
+    valores:['ESCRITURADO'],
+    activa:true,
+    descripcion:''
+  });
+  pac_renderMotorReglas(pacState.reglasMotor);
+}
+
+function pac_eliminarRegla(idx) {
+  pacState.reglasMotor.splice(idx, 1);
+  pac_renderMotorReglas(pacState.reglasMotor);
+}
+
+function pac_usarCampo(campo) {
+  pac_agregarRegla();
+  pacState.reglasMotor[pacState.reglasMotor.length - 1].campo = campo;
+  pac_renderMotorReglas(pacState.reglasMotor);
+  pac_toast('Campo agregado a nueva regla', 'info');
+}
+
+function pac_guardarReglas() {
+  google.script.run
+    .withSuccessHandler(function(resp) {
+      var r = JSON.parse(resp);
+      if (r.success) {
+        pac_toast('✅ Reglas guardadas', 'success');
+        pacState.cargado = false;
+        pac_cargarDatos();
+      } else {
+        pac_toast('❌ Error: ' + r.error, 'danger');
+      }
+    })
+    .withFailureHandler(function(e) {
+      pac_toast('❌ Error: ' + (e.message || e), 'danger');
+    })
+    .guardarReglasMotorPACApi(JSON.stringify(pacState.reglasMotor));
+}
+
+function pac_abrirMotorReglas() {
+  var tabBtn = document.getElementById('tab-motor-btn');
+  if (tabBtn && typeof bootstrap !== 'undefined') new bootstrap.Tab(tabBtn).show();
+}
+
+function pac_abrirDetalleRT(llavePac) {
+  var registros = (pacState.datos && pacState.datos.registros) || [];
+  var reg = registros.find(function(r) { return String(r.llavePac || '') === String(llavePac); })
+         || registros.find(function(r) { return String(r.rt) === String(llavePac); });
+  if (!reg) {
+    pac_toast('RT no encontrado', 'warning');
+    return;
+  }
+
+  pac_rtDetalleActual = reg;
+  document.getElementById('pac-modal-rt-num').textContent = reg.rt + (reg.crp ? ' — CRP: ' + reg.crp : '');
+
+  var mi = reg.matrizInfo || {};
+  var cards = [
+    { label:'Beneficiario', val:reg.beneficiario },
+    { label:'Proyecto', val:reg.proyecto },
+    { label:'Articulador', val:reg.articulador || '—' },
+    { label:'Gestor', val:reg.gestor || '—' },
+    { label:'Fuente', val:reg.fuente },
+    { label:'Tipo Neg.', val:reg.tipoNeg },
+    { label:'Saldo 2026', val:pac_fmt(reg.saldo2026 || 0) },
+    { label:'Saldo Relevante', val:pac_fmt(mi.saldoPorPagar || reg.saldo2026 || 0) },
+    { label:'Forma de Pago', val:mi.formaPago || '—' },
+    { label:'Nro. Pagos', val:mi.numeroPagos || '—' },
+    { label:'CDP Total', val:mi.cdpTotal ? pac_fmt(mi.cdpTotal) : '—' },
+    { label:'CRP Total', val:mi.crpTotal ? pac_fmt(mi.crpTotal) : '—' },
+    { label:'Semáforo', val:'<span class="pac-badge ' + reg.semaforo + '">' + pac_iconoSemaforo(reg.semaforo) + ' ' + reg.semaforo + '</span>' },
+    { label:'Razón', val:reg.semaforoRazon || '—' }
+  ];
+
+  document.getElementById('pac-modal-info-general').innerHTML = cards.map(function(item) {
+    return '<div class="col-md-3 col-6 mb-2"><div style="background:white;border-radius:6px;padding:10px;border-left:3px solid #3498db;"><div style="font-size:.65rem;font-weight:700;color:#666;text-transform:uppercase;">' + item.label + '</div><div style="font-weight:700;font-size:.85rem;margin-top:3px;">' + (item.val || '—') + '</div></div></div>';
+  }).join('');
+
+  pac_renderTablaModalMeses(reg);
+
+  var obs = reg.observaciones || [];
+  document.getElementById('pac-modal-obs-count').textContent = obs.length;
+  document.getElementById('pac-modal-obs-list').innerHTML = obs.length
+    ? obs.map(function(o, idx) {
+        return '<div class="pac-obs-item" style="' + (idx === 0 ? 'border-left-color:#1a73e8;background:#e8f0fe;' : '') + '"><div class="pac-obs-fecha">' +
+          (o.fecha ? new Date(o.fecha).toLocaleString('es-CO') : 'Sin fecha') +
+          (o.usuario ? ' | <strong>' + o.usuario + '</strong>' : '') +
+          '</div><div class="pac-obs-texto">' + (o.obs || '') + '</div></div>';
+      }).join('')
+    : '<div style="text-align:center;padding:24px;color:#999;">Sin observaciones</div>';
+
+  pac_renderMatrizInfo(reg);
+
+  if (typeof bootstrap !== 'undefined') {
+    var modalEl = document.getElementById('pac-modal-rt');
+    var inst = bootstrap.Modal.getInstance(modalEl);
+    if (inst) inst.show(); else new bootstrap.Modal(modalEl).show();
+  }
+}
+
+function pac_cambiarVistaModal(vista) {
+  pac_modalVista = vista;
+  var btnMes = document.getElementById('pac-vista-mes-btn');
+  var btnTri = document.getElementById('pac-vista-tri-btn');
+  if (btnMes && btnTri) {
+    btnMes.style.background = vista === 'mes' ? '#1a73e8' : 'transparent';
+    btnMes.style.color = vista === 'mes' ? 'white' : '#1a73e8';
+    btnTri.style.background = vista === 'trimestre' ? '#1a73e8' : 'transparent';
+    btnTri.style.color = vista === 'trimestre' ? 'white' : '#1a73e8';
+  }
+  if (pac_rtDetalleActual) pac_renderTablaModalMeses(pac_rtDetalleActual);
+}
+
+function pac_renderTablaModalMeses(registro) {
+  var tbody = document.getElementById('pac-modal-meses-body');
+  var html = '';
+
+  if (pac_modalVista === 'trimestre') {
+    var trimestres = PAC_ESCALAS.trimestre;
+    trimestres.forEach(function(t) {
+      var totalProg = 0, totalRad = 0, totalEjec = 0;
+      t.meses.forEach(function(mes) {
+        var m = (registro.datosMensuales || {})[mes] || {};
+        totalProg += m.PROGRAMADO || 0;
+        totalRad += m.VALOR_RADICADO || 0;
+        totalEjec += m.VALOR_EJECUTADO || 0;
+      });
+
+      var actual = pacState.modoEjecucion === 'EJECUTADO' ? totalEjec : totalRad;
+      var pct = totalProg > 0 ? Math.min(100, (actual / totalProg) * 100) : (actual > 0 ? 100 : 0);
+      var color = pct >= 95 ? '#27ae60' : pct >= 50 ? '#f39c12' : '#c0392b';
+
+      html += '<tr style="background:' + t.color + '12;border-top:2px solid ' + t.color + ';">';
+      html += '<td style="font-weight:800;color:' + t.color + ';">' + t.label + '</td>';
+      html += '<td style="text-align:right;">' + (totalProg ? pac_fmt(totalProg) : '—') + '</td>';
+      html += '<td style="text-align:right;">' + (totalRad ? pac_fmt(totalRad) : '—') + '</td>';
+      html += '<td>—</td><td>—</td>';
+      html += '<td style="text-align:right;">' + (totalEjec ? pac_fmt(totalEjec) : '—') + '</td>';
+      html += '<td>—</td>';
+      html += '<td style="font-weight:800;color:' + color + ';">' + pct.toFixed(0) + '%</td>';
+      html += '<td><div style="background:#eee;height:6px;border-radius:3px;width:80px;"><div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:3px;"></div></div></td>';
+      html += '</tr>';
+    });
+  } else {
+    PAC_MESES.forEach(function(mes) {
+      var m = (registro.datosMensuales || {})[mes];
+      if (!m) return;
+
+      var prog = m.PROGRAMADO || 0;
+      var rad = m.VALOR_RADICADO || 0;
+      var ejec = m.VALOR_EJECUTADO || 0;
+      var actual = pacState.modoEjecucion === 'EJECUTADO' ? ejec : rad;
+      var pct = prog > 0 ? Math.min(100, (actual / prog) * 100) : (actual > 0 ? 100 : 0);
+      var color = pct >= 95 ? '#27ae60' : pct >= 50 ? '#f39c12' : (prog > 0 ? '#c0392b' : '#999');
+
+      if (prog === 0 && rad === 0 && ejec === 0) return;
+
+      html += '<tr>';
+      html += '<td>' + mes + '</td>';
+      html += '<td style="text-align:right;">' + (prog ? pac_fmt(prog) : '—') + '</td>';
+      html += '<td style="text-align:right;">' + (rad ? pac_fmt(rad) : '—') + '</td>';
+      html += '<td>' + (m.FECHA_RADICADO ? String(m.FECHA_RADICADO).substring(0,10) : '—') + '</td>';
+      html += '<td>' + (m.OP || '—') + '</td>';
+      html += '<td style="text-align:right;">' + (ejec ? pac_fmt(ejec) : '—') + '</td>';
+      html += '<td style="text-align:right;">' + (m.LIBERACION ? pac_fmt(m.LIBERACION) : '—') + '</td>';
+      html += '<td style="font-weight:800;color:' + color + ';">' + pct.toFixed(0) + '%</td>';
+      html += '<td><div style="background:#eee;height:6px;border-radius:3px;width:80px;"><div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:3px;"></div></div></td>';
+      html += '</tr>';
+    });
+  }
+
+  html += '<tr style="background:#2c3e50;color:white;font-weight:800;">';
+  html += '<td>TOTAL ANUAL 2026</td>';
+  html += '<td style="text-align:right;">' + pac_fmt(registro.acumProgAnual || 0) + '</td>';
+  html += '<td style="text-align:right;">' + pac_fmt(registro.acumRadAnual || 0) + '</td>';
+  html += '<td colspan="3"></td>';
+  html += '<td style="text-align:right;">' + pac_fmt(registro.acumEjecAnual || 0) + '</td>';
+  html += '<td></td>';
+  html += '<td>' + parseFloat(registro.pctEjecAcum || 0).toFixed(1) + '%</td>';
+  html += '<td></td></tr>';
+
+  tbody.innerHTML = html || '<tr><td colspan="9" style="text-align:center;color:#999;padding:20px;">Sin datos</td></tr>';
+}
+
+function pac_cargarConfigCols() {
+  try {
+    var g = localStorage.getItem(PAC_COLS_CONFIG_KEY);
+    if (g) pac_matrizColsActivas = JSON.parse(g);
+  } catch(e) {
+    pac_matrizColsActivas = {};
+  }
+}
+
+function pac_guardarConfigCols() {
+  document.querySelectorAll('#pac-cols-lista input[type="checkbox"]').forEach(function(cb) {
+    pac_matrizColsActivas[cb.dataset.col] = cb.checked;
+  });
+  try { localStorage.setItem(PAC_COLS_CONFIG_KEY, JSON.stringify(pac_matrizColsActivas)); } catch(e) {}
+  if (typeof bootstrap !== 'undefined') {
+    bootstrap.Modal.getInstance(document.getElementById('pac-modal-cols')).hide();
+  }
+  pac_toast('✅ Configuración guardada', 'success');
+  if (pac_rtDetalleActual) pac_renderMatrizInfo(pac_rtDetalleActual);
+}
+
+function pac_abrirConfigCols() {
+  pac_cargarConfigCols();
+
+  var html = '';
+  pac_matrizColsDisponibles.forEach(function(col) {
+    var checked = pac_matrizColsActivas[col] !== false;
+    var safeId = 'col_' + col.replace(/[\s()\/.]/g, '_');
+    html += '<div class="pac-col-item"><input type="checkbox" id="' + safeId + '" data-col="' + col + '"' + (checked ? ' checked' : '') + ' onchange="pac_actualizarContadorCols()"><label for="' + safeId + '">' + col + '</label><span class="pac-col-categoria" style="background:#7f8c8d;">MATRIZ</span></div>';
+  });
+
+  document.getElementById('pac-cols-lista').innerHTML = html || '<p style="color:#999;text-align:center;">Sin columnas disponibles aún</p>';
+  pac_actualizarContadorCols();
+
+  if (typeof bootstrap !== 'undefined') new bootstrap.Modal(document.getElementById('pac-modal-cols')).show();
+}
+
+function pac_seleccionarTodasCols(sel) {
+  document.querySelectorAll('#pac-cols-lista input[type="checkbox"]').forEach(function(cb) { cb.checked = sel; });
+  pac_actualizarContadorCols();
+}
+
+function pac_actualizarContadorCols() {
+  var total = document.querySelectorAll('#pac-cols-lista input[type="checkbox"]').length;
+  var activas = document.querySelectorAll('#pac-cols-lista input[type="checkbox"]:checked').length;
+  document.getElementById('pac-cols-contador').textContent = activas + ' de ' + total + ' columnas activas';
+}
+
+function pac_renderMatrizInfo(registro) {
+  pac_cargarConfigCols();
+  var mi = registro.matrizInfo || {};
+  var todos = mi._todosLosCampos || {};
+  pac_matrizColsDisponibles = Object.keys(todos).filter(function(c) {
+    return c && c !== 'RT' && c !== 'rt';
+  }).sort();
+
+  var colsMostrar = pac_matrizColsDisponibles.filter(function(c) {
+    if (Object.keys(pac_matrizColsActivas).length) return pac_matrizColsActivas[c] !== false;
+    return true;
+  });
+
+  var html = '';
+  colsMostrar.forEach(function(col) {
+    var v = todos[col];
+    if (v === null || v === undefined || String(v).trim() === '') return;
+    var val = v;
+    var colUp = String(col).toUpperCase();
+    if ((colUp.indexOf('VALOR') >= 0 || colUp.indexOf('SALDO') >= 0 || colUp.indexOf('CDP') >= 0 || colUp.indexOf('CRP') >= 0) && typeof v === 'number') {
+      val = pac_fmt(v);
+    }
+    if (v instanceof Date) val = v.toLocaleDateString('es-CO');
+
+    html += '<div class="col-md-3 col-6 mb-2"><div style="background:#f8f9fa;border-radius:6px;padding:8px 10px;border-left:3px solid #7f8c8d;height:100%;"><div style="font-size:.6rem;font-weight:700;color:#666;text-transform:uppercase;line-height:1.2;margin-bottom:3px;">' + col + '</div><div style="font-weight:700;font-size:.8rem;color:#2c3e50;word-break:break-word;">' + val + '</div></div></div>';
+  });
+
+  document.getElementById('pac-modal-matriz-info').innerHTML = html || '<div class="col-12" style="color:#999;text-align:center;padding:20px;">Sin columnas visibles</div>';
+}
+
+function pac_abrirArticuladores() {
+  var arts = pacState.articuladores || [];
+  var gest = pacState.gestores || [];
+  var html = '';
+
+  html += '<div style="margin-bottom:10px;font-weight:800;color:#2c3e50;">Articuladores</div>';
+  html += arts.length
+    ? arts.map(function(a) { return '<div class="pac-art-row"><div style="font-weight:700;">' + a + '</div><div>Actor MATRIZ</div><div>Filtro activo</div><div><i class="fas fa-check text-success"></i></div></div>'; }).join('')
+    : '<div style="color:#999;margin-bottom:16px;">Sin articuladores detectados</div>';
+
+  html += '<div style="margin:14px 0 10px;font-weight:800;color:#2c3e50;">Gestores</div>';
+  html += gest.length
+    ? gest.map(function(g) { return '<div class="pac-art-row"><div style="font-weight:700;">' + g + '</div><div>Actor MATRIZ</div><div>Filtro activo</div><div><i class="fas fa-check text-success"></i></div></div>'; }).join('')
+    : '<div style="color:#999;">Sin gestores detectados</div>';
+
+  document.getElementById('pac-art-lista').innerHTML = html;
+  if (typeof bootstrap !== 'undefined') new bootstrap.Modal(document.getElementById('pac-modal-art')).show();
+}
+
+function pac_setModoEjecucion(modo) {
+  pacState.modoEjecucion = modo;
+  document.getElementById('btn-modo-rad').className = 'pac-toggle-btn' + (modo === 'RADICADO' ? ' active' : '');
+  document.getElementById('btn-modo-ejec').className = 'pac-toggle-btn' + (modo === 'EJECUTADO' ? ' active' : '');
+  pacState.cargado = false;
+  pac_cargarDatos();
+}
+
+function pac_sincronizar() {
+  if (!confirm('¿Sincronizar el PAC con el archivo externo?')) return;
+  pac_mostrarLoader(true);
+  google.script.run
+    .withSuccessHandler(function(resp) {
+      var r = JSON.parse(resp);
+      pac_mostrarLoader(false);
+      if (r.success) {
+        pac_toast('✅ Sync correcto. Cambios: ' + (r.cambios || 0), 'success');
+        if ((r.cambios || 0) > 0 && confirm('Se detectaron cambios. ¿Aprobar borrador ahora?')) {
+          pac_aprobarBorrador();
+        }
+      } else {
+        pac_toast('❌ Error en sync: ' + r.error, 'danger');
+      }
+    })
+    .withFailureHandler(function(e) {
+      pac_mostrarLoader(false);
+      pac_toast('❌ Error: ' + (e.message || e), 'danger');
+    })
+    .sincronizarPACApi();
+}
+
+function pac_aprobarBorrador() {
+  var obs = prompt('Observación (opcional):') || 'Aprobación manual';
+  google.script.run
+    .withSuccessHandler(function(resp) {
+      var r = JSON.parse(resp);
+      if (r.success) {
+        pac_toast('✅ Borrador aprobado', 'success');
+        pacState.cargado = false;
+        pac_cargarDatos();
+      } else {
+        pac_toast('❌ Error: ' + r.error, 'danger');
+      }
+    })
+    .withFailureHandler(function(e) {
+      pac_toast('❌ ' + (e.message || e), 'danger');
+    })
+    .aprobarBorradorPACApi(obs);
+}
+
+function pac_toggleTMM() {
+  var det = document.getElementById('pac-tmm-detalle');
+  var chev = document.getElementById('pac-tmm-chevron');
+  if (!det) return;
+  if (det.style.display === 'none') {
+    det.style.display = 'block';
+    chev.className = 'fas fa-chevron-up';
+  } else {
+    det.style.display = 'none';
+    chev.className = 'fas fa-chevron-down';
+  }
+}
+
+function pac_fmt(val) {
+  var num = parseFloat(String(val).replace(/[^0-9.\-]/g, '')) || 0;
+  return new Intl.NumberFormat('es-CO', { style:'currency', currency:'COP', maximumFractionDigits:0 }).format(num);
+}
+
+function pac_fmtK(val) {
+  var num = parseFloat(String(val).replace(/[^0-9.\-]/g, '')) || 0;
+  if (num === 0) return '—';
+  if (Math.abs(num) >= 1000000000) return '$' + (num/1000000000).toFixed(1) + 'B';
+  if (Math.abs(num) >= 1000000) return '$' + (num/1000000).toFixed(1) + 'M';
+  if (Math.abs(num) >= 1000) return '$' + (num/1000).toFixed(0) + 'K';
+  return '$' + num.toFixed(0);
+}
+
+function pac_iconoSemaforo(s) {
+  return { VERDE:'🟢', AMARILLO:'🟡', NARANJA:'🟠', ROJO:'🔴' }[s] || '⚪';
+}
+
+function pac_norm(v) {
+  return String(v || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+}
+
+function pac_toast(msg, tipo) {
+  if (typeof showToast === 'function') {
+    showToast(msg, tipo);
+  } else {
+    console.log('[PAC ' + (tipo || 'info') + '] ' + msg);
+  }
+}
+
+function pac_mostrarLoader(mostrar) {
+  document.getElementById('pac-loader').style.display = mostrar ? 'block' : 'none';
+  document.getElementById('pac-contenido').style.display = mostrar ? 'none' : 'block';
+}
+
+function pac_mostrarError(msg) {
+  pac_mostrarLoader(false);
+  document.getElementById('pac-contenido').style.display = 'block';
+  document.getElementById('pac-contenido').innerHTML =
+    '<div style="background:#fce8e6;border-left:4px solid #c0392b;padding:20px;border-radius:8px;margin:20px 0;">' +
+    '<h5 style="color:#c0392b;margin:0 0 8px 0;"><i class="fas fa-exclamation-circle"></i> Error cargando módulo PAC</h5>' +
+    '<p style="margin:0;color:#555;">' + msg + '</p>' +
+    '<button class="btn btn-sm btn-danger fw-bold mt-3" onclick="pacState.cargado=false;pac_cargarDatos()">' +
+    '<i class="fas fa-rotate"></i> Reintentar</button></div>';
+}
+
+(function() {
+  var observer = new MutationObserver(function(mutations) {
+    mutations.forEach(function(mutation) {
+      if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+        var t = mutation.target;
+        if (t.id === 'page-pac' && t.classList.contains('active') && !pacState.cargado) {
+          pac_init();
+        }
+      }
+    });
+  });
+
+  var pagePac = document.getElementById('page-pac');
+  if (pagePac) observer.observe(pagePac, { attributes:true });
+
+  var menuPac = document.querySelector('[onclick*="showPage(\'pac\'"]');
+  if (menuPac) {
+    menuPac.addEventListener('click', function() {
+      setTimeout(function() { if (!pacState.cargado) pac_init(); }, 150);
+    });
+  }
+})();
+</script>

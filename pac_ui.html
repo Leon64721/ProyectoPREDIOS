@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seguimiento PAC - Gestión Predial IDU</title>
+  <style>
+    /* ── Variables y reset ── */
+    :root {
+      --verde:    #34A853; --verde-bg:    #e6f4ea;
+      --amarillo: #F9AB00; --amarillo-bg: #fef9e7;
+      --naranja:  #FF6D00; --naranja-bg:  #fff3e0;
+      --rojo:     #EA4335; --rojo-bg:     #fce8e6;
+      --azul:     #1a73e8; --gris:        #f8f9fa;
+      --borde:    #dee2e6; --texto:       #202124;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Google Sans', Arial, sans-serif;
+      background: #f1f3f4; color: var(--texto); font-size: 14px;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: var(--azul); color: white;
+      padding: 16px 24px; display: flex;
+      justify-content: space-between; align-items: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .header h1 { font-size: 18px; font-weight: 500; }
+    .header-actions { display: flex; gap: 10px; }
+
+    /* ── Botones ── */
+    .btn {
+      padding: 8px 16px; border: none; border-radius: 6px;
+      cursor: pointer; font-size: 13px; font-weight: 500;
+      transition: all 0.2s; display: inline-flex;
+      align-items: center; gap: 6px;
+    }
+    .btn-primary   { background: white; color: var(--azul); }
+    .btn-success   { background: var(--verde); color: white; }
+    .btn-warning   { background: var(--naranja); color: white; }
+    .btn-danger    { background: var(--rojo); color: white; }
+    .btn-secondary { background: #e8eaed; color: var(--texto); }
+    .btn:hover     { opacity: 0.85; transform: translateY(-1px); }
+    .btn:disabled  { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    /* ── Tarjetas de resumen ── */
+    .resumen-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px; padding: 16px 24px;
+    }
+    .card-resumen {
+      background: white; border-radius: 10px;
+      padding: 16px; text-align: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      border-top: 4px solid var(--borde);
+    }
+    .card-resumen.verde   { border-top-color: var(--verde); }
+    .card-resumen.amarillo{ border-top-color: var(--amarillo); }
+    .card-resumen.naranja { border-top-color: var(--naranja); }
+    .card-resumen.rojo    { border-top-color: var(--rojo); }
+    .card-numero {
+      font-size: 36px; font-weight: 700; line-height: 1;
+    }
+    .card-label { font-size: 12px; color: #666; margin-top: 4px; }
+    .card-valor { font-size: 11px; color: #999; margin-top: 2px; }
+
+    /* ── Panel de filtros ── */
+    .filtros-panel {
+      background: white; margin: 0 24px 16px;
+      border-radius: 10px; padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .filtros-panel h3 {
+      font-size: 13px; color: #666; margin-bottom: 12px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .filtros-row {
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
+    }
+    .filtro-grupo { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px; }
+    .filtro-grupo label { font-size: 12px; color: #666; font-weight: 500; }
+    .filtro-grupo select, .filtro-grupo input {
+      padding: 8px 10px; border: 1px solid var(--borde);
+      border-radius: 6px; font-size: 13px; background: white;
+    }
+    .filtro-grupo select:focus, .filtro-grupo input:focus {
+      outline: none; border-color: var(--azul);
+    }
+
+    /* ── Tabla principal ── */
+    .tabla-container {
+      margin: 0 24px 24px; background: white;
+      border-radius: 10px; overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .tabla-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--borde);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .tabla-header h3 { font-size: 15px; font-weight: 500; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #f8f9fa; }
+    th {
+      padding: 10px 12px; text-align: left;
+      font-size: 12px; font-weight: 600;
+      color: #666; text-transform: uppercase;
+      letter-spacing: 0.3px; border-bottom: 2px solid var(--borde);
+      white-space: nowrap;
+    }
+    td {
+      padding: 10px 12px; border-bottom: 1px solid #f0f0f0;
+      font-size: 13px; vertical-align: middle;
+    }
+    tr:hover td { background: #f8f9fa; }
+
+    /* ── Semáforo badges ── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 4px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; white-space: nowrap;
+    }
+    .badge-verde    { background: var(--verde-bg);    color: var(--verde); }
+    .badge-amarillo { background: var(--amarillo-bg); color: #b06000; }
+    .badge-naranja  { background: var(--naranja-bg);  color: var(--naranja); }
+    .badge-rojo     { background: var(--rojo-bg);     color: var(--rojo); }
+
+    /* ── Detalle expandible ── */
+    .fila-detalle { display: none; }
+    .fila-detalle.visible { display: table-row; }
+    .detalle-contenido {
+      padding: 12px 16px; background: #f8f9fa;
+    }
+    .meses-grid {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;
+    }
+    .mes-card {
+      background: white; border-radius: 8px; padding: 10px 12px;
+      border: 1px solid var(--borde); min-width: 120px; text-align: center;
+    }
+    .mes-nombre { font-size: 11px; color: #666; font-weight: 600; }
+    .mes-valor  { font-size: 13px; font-weight: 700; margin: 4px 0; }
+    .mes-estado { font-size: 10px; }
+
+    /* ── Modal articuladores ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.5); z-index: 1000;
+      justify-content: center; align-items: center;
+    }
+    .modal-overlay.visible { display: flex; }
+    .modal {
+      background: white; border-radius: 12px;
+      padding: 24px; width: 90%; max-width: 600px;
+      max-height: 80vh; overflow-y: auto;
+    }
+    .modal h3 { margin-bottom: 16px; font-size: 16px; }
+    .art-fila {
+      display: flex; gap: 10px; align-items: center;
+      padding: 8px 0; border-bottom: 1px solid var(--borde);
+    }
+    .art-nombre { flex: 1; font-size: 13px; font-weight: 500; }
+    .art-correo { flex: 2; }
+    .art-correo input {
+      width: 100%; padding: 6px 10px;
+      border: 1px solid var(--borde); border-radius: 6px;
+      font-size: 13px;
+    }
+
+    /* ── Toast notificaciones ── */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: #323232; color: white;
+      padding: 12px 20px; border-radius: 8px;
+      font-size: 13px; z-index: 2000;
+      transform: translateY(100px); opacity: 0;
+      transition: all 0.3s; max-width: 400px;
+    }
+    .toast.visible { transform: translateY(0); opacity: 1; }
+    .toast.success { background: var(--verde); }
+    .toast.error   { background: var(--rojo); }
+    .toast.warning { background: var(--naranja); }
+
+    /* ── Loading ── */
+    .loading-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(255,255,255,0.85);
+      z-index: 1500; justify-content: center; align-items: center;
+      flex-direction: column; gap: 16px;
+    }
+    .loading-overlay.visible { display: flex; }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 4px solid #e8eaed;
+      border-top-color: var(--azul);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex; gap: 0; margin: 0 24px 0;
+      border-bottom: 2px solid var(--borde);
+    }
+    .tab {
+      padding: 10px 20px; cursor: pointer;
+      font-size: 13px; font-weight: 500; color: #666;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px; transition: all 0.2s;
+    }
+    .tab.active { color: var(--azul); border-bottom-color: var(--azul); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Historial ── */
+    .historial-item {
+      padding: 10px 16px; border-left: 3px solid var(--borde);
+      margin: 8px 0; background: white; border-radius: 0 8px 8px 0;
+    }
+    .historial-item.RT_NUEVO     { border-left-color: var(--verde); }
+    .historial-item.RT_ELIMINADO { border-left-color: var(--rojo); }
+    .historial-item.CAMBIO_SALDO { border-left-color: var(--naranja); }
+    .historial-item.CAMBIO_PROGRAMACION { border-left-color: var(--amarillo); }
+    .historial-item.PAGO_RADICADO { border-left-color: var(--azul); }
+    .hist-header {
+      display: flex; justify-content: space-between;
+      font-size: 12px; color: #666; margin-bottom: 4px;
+    }
+    .hist-desc { font-size: 13px; font-weight: 500; }
+    .hist-valores { font-size: 12px; color: #666; margin-top: 2px; }
+
+    @media (max-width: 768px) {
+      .resumen-grid { grid-template-columns: repeat(2, 1fr); }
+      .filtros-row  { flex-direction: column; }
+      .header-actions .btn span { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div id="loadingMsg">Procesando...</div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <h1>📊 Seguimiento PAC — Gestión Predial IDU</h1>
+    <div style="font-size:12px;opacity:0.8;margin-top:2px" id="ultimaActualizacion">
+      Cargando...
+    </div>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-primary" onclick="abrirModalArticuladores()">
+      👥 <span>Articuladores</span>
+    </button>
+    <button class="btn btn-primary" onclick="verHistorial()">
+      📋 <span>Historial</span>
+    </button>
+    <button class="btn btn-primary" onclick="iniciarSincronizacionPAC()" id="btnSync">
+      🔄 <span>Sincronizar PAC</span>
+    </button>
+    <button class="btn btn-warning" onclick="enviarAlertas()" id="btnAlertas">
+      📧 <span>Enviar Alertas</span>
+    </button>
+  </div>
+</div>
+
+<!-- Tarjetas de resumen -->
+<div class="resumen-grid" id="resumenGrid">
+  <div class="card-resumen verde">
+    <div class="card-numero" id="numVerde">—</div>
+    <div class="card-label">🟢 En Tiempo</div>
+    <div class="card-valor" id="pctCumplimiento">—</div>
+  </div>
+  <div class="card-resumen amarillo">
+    <div class="card-numero" id="numAmarillo">—</div>
+    <div class="card-label">🟡 En Riesgo</div>
+  </div>
+  <div class="card-resumen naranja">
+    <div class="card-numero" id="numNaranja">—</div>
+    <div class="card-label">🟠 Crítico</div>
+  </div>
+  <div class="card-resumen rojo">
+    <div class="card-numero" id="numRojo">—</div>
+    <div class="card-label">🔴 Incumplimiento</div>
+    <div class="card-valor" id="valorRiesgo">—</div>
+  </div>
+</div>
+
+<!-- Filtros -->
+<div class="filtros-panel">
+  <h3>🔍 Filtros de consulta</h3>
+  <div class="filtros-row">
+    <div class="filtro-grupo">
+      <label>Proyecto / Troncal</label>
+      <select id="filtroProyecto" onchange="aplicarFiltros()">
+        <option value="">— Todos los proyectos —</option>
+      </select>
+    </div>
+    <div class="filtro-grupo">
+      <label>Articulador / Gestor</label>
+      <select id="filtroArticulador" onchange="aplicarFiltros()">
+        <option value="">— Todos los articuladores —</option>
+      </select>
+    </div>
+    <div class="filtro-grupo">
+      <label>RT específico</label>
+      <input type="text" id="filtroRT" placeholder="Ej: 52335"
+             oninput="aplicarFiltros()">
+    </div>
+    <div class="filtro-grupo">
+      <label>Semáforo</label>
+      <select id="filtroSemaforo" onchange="aplicarFiltros()">
+        <option value="">— Todos —</option>
+        <option value="ROJO">🔴 Incumplimiento</option>
+        <option value="NARANJA">🟠 Crítico</option>
+        <option value="AMARILLO">🟡 En Riesgo</option>
+        <option value="VERDE">🟢 En Tiempo</option>
+      </select>
+    </div>
+    <div class="filtro-grupo" style="flex:0">
+      <label>&nbsp;</label>
+      <button class="btn btn-secondary" onclick="limpiarFiltros()">✖ Limpiar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" onclick="cambiarTab('semaforo', this)">🚦 Semáforo PAC</div>
+  <div class="tab" onclick="cambiarTab('historial', this)">📋 Historial Cambios</div>
+  <div class="tab" onclick="cambiarTab('recomendaciones', this)">💡 Recomendaciones</div>
+</div>
+
+<!-- Tab: Semáforo -->
+<div class="tab-content active" id="tab-semaforo">
+  <div class="tabla-container">
+    <div class="tabla-header">
+      <h3>Predios con seguimiento PAC</h3>
+      <span id="contadorResultados" style="font-size:12px;color:#666"></span>
+    </div>
+    <div style="overflow-x:auto">
+      <table id="tablaSemaforo">
+        <thead>
+          <tr>
+            <th>RT</th>
+            <th>Proyecto</th>
+            <th>Articulador</th>
+            <th>Tipo Negociación</th>
+            <th>Estado Predial</th>
+            <th>Próximo Pago</th>
+            <th>Valor Programado</th>
+            <th>Semáforo</th>
+            <th>Detalle</th>
+          </tr>
+        </thead>
+        <tbody id="cuerpoTabla">
+          <tr>
+            <td colspan="9" style="text-align:center;padding:40px;color:#999">
+              Haga clic en "Sincronizar PAC" para cargar los datos
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: Historial -->
+<div class="tab-content" id="tab-historial">
+  <div class="tabla-container" style="padding:16px">
+    <div class="tabla-header">
+      <h3>Historial de cambios del PAC</h3>
+      <button class="btn btn-secondary" onclick="cargarHistorial()">🔄 Actualizar</button>
+    </div>
+    <div id="contenedorHistorial" style="padding:8px">
+      <p style="color:#999;text-align:center;padding:30px">
+        Haga clic en "Actualizar" para ver el historial
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: Recomendaciones -->
+<div class="tab-content" id="tab-recomendaciones">
+  <div class="tabla-container" style="padding:16px">
+    <div class="tabla-header">
+      <h3>💡 Recomendaciones de reprogramación trimestral</h3>
+    </div>
+    <div id="contenedorRecomendaciones" style="padding:8px">
+      <p style="color:#999;text-align:center;padding:30px">
+        Las recomendaciones se generan al sincronizar el PAC
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Articuladores y correos -->
+<div class="modal-overlay" id="modalArticuladores">
+  <div class="modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3>👥 Gestión de Articuladores</h3>
+      <button class="btn btn-secondary" onclick="cerrarModal()">✖</button>
+    </div>
+    <p style="font-size:12px;color:#666;margin-bottom:16px">
+      Configure el correo electrónico de cada articulador para recibir alertas PAC.
+    </p>
+    <div id="listaArticuladores">
+      <p style="color:#999;text-align:center">Cargando articuladores...</p>
+    </div>
+    <div style="margin-top:16px;text-align:right">
+      <button class="btn btn-success" onclick="guardarTodosCorreos()">
+        💾 Guardar todos los correos
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Aprobar borrador -->
+<div class="modal-overlay" id="modalAprobacion">
+  <div class="modal" style="max-width:450px">
+    <h3 style="margin-bottom:12px">✅ Aprobar cambios del PAC</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:16px" id="textoCambios"></p>
+    <div style="margin-bottom:16px">
+      <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">
+        Observación (opcional):
+      </label>
+      <textarea id="obsAprobacion" rows="3" style="width:100%;padding:8px;
+        border:1px solid var(--borde);border-radius:6px;font-size:13px;resize:vertical"
+        placeholder="Ingrese observaciones sobre esta actualización..."></textarea>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="cerrarModalAprobacion()">Cancelar</button>
+      <button class="btn btn-success" onclick="confirmarAprobacion()">
+        ✅ Aprobar y actualizar PAC
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Estado global de la UI ──────────────────────────────────
+let datosCompletos = [];
+let datosFiltrados = [];
+let recomendacionesActuales = [];
+let pendienteAprobacion = false;
+
+// ── Inicialización ──────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  cargarFiltrosDisponibles();
+  cargarSemaforo();
+});
+
+// ── SEMÁFORO ────────────────────────────────────────────────
+function cargarSemaforo() {
+  mostrarLoading('Calculando semáforo PAC...');
+  const filtros = obtenerFiltrosActivos();
+
+  google.script.run
+    .withSuccessHandler(respuestaSemaforo)
+    .withFailureHandler(manejarError)
+    .calcularSemaforoPAC(filtros);
+}
+
+function respuestaSemaforo(resp) {
+  ocultarLoading();
+  if (!resp.success) {
+    mostrarToast('Error al calcular semáforo: ' + resp.error, 'error');
+    return;
+  }
+
+  datosCompletos = resp.datos || [];
+  datosFiltrados = [...datosCompletos];
+  recomendacionesActuales = resp.recomendaciones || [];
+
+  actualizarResumen(resp.resumen);
+  renderizarTabla(datosFiltrados);
+  renderizarRecomendaciones(recomendacionesActuales);
+
+  document.getElementById('ultimaActualizacion').textContent =
+    `Última actualización: ${new Date(resp.timestamp).toLocaleString('es-CO')} | ${resp.totalRT} RT cargados`;
+}
+
+function actualizarResumen(resumen) {
+  if (!resumen) return;
+  document.getElementById('numVerde').textContent    = resumen.totalVerde    || 0;
+  document.getElementById('numAmarillo').textContent = resumen.totalAmarillo || 0;
+  document.getElementById('numNaranja').textContent  = resumen.totalNaranja  || 0;
+  document.getElementById('numRojo').textContent     = resumen.totalRojo     || 0;
+  document.getElementById('pctCumplimiento').textContent =
+    `${resumen.porcentajeCumplimiento || 0}% cumplimiento`;
+  document.getElementById('valorRiesgo').textContent =
+    resumen.valorEnRiesgo ? formatearMoneda(resumen.valorEnRiesgo) : '';
+}
+
+function renderizarTabla(datos) {
+  const tbody = document.getElementById('cuerpoTabla');
+  document.getElementById('contadorResultados').textContent =
+    `${datos.length} registros`;
+
+  if (!datos || datos.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;
+      padding:40px;color:#999">No hay datos con los filtros seleccionados</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = datos.map((rt, idx) => {
+    const nivel = rt.semaforoGeneral?.nivel || 'VERDE';
+    const badgeClass = `badge-${nivel.toLowerCase()}`;
+    const mesPago = rt.mesPagoProximo
+      ? `${rt.mesPagoProximo.mes} (${rt.mesPagoProximo.mesNum > new Date().getMonth() + 1
+          ? rt.mesPagoProximo.mesNum - new Date().getMonth() - 1 + ' meses'
+          : 'este mes'})`
+      : '—';
+
+    return `
+      <tr onclick="toggleDetalle(${idx})" style="cursor:pointer">
+        <td><strong>${rt.rt}</strong></td>
+        <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;
+          white-space:nowrap" title="${rt.proyecto}">${rt.proyecto}</td>
+        <td style="font-size:12px">${rt.articulador}</td>
+        <td><span style="font-size:11px;background:#e8f0fe;color:#1a73e8;
+          padding:2px 8px;border-radius:10px">${rt.tipoNegociacion}</span></td>
+        <td>
+          <div style="font-size:12px;font-weight:600">${rt.estadoPredialActual}</div>
+          <div style="font-size:11px;color:#999">${rt.estadoTitulos}</div>
+        </td>
+        <td style="font-size:12px">${mesPago}</td>
+        <td style="font-weight:600;color:#1a73e8">
+          ${rt.mesPagoProximo ? formatearMoneda(rt.mesPagoProximo.valor) : '—'}
+        </td>
+        <td>
+          <span class="badge ${badgeClass}">
+            ${rt.semaforoGeneral?.label || '—'}
+          </span>
+        </td>
+        <td>
+          <span style="font-size:18px" id="iconDetalle_${idx}">▶</span>
+        </td>
+      </tr>
+      <tr class="fila-detalle" id="detalle_${idx}">
+        <td colspan="9">
+          <div class="detalle-contenido">
+            ${renderizarDetalleMeses(rt, idx)}
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function renderizarDetalleMeses(rt, idx) {
+  const meses = rt.detalleMeses || [];
+  if (meses.length === 0) {
+    return '<p style="color:#999;font-size:12px">Sin pagos pendientes programados</p>';
+  }
+
+  const tarjetasMeses = meses.map(m => {
+    const nivel = m.semaforo?.nivel || 'VERDE';
+    const color = { VERDE:'#34A853', AMARILLO:'#F9AB00', NARANJA:'#FF6D00', ROJO:'#EA4335' }[nivel];
+    return `
+      <div class="mes-card" style="border-top:3px solid ${color}">
+        <div class="mes-nombre">${m.mes}</div>
+        <div class="mes-valor" style="color:${color}">${formatearMoneda(m.valorProgramado)}</div>
+        <div class="mes-estado" style="color:${color}">${m.semaforo?.label || ''}</div>
+        <div style="font-size:10px;color:#999;margin-top:4px">
+          ${m.diasRestantes >= 0 ? m.diasRestantes + ' días' : 'Vencido'}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div style="flex:1;min-width:250px">
+        <div style="font-size:12px;font-weight:600;color:#666;margin-bottom:8px">
+          📋 ESTADOS ACTUALES
+        </div>
+        <table style="font-size:12px;width:100%">
+          <tr><td style="color:#666;padding:3px 0">Estado Predial Ajustado:</td>
+              <td><strong>${rt.estadoPredialActual}</strong></td></tr>
+          <tr><td style="color:#666;padding:3px 0">Estado Títulos:</td>
+              <td>${rt.estadoTitulos}</td></tr>
+          <tr><td style="color:#666;padding:3px 0">Estado Tasación:</td>
+              <td>${rt.estadoTasacion}</td></tr>
+          <tr><td style="color:#666;padding:3px 0">Estado Avalúo:</td>
+              <td>${rt.estadoAvaluo}</td></tr>
+          <tr><td style="color:#666;padding:3px 0">Saldo 2026:</td>
+              <td><strong style="color:#1a73e8">${formatearMoneda(rt.saldo2026)}</strong></td></tr>
+        </table>
+        <div style="margin-top:8px;padding:8px;background:#fff3e0;border-radius:6px;
+          font-size:12px;color:#b06000">
+          💡 ${rt.semaforoGeneral?.mensaje || ''}
+        </div>
+      </div>
+      <div style="flex:2;min-width:300px">
+        <div style="font-size:12px;font-weight:600;color:#666;margin-bottom:8px">
+          📅 PROGRAMACIÓN MENSUAL
+        </div>
+        <div class="meses-grid">${tarjetasMeses}</div>
+      </div>
+    </div>`;
+}
+
+function toggleDetalle(idx) {
+  const fila = document.getElementById(`detalle_${idx}`);
+  const icon = document.getElementById(`iconDetalle_${idx}`);
+  fila.classList.toggle('visible');
+  icon.textContent = fila.classList.contains('visible') ? '▼' : '▶';
+}
+
+// ── FILTROS ─────────────────────────────────────────────────
+function cargarFiltrosDisponibles() {
+  google.script.run
+    .withSuccessHandler(resp => {
+      if (!resp.success) return;
+      const selProy = document.getElementById('filtroProyecto');
+      const selArt  = document.getElementById('filtroArticulador');
+
+      resp.proyectos.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p; opt.textContent = p;
+        selProy.appendChild(opt);
+      });
+
+      resp.articuladores.forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a; opt.textContent = a;
+        selArt.appendChild(opt);
+      });
+    })
+    .withFailureHandler(() => {})
+    .getProyectosPAC();
+}
+
+function obtenerFiltrosActivos() {
+  return {
+    proyecto:    document.getElementById('filtroProyecto').value,
+    articulador: document.getElementById('filtroArticulador').value,
+    rt:          document.getElementById('filtroRT').value.trim()
+  };
+}
+
+function aplicarFiltros() {
+  const filtros = obtenerFiltrosActivos();
+  const nivelSemaforo = document.getElementById('filtroSemaforo').value;
+
+  datosFiltrados = datosCompletos.filter(rt => {
+    if (filtros.proyecto && rt.proyecto !== filtros.proyecto &&
+        rt.consolidadoProy !== filtros.proyecto) return false;
+    if (filtros.articulador && !rt.articulador.includes(filtros.articulador)) return false;
+    if (filtros.rt && !String(rt.rt).includes(filtros.rt)) return false;
+    if (nivelSemaforo && rt.semaforoGeneral?.nivel !== nivelSemaforo) return false;
+    return true;
+  });
+
+  renderizarTabla(datosFiltrados);
+}
+
+function limpiarFiltros() {
+  document.getElementById('filtroProyecto').value   = '';
+  document.getElementById('filtroArticulador').value = '';
+  document.getElementById('filtroRT').value          = '';
+  document.getElementById('filtroSemaforo').value    = '';
+  datosFiltrados = [...datosCompletos];
+  renderizarTabla(datosFiltrados);
+}
+
+// ── SINCRONIZACIÓN ──────────────────────────────────────────
+// ============================================================
+// REEMPLAZAR en pac_ui.html / pac_seccion.html
+// Buscar: function sincronizarPAC() o el botón que llama sync
+// ============================================================
+
+/**
+ * Función llamada al hacer clic en "Sincronizar PAC"
+ * Corrige el error: "sincronizarPAC is not defined"
+ */
+function iniciarSincronizacionPAC() {
+  // Mostrar confirmación (el diálogo que ya aparece en la imagen)
+  if (!confirm('¿Sincronizar el PAC con el archivo externo?')) return;
+
+  mostrarLoading('Sincronizando PAC con archivo externo...');
+
+  google.script.run
+    .withSuccessHandler(function(resultado) {
+      ocultarLoading();
+
+      if (!resultado.success) {
+        mostrarToast('❌ ' + resultado.mensaje, 'error');
+        return;
+      }
+
+      if (resultado.aprobadoAutomaticamente) {
+        mostrarToast('✅ ' + resultado.mensaje, 'success');
+        // Recargar datos del PAC
+        setTimeout(function() { cargarDatosPAC(); }, 1000);
+      } else {
+        // Hay cambios pendientes — mostrar modal de revisión
+        mostrarModalBorrador(resultado);
+      }
+    })
+    .withFailureHandler(function(error) {
+      ocultarLoading();
+      mostrarToast('❌ Error en sincronización: ' + error.message, 'error');
+      console.error('[PAC Sync Error]', error);
+    })
+    .sincronizarPAC(); // ← Llama a la función en GAS
+}
+
+/**
+ * Muestra modal con resumen de cambios del borrador
+ */
+function mostrarModalBorrador(resultado) {
+  const html = `
+    <div style="padding:16px;">
+      <h4 style="color:#f59e0b;">⚠️ Cambios detectados en el PAC externo</h4>
+      <ul style="margin:12px 0;">
+        <li>🆕 Nuevos registros: <strong>${resultado.nuevos || 0}</strong></li>
+        <li>✏️ Modificados: <strong>${resultado.modificados || 0}</strong></li>
+        <li>🗑️ Eliminados: <strong>${resultado.eliminados || 0}</strong></li>
+        <li>📊 Total cambios: <strong>${resultado.cambios}</strong></li>
+      </ul>
+      <p style="font-size:13px;color:#666;">
+        Se ha notificado al administrador. ¿Desea aprobar los cambios ahora?
+      </p>
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        <button onclick="aprobarBorrador()" 
+          style="background:#16a34a;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">
+          ✅ Aprobar cambios
+        </button>
+        <button onclick="rechazarBorrador()" 
+          style="background:#dc2626;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">
+          ❌ Rechazar cambios
+        </button>
+      </div>
+    </div>
+  `;
+  // Usar el modal existente del sistema o crear uno básico
+  if (typeof mostrarModal === 'function') {
+    mostrarModal('Revisión de Borrador PAC', html);
+  } else {
+    document.getElementById('modal-pac-body').innerHTML = html;
+    document.getElementById('modal-pac').style.display = 'flex';
+  }
+}
+
+/**
+ * Aprueba el borrador desde la UI
+ */
+function aprobarBorrador() {
+  mostrarLoading('Aprobando cambios...');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      ocultarLoading();
+      cerrarModal();
+      mostrarToast(res.success ? '✅ ' + res.mensaje : '❌ ' + res.mensaje,
+                   res.success ? 'success' : 'error');
+      if (res.success) setTimeout(function() { cargarDatosPAC(); }, 1000);
+    })
+    .withFailureHandler(function(err) {
+      ocultarLoading();
+      mostrarToast('❌ Error: ' + err.message, 'error');
+    })
+    .aprobarBorradorPAC();
+}
+
+/**
+ * Rechaza el borrador desde la UI
+ */
+function rechazarBorrador() {
+  mostrarLoading('Rechazando borrador...');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      ocultarLoading();
+      cerrarModal();
+      mostrarToast(res.success ? '✅ ' + res.mensaje : '❌ ' + res.mensaje,
+                   res.success ? 'success' : 'error');
+    })
+    .withFailureHandler(function(err) {
+      ocultarLoading();
+      mostrarToast('❌ Error: ' + err.message, 'error');
+    })
+    .rechazarBorradorPAC();
+}
+
+
+function respuestaSincronizacion(resp) {
+  ocultarLoading();
+  if (!resp.success) {
+    mostrarToast('Error en sincronización: ' + resp.error, 'error');
+    return;
+  }
+
+  if (resp.requiereAprobacion) {
+    pendienteAprobacion = true;
+    document.getElementById('textoCambios').textContent =
+      `Se detectaron ${resp.diferencias} cambios en el PAC. ` +
+      `¿Desea aprobar y aplicar estos cambios?`;
+    document.getElementById('modalAprobacion').classList.add('visible');
+
+    // Mostrar recomendaciones si las hay
+    if (resp.recomendaciones && resp.recomendaciones.length > 0) {
+      renderizarRecomendaciones(resp.recomendaciones);
+      cambiarTab('recomendaciones',
+        document.querySelectorAll('.tab')[2]);
+    }
+  } else {
+    mostrarToast(resp.mensaje, 'success');
+    cargarSemaforo();
+  }
+}
+
+function confirmarAprobacion() {
+  const obs = document.getElementById('obsAprobacion').value;
+  cerrarModalAprobacion();
+  mostrarLoading('Aprobando cambios del PAC...');
+
+  google.script.run
+    .withSuccessHandler(resp => {
+      ocultarLoading();
+      if (resp.success) {
+        mostrarToast('✅ ' + resp.mensaje, 'success');
+        cargarSemaforo();
+        cargarFiltrosDisponibles();
+      } else {
+        mostrarToast('Error: ' + resp.error, 'error');
+      }
+    })
+    .withFailureHandler(manejarError)
+    .aprobarBorradorPAC(obs);
+}
+
+// ── ALERTAS ─────────────────────────────────────────────────
+function enviarAlertas() {
+  const rtEnRiesgo = datosCompletos.filter(r =>
+    ['ROJO','NARANJA'].includes(r.semaforoGeneral?.nivel)
+  ).length;
+
+  if (rtEnRiesgo === 0) {
+    mostrarToast('No hay RT en riesgo que requieran alerta', 'warning');
+    return;
+  }
+
+  if (!confirm(`Se enviarán alertas para ${rtEnRiesgo} RT en riesgo.\n¿Continuar?`)) return;
+
+  mostrarLoading('Enviando alertas por correo...');
+  google.script.run
+    .withSuccessHandler(resp => {
+      ocultarLoading();
+      if (resp.success) {
+        mostrarToast(
+          `📧 Alertas enviadas: ${resp.correoEnviados} articuladores notificados` +
+          (resp.sinCorreo > 0 ? ` (${resp.sinCorreo} sin correo configurado)` : ''),
+          'success'
+        );
+      } else {
+        mostrarToast('Error: ' + resp.error, 'error');
+      }
+    })
+    .withFailureHandler(manejarError)
+    .enviarAlertasPAC();
+}
+
+// ── HISTORIAL ───────────────────────────────────────────────
+function cargarHistorial() {
+  mostrarLoading('Cargando historial...');
+  google.script.run
+    .withSuccessHandler(resp => {
+      ocultarLoading();
+      if (!resp.success) return;
+      const contenedor = document.getElementById('contenedorHistorial');
+
+      if (!resp.datos || resp.datos.length === 0) {
+        contenedor.innerHTML = '<p style="color:#999;text-align:center;padding:30px">Sin historial registrado</p>';
+        return;
+      }
+
+      contenedor.innerHTML = resp.datos.slice(0, 50).map(item => `
+        <div class="historial-item ${item.TIPO_CAMBIO || ''}">
+          <div class="hist-header">
+            <span>${new Date(item.TIMESTAMP).toLocaleString('es-CO')}</span>
+            <span style="background:#e8eaed;padding:2px 8px;border-radius:10px;font-size:11px">
+              ${item.TIPO_CAMBIO}
+            </span>
+          </div>
+          <div class="hist-desc">${item.DESCRIPCION}</div>
+          <div class="hist-valores">
+            RT: <strong>${item.RT}</strong> | Proyecto: ${item.PROYECTO}
+            ${item.VALOR_ANTERIOR !== undefined && item.VALOR_NUEVO !== undefined
+              ? ` | Antes: ${formatearMoneda(item.VALOR_ANTERIOR)} → Después: ${formatearMoneda(item.VALOR_NUEVO)}`
+              : ''}
+          </div>
+        </div>`).join('');
+    })
+    .withFailureHandler(manejarError)
+    .getHistorialPAC(50);
+}
+
+function verHistorial() {
+  cambiarTab('historial', document.querySelectorAll('.tab')[1]);
+  cargarHistorial();
+}
+
+// ── RECOMENDACIONES ─────────────────────────────────────────
+function renderizarRecomendaciones(recomendaciones) {
+  const contenedor = document.getElementById('contenedorRecomendaciones');
+  if (!recomendaciones || recomendaciones.length === 0) {
+    contenedor.innerHTML = '<p style="color:#999;text-align:center;padding:30px">Sin recomendaciones de reprogramación en este momento</p>';
+    return;
+  }
+
+  contenedor.innerHTML = recomendaciones.map(rec => `
+    <div style="background:white;border-radius:10px;padding:16px;margin-bottom:12px;
+      border-left:4px solid #1a73e8;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+      <div style="font-weight:600;color:#1a73e8;margin-bottom:8px">
+        📁 ${rec.proyecto}
+      </div>
+      <div style="font-size:12px;color:#666;margin-bottom:8px">
+        ⚠️ RT en riesgo: <strong>${rec.rtEnRiesgo.join(', ')}</strong>
+        | Valor en riesgo: <strong style="color:#EA4335">${formatearMoneda(rec.totalEnRiesgo)}</strong>
+      </div>
+      <div style="background:#e6f4ea;border-radius:6px;padding:10px;font-size:12px">
+        💡 <strong>Recomendación:</strong> ${rec.accion}
+        <div style="margin-top:6px">
+          RT disponibles para adelantar:
+          ${rec.rtRecomendados.map(r =>
+            `<span style="background:#34A853;color:white;padding:2px 8px;
+              border-radius:10px;font-size:11px;margin:2px">
+              RT ${r.rt} (${r.estado}) — ${formatearMoneda(r.valorDisponible)}
+            </span>`
+          ).join('')}
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+// ── ARTICULADORES ───────────────────────────────────────────
+function abrirModalArticuladores() {
+  document.getElementById('modalArticuladores').classList.add('visible');
+  mostrarLoading('Cargando articuladores...');
+
+  google.script.run
+    .withSuccessHandler(resp => {
+      ocultarLoading();
+      const lista = document.getElementById('listaArticuladores');
+      if (!resp.success || resp.datos.length === 0) {
+        lista.innerHTML = '<p style="color:#999;text-align:center">No hay articuladores registrados. Sincronice el PAC primero.</p>';
+        return;
+      }
+
+      lista.innerHTML = resp.datos.map(art => `
+        <div class="art-fila">
+          <div class="art-nombre">
+            ${art.ARTICULADOR}
+            <div style="font-size:11px;color:#999">${art.PROYECTO || ''}</div>
+          </div>
+          <div class="art-correo">
+            <input type="email" placeholder="correo@idu.gov.co"
+              value="${art.CORREO || ''}"
+              data-articulador="${art.ARTICULADOR}"
+              data-proyecto="${art.PROYECTO || ''}">
+          </div>
+        </div>`).join('');
+    })
+    .withFailureHandler(manejarError)
+    .getArticuladoresPAC();
+}
+
+function guardarTodosCorreos() {
+  const inputs = document.querySelectorAll('#listaArticuladores input[data-articulador]');
+  const promesas = [];
+
+  inputs.forEach(input => {
+    const articulador = input.dataset.articulador;
+    const correo = input.value.trim();
+    const proyecto = input.dataset.proyecto;
+
+    if (correo && correo.includes('@')) {
+      promesas.push({ articulador, correo, proyecto });
+    }
+  });
+
+  if (promesas.length === 0) {
+    mostrarToast('No hay correos válidos para guardar', 'warning');
+    return;
+  }
+
+  let guardados = 0;
+  promesas.forEach(p => {
+    google.script.run
+      .withSuccessHandler(resp => {
+        guardados++;
+        if (guardados === promesas.length) {
+          mostrarToast(`✅ ${guardados} correos guardados correctamente`, 'success');
+          cerrarModal();
+        }
+      })
+      .withFailureHandler(() => guardados++)
+      .guardarCorreoArticulador(p.articulador, p.correo, p.proyecto);
+  });
+}
+
+function cerrarModal() {
+  document.getElementById('modalArticuladores').classList.remove('visible');
+}
+function cerrarModalAprobacion() {
+  document.getElementById('modalAprobacion').classList.remove('visible');
+}
+
+// ── TABS ────────────────────────────────────────────────────
+function cambiarTab(tabId, elemento) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  elemento.classList.add('active');
+  document.getElementById('tab-' + tabId).classList.add('active');
+}
+
+// ── UTILIDADES UI ───────────────────────────────────────────
+function mostrarLoading(msg) {
+  document.getElementById('loadingMsg').textContent = msg || 'Procesando...';
+  document.getElementById('loadingOverlay').classList.add('visible');
+}
+function ocultarLoading() {
+  document.getElementById('loadingOverlay').classList.remove('visible');
+}
+function mostrarToast(msg, tipo) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast ${tipo || ''} visible`;
+  setTimeout(() => t.classList.remove('visible'), 4000);
+}
+function manejarError(err) {
+  ocultarLoading();
+  mostrarToast('Error: ' + (err.message || err), 'error');
+  console.error(err);
+}
+function formatearMoneda(valor) {
+  if (!valor && valor !== 0) return '—';
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(valor);
+}
+</script>
+</body>
+</html>
