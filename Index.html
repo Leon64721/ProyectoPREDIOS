@@ -5719,64 +5719,63 @@ console.log('✅ Funciones auxiliares de notificaciones cargadas');
                     .withSuccessHandler(function(result) {
                         $('#loader').fadeOut();
                         
-                        if (result.success) {
+                                                if (result.success) {
                             console.log('✅ PDF generado:', result);
-                            
-                            const modalHtml = `
-                                <div class="modal fade" id="pdfSuccessModal" tabindex="-1">
-                                    <div class="modal-dialog modal-xl modal-dialog-centered">
-                                        <div class="modal-content">
-                                            <div class="modal-header bg-success text-white">
-                                                <h5 class="modal-title">
-                                                    <i class="fas fa-check-circle"></i> PDF Generado Exitosamente
-                                                </h5>
-                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                                            </div>
-                                            <div class="modal-body">
-                                                <div class="alert alert-success">
-                                                    <i class="fas fa-file-pdf"></i>
-                                                    <strong>Archivo:</strong> ${result.fileName}
-                                                </div>
-                                                
-                                                <div class="ratio ratio-16x9 mb-3" style="height: 500px;">
-                                                    <iframe src="${result.previewUrl}" 
-                                                            frameborder="0" 
-                                                            allowfullscreen
-                                                            style="border-radius: 8px;">
-                                                    </iframe>
-                                                </div>
-                                                
-                                                <div class="d-grid gap-2">
-                                                    <a href="${result.viewUrl}" class="btn btn-primary btn-lg" target="_blank">
-                                                        <i class="fas fa-external-link-alt"></i> Abrir en Drive
-                                                    </a>
-                                                    <a href="${result.downloadUrl}" class="btn btn-success btn-lg" download>
-                                                        <i class="fas fa-download"></i> Descargar PDF
-                                                    </a>
-                                                    <button class="btn btn-outline-secondary" onclick="copyToClipboard('${result.viewUrl}')">
-                                                        <i class="fas fa-copy"></i> Copiar Enlace
-                                                    </button>
-                                                </div>
-                                                
-                                                <div class="mt-3 p-2 bg-light rounded">
-                                                    <small class="text-muted">
-                                                        <strong>📊 Detalles incluidos:</strong> ${result.detallesIncluidos} de ${result.detallesTotal}
-                                                    </small>
-                                                </div>
-                                            </div>
-                                            <div class="modal-footer">
-                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            `;
-                            
-                            $('#pdfSuccessModal').remove();
-                            $('body').append(modalHtml);
-                            new bootstrap.Modal(document.getElementById('pdfSuccessModal')).show();
-                            
-                            showToast('✅ PDF generado correctamente', 'success');
+                                                        let modalHtml = '';
+                                                        if (result.emailSent) {
+                                                                modalHtml = `
+                                                                    <div class="modal fade" id="pdfSuccessModal" tabindex="-1">
+                                                                        <div class="modal-dialog modal-lg modal-dialog-centered">
+                                                                            <div class="modal-content">
+                                                                                <div class="modal-header bg-success text-white">
+                                                                                    <h5 class="modal-title"><i class="fas fa-check-circle"></i> PDF Enviado</h5>
+                                                                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                                                                </div>
+                                                                                <div class="modal-body">
+                                                                                    <div class="alert alert-success">
+                                                                                        <i class="fas fa-file-pdf"></i>
+                                                                                        <strong>Archivo:</strong> ${result.fileName}
+                                                                                        <p class="mb-0">El PDF ha sido enviado por correo a <strong>${result.emailedTo}</strong>.</p>
+                                                                                    </div>
+                                                                                    <div class="mt-3 p-2 bg-light rounded">
+                                                                                         <small class="text-muted"><strong>📊 Detalles incluidos:</strong> ${result.detallesIncluidos} de ${result.detallesTotal}</small>
+                                                                                    </div>
+                                                                                </div>
+                                                                                <div class="modal-footer">
+                                                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>`;
+                                                        } else {
+                                                                modalHtml = `
+                                                                    <div class="modal fade" id="pdfSuccessModal" tabindex="-1">
+                                                                        <div class="modal-dialog modal-xl modal-dialog-centered">
+                                                                            <div class="modal-content">
+                                                                                <div class="modal-header bg-success text-white">
+                                                                                    <h5 class="modal-title"><i class="fas fa-check-circle"></i> PDF Generado Exitosamente</h5>
+                                                                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                                                                </div>
+                                                                                <div class="modal-body">
+                                                                                    <div class="alert alert-success"><i class="fas fa-file-pdf"></i> <strong>Archivo:</strong> ${result.fileName}</div>
+                                                                                    <div class="ratio ratio-16x9 mb-3" style="height: 500px;"><iframe src="${result.previewUrl}" frameborder="0" allowfullscreen style="border-radius: 8px;"></iframe></div>
+                                                                                    <div class="d-grid gap-2">
+                                                                                        <a href="${result.viewUrl}" class="btn btn-primary btn-lg" target="_blank"><i class="fas fa-external-link-alt"></i> Abrir en Drive</a>
+                                                                                        <a href="${result.downloadUrl}" class="btn btn-success btn-lg" download><i class="fas fa-download"></i> Descargar PDF</a>
+                                                                                        <button class="btn btn-outline-secondary" onclick="copyToClipboard('${result.viewUrl}')"><i class="fas fa-copy"></i> Copiar Enlace</button>
+                                                                                    </div>
+                                                                                    <div class="mt-3 p-2 bg-light rounded"><small class="text-muted"><strong>📊 Detalles incluidos:</strong> ${result.detallesIncluidos} de ${result.detallesTotal}</small></div>
+                                                                                </div>
+                                                                                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button></div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>`;
+                                                        }
+
+                                                        $('#pdfSuccessModal').remove();
+                                                        $('body').append(modalHtml);
+                                                        new bootstrap.Modal(document.getElementById('pdfSuccessModal')).show();
+                                                        showToast('✅ PDF generado correctamente', 'success');
                         } else {
                             console.error('❌ Error del servidor:', result);
                             showToast('❌ Error: ' + result.error, 'danger');

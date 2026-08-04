@@ -1601,40 +1601,33 @@ function generateServerPdfReport(dataStructure) {
     const docFile = DriveApp.getFileById(doc.getId());
     const pdfBlob = docFile.getAs('application/pdf');
     pdfBlob.setName(docName + '.pdf');
-    
-    let folder;
+
+    // Enviar el PDF por correo al usuario que solicitó la generación
     try {
-      folder = DriveApp.getFolderById('TU_ID_CARPETA_REPORTES');
-    } catch (e) {
-      folder = DriveApp.getRootFolder();
+      const recipient = Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail();
+      MailApp.sendEmail({
+        to: recipient,
+        subject: `Reporte PDF - ${docName}`,
+        htmlBody: `<p>Adjunto el reporte generado: <strong>${docName}.pdf</strong></p>`,
+        attachments: [pdfBlob]
+      });
+      console.log('📧 PDF enviado por correo a: ' + recipient);
+    } catch (eEmail) {
+      console.error('❌ Error enviando PDF por correo: ' + eEmail.message);
     }
-    
-    const pdfFile = folder.createFile(pdfBlob);
-    pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    docFile.setTrashed(true);
-    
-    const fileId = pdfFile.getId();
-    const viewUrl = `https://drive.google.com/file/d/${fileId}/view`;
-    const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-    const previewUrl = `https://drive.google.com/file/d/${fileId}/preview`;
-    
-    console.log('✅ PDF COMPLETO generado exitosamente');
-    console.log('📄 Nombre: ' + pdfFile.getName());
-    console.log('📊 Total detalles: ' + data.detalles.length);
-    console.log('📋 Total registros: ' + data.detalles.reduce((sum, d) => sum + d.count, 0));
-    
+
+    // Eliminar el documento temporal creado
+    try { docFile.setTrashed(true); } catch (e) { console.warn('No se pudo mover a la papelera el doc temporal: ' + e.message); }
+
     return {
       success: true,
-      fileId: fileId,
-      fileName: pdfFile.getName(),
-      fileUrl: pdfFile.getUrl(),
-      viewUrl: viewUrl,
-      downloadUrl: downloadUrl,
-      previewUrl: previewUrl,
+      emailSent: true,
+      emailedTo: Session.getActiveUser().getEmail(),
+      fileName: docName + '.pdf',
       detallesIncluidos: data.detalles.length,
       detallesTotal: data.detalles.length,
       registrosTotales: data.detalles.reduce((sum, d) => sum + d.count, 0),
-      message: 'PDF generado correctamente con TODOS los registros'
+      message: 'PDF enviado por correo al solicitante'
     };
     
   } catch (e) {
