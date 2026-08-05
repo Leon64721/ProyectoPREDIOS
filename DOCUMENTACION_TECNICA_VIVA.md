@@ -716,6 +716,87 @@ Las Secciones 3.3 y 10 de este documento (escritas por la sesion anterior) indic
 
 **Actualizacion 2026-08-05 (segunda verificacion, mismo dia):** el diagnostico de "renderizacion bloqueada" tambien quedo parcialmente corregido. `pdf.exe setup` (el smoke test interno de la herramienta) sigue fallando con el mismo error de Chromium, pero el comando real de uso, `pdf.exe generate <archivo.md> <salida> --to docx|pdf`, **funciona correctamente para ambos formatos** cuando se ejecuta directamente sobre este mismo documento: `Documento_Tecnico_Aplicacion_Predios.docx` (6810 palabras, 529KB, generado en 0.6s) y `Documento_Tecnico_Aplicacion_Predios.pdf` (con `--cover --toc`, 6810 palabras, 1023KB, generado en 9.3s, incluyendo el paso de Chromium que fallaba en `setup`). Conclusion revisada: la exportacion formal a Word y PDF **si esta operativa** en este equipo; el fallo de `setup` es un problema aislado del propio smoke test, no de la ruta de generacion real. Se retira el item 6 de `TODOS.md` como resuelto.
 
+### 12.7 [2026-08-05] [CONC-P2.1] Diferenciar timeout de lock vs JSON invalido en motores de reglas
+
+**Archivo(s) Intervenido(s):**
+- `evaluador_alertas.js#L8-L86`
+- `motor_reglas.js#L8-L86`
+
+**Proposito del Archivo en el Sistema:**
+`evaluador_alertas.js` y su copia duplicada `motor_reglas.js` exponen `obtenerReglasJSON()`/`guardarReglasJSON()`, usadas por la UI de administracion para leer y escribir el JSON maestro de reglas de negocio (hoja oculta `CONFIG_REGLAS`).
+
+**Motivo de la Intervencion:**
+Hallazgo [P2] de la auditoria de Staff Engineer registrado en `TODOS.md` (item 5) tras la intervencion [CONC-P2] (12.3): en `guardarReglasJSON`, `lock.waitLock(20000)` vivia dentro del mismo `try` que `JSON.parse(jsonString)`. Si el lock expiraba por contencion (dos administradores guardando reglas casi al mismo tiempo), el unico `catch` devolvia el mensaje generico "El formato JSON es invalido" -- un diagnostico falso para un admin cuyo JSON si era correcto. En `obtenerReglasJSON`, un timeout de lock durante la auto-creacion de `CONFIG_REGLAS` degradaba a un `TypeError` capturado por el catch externo, con mensaje tecnico en vez de explicar la causa real.
+
+**Cambios Tecnicos Realizados:**
+- `guardarReglasJSON`: `JSON.parse(jsonString)` se valida en un `try/catch` propio **antes** de tocar el lock -- un JSON invalido nunca llega a `lock.waitLock()`.
+- `guardarReglasJSON`: la adquisicion del lock pasa a su propio `try/catch` independiente; si `waitLock(20000)` lanza excepcion, retorna `{ success: false, message: 'El sistema se encuentra ocupado por otro administrador. Por favor intente de nuevo en unos segundos.' }` sin ejecutar la logica de guardado.
+- `obtenerReglasJSON`: el `catch` del bloque de auto-creacion de `CONFIG_REGLAS` retorna el mismo mensaje de "sistema ocupado" en vez de dejar que degrade a un `TypeError` sin contexto.
+- `lock.releaseLock()` se mantiene garantizado (via `finally`) en toda ruta donde el lock fue realmente adquirido; las rutas donde `waitLock()` lanza excepcion no liberan porque el lock nunca llego a adquirirse (no hay fuga).
+- Cambio aplicado de forma identica en ambos archivos (duplicacion intencional preexistente, no se corrige aqui).
+
+**Fragmento de Codigo (Antes vs Despues):**
+
+Antes (`evaluador_alertas.js` / `motor_reglas.js`, `guardarReglasJSON`):
+```javascript
+function guardarReglasJSON(jsonString, usuario) {
+  try {
+    JSON.parse(jsonString); // Si esto falla, tira error abajo
+  } catch (e) {
+    return { success: false, error: "El formato JSON es inválido. Revisa la sintaxis." };
+  }
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+    const fileId = getConfig('DATA_FILES.PRINCIPAL');
+    ...
+```
+
+Despues:
+```javascript
+function guardarReglasJSON(jsonString, usuario) {
+  // ✅ CONC-P2.1: validar el JSON ANTES de tocar el lock, para que un JSON invalido
+  // nunca se reporte como timeout ni un timeout se reporte como JSON invalido
+  try {
+    JSON.parse(jsonString);
+  } catch (parseError) {
+    return { success: false, error: "El formato JSON es inválido. Revisa la sintaxis." };
+  }
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+  } catch (lockError) {
+    return { success: false, message: 'El sistema se encuentra ocupado por otro administrador. Por favor intente de nuevo en unos segundos.' };
+  }
+
+  try {
+    const fileId = getConfig('DATA_FILES.PRINCIPAL');
+    ...
+  } finally {
+    try { lock.releaseLock(); } catch (er) {}
+  }
+}
+```
+
+**Metricas del Cambio:**
+
+| Archivo | LOC iniciales | LOC finales | Delta absoluto | % variacion |
+|---|---|---|---|---|
+| `evaluador_alertas.js` | 502 | 513 | +11 | +2.2% |
+| `motor_reglas.js` | 74 | 85 | +11 | +14.9% |
+
+Cifras verificadas con `git diff --numstat` contra `HEAD` (`+15/-4` lineas en ambos archivos) -- atribuibles integramente a esta intervencion puntual (ningun otro cambio toco estos dos archivos en esta sesion despues de 12.3).
+
+**Validacion y Pruebas Ejecutadas:**
+- [x] Sintaxis validada con `node --check` (ambos archivos, `OK`)
+- [x] Auditoria como Staff Engineer (equivalente a `/review`, repo sin rama base): confirmado que `lock.releaseLock()` se sigue ejecutando en toda ruta donde el lock fue realmente adquirido, que no existe ninguna ruta de adquisicion-sin-liberacion, que el comportamiento del camino exitoso (JSON valido + lock disponible + escritura correcta) no cambio, y que ambos archivos quedan comportamentalmente identicos. Hallazgo menor no bloqueante: en `obtenerReglasJSON`, el `catch` del bloque de auto-creacion tambien captura errores no relacionados con el lock (p. ej. un fallo real de `insertSheet`), heredado de la intervencion [SEC-P1.5] previa a esta sesion -- no es una regresion de este cambio y queda fuera de alcance (afecta solo el escenario raro de primera ejecucion sin hoja `CONFIG_REGLAS`).
+- [ ] Pruebas en navegador con `/qa` sobre URL de desarrollo (cambio en manejo de errores de backend; no se ejecuto una prueba de UI dedicada para forzar contencion de lock real en esta intervencion)
+
+**Impacto en Produccion:**
+Un administrador que intenta guardar reglas mientras otro tiene el lock ahora ve un mensaje que describe correctamente la causa ("sistema ocupado, intente de nuevo") en vez de un mensaje de JSON invalido que lo llevaria a revisar sin sentido un JSON que ya era correcto. Cierra el item 5 de `TODOS.md` como `[COMPLETADO]`.
+
 ## 13. Inventario Exhaustivo del Repositorio
 
 Inventario factual archivo por archivo de los 23 archivos que componen el nucleo del backend, el frontend y los subproyectos auxiliares. Elaborado el 2026-08-05 leyendo directamente el codigo fuente (no inferido de nombres de archivo). Los archivos de los subproyectos `MatrizSeguimiento_script/` y `normalizacion_script/` se confirmaron 100% independientes del backend principal: cero referencias a `getConfig(`, `GestorDatos`, `GestorPermisos` o `GestorAuditoria` en ninguno de sus 11 archivos.

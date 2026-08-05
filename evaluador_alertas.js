@@ -27,7 +27,10 @@ function obtenerReglasJSON() {
           hojaReglas.getRange("B1").setValue("{}"); // JSON vacío por defecto
         }
       } catch (lockError) {
+        // ✅ CONC-P2.1: diferenciar timeout de lock de otros errores (antes se tragaba en silencio
+        // y caía al TypeError de hojaReglas null, con mensaje técnico confuso)
         console.error("Error adquiriendo lock para crear CONFIG_REGLAS:", lockError);
+        return { success: false, message: 'El sistema se encuentra ocupado por otro administrador. Por favor intente de nuevo en unos segundos.' };
       } finally {
         try { lock.releaseLock(); } catch (er) {}
       }
@@ -44,14 +47,22 @@ function obtenerReglasJSON() {
 
 // Función para que el Administrador guarde cambios en el JSON desde la UI
 function guardarReglasJSON(jsonString, usuario) {
+  // ✅ CONC-P2.1: validar el JSON ANTES de tocar el lock, para que un JSON invalido
+  // nunca se reporte como timeout ni un timeout se reporte como JSON invalido
+  try {
+    JSON.parse(jsonString);
+  } catch (parseError) {
+    return { success: false, error: "El formato JSON es inválido. Revisa la sintaxis." };
+  }
+
   const lock = LockService.getScriptLock();
   try {
-    // 1. Validar que sea un JSON bien formado antes de guardar
-    JSON.parse(jsonString);
-
-    // ✅ SEC-P1.5: LockService para evitar escrituras concurrentes sobre CONFIG_REGLAS
     lock.waitLock(20000);
+  } catch (lockError) {
+    return { success: false, message: 'El sistema se encuentra ocupado por otro administrador. Por favor intente de nuevo en unos segundos.' };
+  }
 
+  try {
     const fileId = getConfig('DATA_FILES.PRINCIPAL');
     const ss = SpreadsheetApp.openById(fileId);
     let hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
@@ -68,7 +79,7 @@ function guardarReglasJSON(jsonString, usuario) {
     return { success: true, message: "Reglas actualizadas correctamente en la base de datos." };
 
   } catch (error) {
-    return { success: false, error: "El formato JSON es inválido. Revisa la sintaxis." };
+    return { success: false, error: 'Error al guardar las reglas: ' + error.message };
   } finally {
     try { lock.releaseLock(); } catch (er) {}
   }

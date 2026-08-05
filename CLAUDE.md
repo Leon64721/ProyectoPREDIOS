@@ -158,11 +158,15 @@ Available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-desig
 <!-- gstack-gbrain-search-guidance:start -->
 
 GBrain is set up locally on this machine (CLI only, no MCP tools registered — `claude` was not
-found on PATH during setup). Semantic search is unavailable until an embedding provider key is
-configured. Until then, prefer Grep for all code lookups in this repo. Once embeddings are
-configured and the repo is imported (`gbrain import "$(pwd)" --no-embed && gbrain embed --stale`),
-prefer `gbrain search "<terms>"` / `gbrain code-def <symbol>` for semantic or symbol-based
-questions, and keep Grep for known exact strings, regex, and file globs.
+found on PATH during setup). Re-verified 2026-08-05: the memory/transcript capability round-trip
+(`gbrain put` + `gbrain search`) works correctly, and `gbrain import` for project memory succeeds.
+**Code-source registration still fails** on every `/sync-gbrain` run with
+`Unknown flag: CODE/CREACIÓN` — the gbrain CLI mis-parses this repo's Windows path because it
+contains spaces and an accented character (`Aplicación de Predios`). This blocks `gbrain sources
+add`, `code-def`, `code-refs`, and semantic code search entirely; it is an environment/path issue,
+not a missing embedding key. Until the repo can be indexed from a path without spaces/accents (or
+the upstream CLI fixes path quoting), use Grep for ALL code lookups in this repo. `gbrain
+search`/`gbrain query` remain usable for project memory and past-session context (not code).
 
 <!-- gstack-gbrain-search-guidance:end -->
 
