@@ -121,6 +121,15 @@ Notas de mantenimiento y asistencia:
 - Punto de entrada web: `doGet(e)` en `Codigo.js` — contiene control de mantenimiento, validación de config y carga de plantilla.
 - Funciones de exportación a PDF/XLSX usan `DriveApp` y `UrlFetchApp` y pueden requerir permisos adicionales.
 
+## Documentacion viva obligatoria
+
+- El archivo canónico de evidencia técnica del proyecto es `DOCUMENTACION_TECNICA_VIVA.md`.
+- Cada cambio relevante en backend, frontend, configuración, PAC, auditoría, permisos o despliegue debe registrarse allí.
+- Antes de modificar un archivo importante, documentar qué hace el archivo y qué se va a cambiar.
+- Después de modificarlo, documentar funciones tocadas, impacto funcional, validaciones ejecutadas y referencias a líneas o bloques relevantes.
+- Cuando se requiera entregable formal, usar ese Markdown como fuente para generar PDF o DOCX.
+- Esta regla aplica también a cambios realizados desde otros agentes o flujos de trabajo, incluyendo sesiones paralelas o herramientas externas.
+
 Contacto/Soporte interno:
 - Autores originales y correos encontrados en plantillas y mensajes: `fabian.montanez@idu.gov.co`, `sistemasdtdp@idu.gov.co`.
 

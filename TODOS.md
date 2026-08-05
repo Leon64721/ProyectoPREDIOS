@@ -89,3 +89,21 @@ Backlog de deuda técnica identificada en la auditoría arquitectónica (`/plan-
 **Context:** No es un hallazgo nuevo de diseño — es una regresión menor de calidad de mensaje introducida al añadir el LockService del ítem 1. No bloqueaba `/qa` según el dictamen de la auditoría (el sistema sigue devolviendo un error controlado, no un crash).
 
 **Depends on / blocked by:** Depende del ítem 1 (ya completado) — este es su seguimiento directo.
+
+---
+
+## 6. Habilitar exportación formal de `DOCUMENTACION_TECNICA_VIVA.md` a PDF/DOCX — [RESUELTO 2026-08-05]
+
+**Resuelto:** `pdf.exe generate DOCUMENTACION_TECNICA_VIVA.md Documento_Tecnico_Aplicacion_Predios.docx --to docx` y la variante `--to pdf --cover --toc` se ejecutaron directamente sobre el documento y funcionaron sin error, generando ambos archivos en la raíz del repo (529KB / 1023KB). El comando `pdf.exe setup` (su propio smoke test interno) sigue fallando con el mismo error de Chromium, pero **no afecta** al comando real de generación (`generate`), que es el que importa para este caso de uso. Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.6 y 17.3.
+
+**What (original):** Resolver el error de `make-pdf` (`~/.claude/skills/gstack/make-pdf/dist/pdf.exe setup` falla con `Blocked: scheme "about:" is not allowed` al lanzar Chromium vía el `browse` tool interno de gstack) para poder exportar la bitácora técnica viva a un entregable formal.
+
+**Why:** El proyecto ahora mantiene `DOCUMENTACION_TECNICA_VIVA.md` como fuente canónica de evidencia técnica (ver Sección 2 y 7 de ese documento). El usuario necesita, en algún punto, un entregable formal (PDF o Word) para radicados/informes al IDU. `make-pdf` ya soporta `--to docx` directamente (no requiere Pandoc), pero su pipeline de renderizado depende del mismo `browse` tool que ya mostró comportamiento poco confiable en este entorno Windows/Git Bash durante el intento de QA con navegador (ver checkpoint de sesión `20260805-004443`).
+
+**Pros:** Una vez resuelto, exportar la bitácora a PDF/DOCX es un solo comando (`pdf.exe generate DOCUMENTACION_TECNICA_VIVA.md --to docx --cover --toc`), sin depender de Pandoc externo.
+
+**Cons:** El error parece un bug específico del `browse` tool en este entorno (rechaza `about:blank` al abrir una pestaña nueva) — puede requerir reportarlo aguas arriba en gstack o instalar Pandoc como alternativa mientras tanto.
+
+**Context:** Verificado el 2026-08-05 (ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.6): el binario existe y su CLI responde correctamente (`--help`, `--version`), pero `pdf.exe setup` falla en el paso 2/5 ("Launching Chromium"). `./setup` completo de gstack no resolvió el problema.
+
+**Depends on / blocked by:** Ninguno — es independiente del resto del backlog técnico del código.
