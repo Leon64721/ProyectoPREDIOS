@@ -7,22 +7,35 @@
 // Función para obtener el JSON actual de las reglas
 function obtenerReglasJSON() {
   try {
-    const fileId = getConfig('DATA_FILES.PRINCIPAL'); 
+    const fileId = getConfig('DATA_FILES.PRINCIPAL');
     const ss = SpreadsheetApp.openById(fileId);
     let hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
-    
+
     // Si la hoja no existe, la crea (Instalación automática)
     if (!hojaReglas) {
-      hojaReglas = ss.insertSheet('CONFIG_REGLAS');
-      hojaReglas.hideSheet(); // La oculta para que los usuarios no la dañen
-      hojaReglas.getRange("A1").setValue("MOTOR_DE_REGLAS_JSON");
-      hojaReglas.getRange("A1").setFontWeight("bold").setBackground("#34495e").setFontColor("white");
-      hojaReglas.getRange("B1").setValue("{}"); // JSON vacío por defecto
+      // ✅ SEC-P1.5: LockService para evitar creación duplicada de la hoja bajo concurrencia
+      const lock = LockService.getScriptLock();
+      try {
+        lock.waitLock(20000);
+        // Re-chequear tras adquirir el lock: otro proceso pudo haberla creado mientras esperábamos
+        hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
+        if (!hojaReglas) {
+          hojaReglas = ss.insertSheet('CONFIG_REGLAS');
+          hojaReglas.hideSheet(); // La oculta para que los usuarios no la dañen
+          hojaReglas.getRange("A1").setValue("MOTOR_DE_REGLAS_JSON");
+          hojaReglas.getRange("A1").setFontWeight("bold").setBackground("#34495e").setFontColor("white");
+          hojaReglas.getRange("B1").setValue("{}"); // JSON vacío por defecto
+        }
+      } catch (lockError) {
+        console.error("Error adquiriendo lock para crear CONFIG_REGLAS:", lockError);
+      } finally {
+        try { lock.releaseLock(); } catch (er) {}
+      }
     }
-    
+
     const jsonString = hojaReglas.getRange("B1").getValue();
     return { success: true, data: jsonString };
-    
+
   } catch (error) {
     console.error("Error leyendo reglas:", error);
     return { success: false, error: error.message };
@@ -31,17 +44,21 @@ function obtenerReglasJSON() {
 
 // Función para que el Administrador guarde cambios en el JSON desde la UI
 function guardarReglasJSON(jsonString, usuario) {
+  const lock = LockService.getScriptLock();
   try {
     // 1. Validar que sea un JSON bien formado antes de guardar
-    JSON.parse(jsonString); 
-    
+    JSON.parse(jsonString);
+
+    // ✅ SEC-P1.5: LockService para evitar escrituras concurrentes sobre CONFIG_REGLAS
+    lock.waitLock(20000);
+
     const fileId = getConfig('DATA_FILES.PRINCIPAL');
     const ss = SpreadsheetApp.openById(fileId);
     let hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
-    
+
     // 2. Guardar en la celda B1
     hojaReglas.getRange("B1").setValue(jsonString);
-    
+
     // 3. Registrar en auditoría (usando tu Gestor de Auditoría actual)
     try {
       const auditoria = new GestorAuditoria(fileId);
@@ -49,9 +66,11 @@ function guardarReglasJSON(jsonString, usuario) {
     } catch(e) { console.warn("No se pudo auditar:", e); }
 
     return { success: true, message: "Reglas actualizadas correctamente en la base de datos." };
-    
+
   } catch (error) {
     return { success: false, error: "El formato JSON es inválido. Revisa la sintaxis." };
+  } finally {
+    try { lock.releaseLock(); } catch (er) {}
   }
 }
 
@@ -343,51 +362,61 @@ class MotorEvaluadorReglas {
     this.alertasGeneradas = alertasUnicas;
 
     // --- CONTINÚA EL GUARDADO NORMAL ---
-    let hojaAlertas = this.ss.getSheetByName("ALERTAS_ACTIVAS");
-    
-    if (!hojaAlertas) {
-      hojaAlertas = this.ss.insertSheet("ALERTAS_ACTIVAS");
-    } else {
-      hojaAlertas.clear();
+    // ✅ SEC-P1.5: LockService — esta operación borra y reescribe ALERTAS_ACTIVAS por completo
+    const lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(20000);
+
+      let hojaAlertas = this.ss.getSheetByName("ALERTAS_ACTIVAS");
+
+      if (!hojaAlertas) {
+        hojaAlertas = this.ss.insertSheet("ALERTAS_ACTIVAS");
+      } else {
+        hojaAlertas.clear();
+      }
+
+      const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "FASE", "REGLA", "DIAS RESTANTES", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
+      hojaAlertas.getRange(1, 1, 1, headers.length).setValues([headers]);
+      hojaAlertas.getRange(1, 1, 1, headers.length).setBackground("#c0392b").setFontColor("white").setFontWeight("bold");
+
+      if (this.alertasGeneradas.length === 0) {
+        hojaAlertas.getRange(2, 1).setValue("No hay alertas activas en el sistema.");
+        return;
+      }
+
+      // Ordenar alertas (ROJO primero, luego NARANJA, luego AMARILLO)
+      const pesoNivel = { "ROJO": 1, "NARANJA": 2, "AMARILLO": 3, "INFO": 4 };
+      this.alertasGeneradas.sort((a, b) => pesoNivel[a.NIVEL] - pesoNivel[b.NIVEL]);
+
+      const ts = this.hoy.toLocaleString('es-CO');
+      const filas = this.alertasGeneradas.map(a => [
+        ts,
+        a.NIVEL,
+        a.RT,
+        a.PROYECTO,
+        a.ARTICULADOR,
+        a.FASE,
+        a.REGLA,
+        a.DIAS_RESTANTES,
+        a.MENSAJE,
+        a.ESTADO_PREDIAL
+      ]);
+
+      hojaAlertas.getRange(2, 1, filas.length, headers.length).setValues(filas);
+
+      const rangoNivel = hojaAlertas.getRange(2, 2, filas.length, 1);
+
+      const ruleRojo = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("ROJO").setBackground("#fce8e6").setFontColor("#c5221f").setRanges([rangoNivel]).build();
+      const ruleNaranja = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("NARANJA").setBackground("#fff3e0").setFontColor("#e65100").setRanges([rangoNivel]).build();
+      const ruleAmarillo = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("AMARILLO").setBackground("#fef9e7").setFontColor("#b06000").setRanges([rangoNivel]).build();
+
+      hojaAlertas.setConditionalFormatRules([ruleRojo, ruleNaranja, ruleAmarillo]);
+      hojaAlertas.autoResizeColumns(1, headers.length);
+    } catch (error) {
+      console.error("Error guardando ALERTAS_ACTIVAS:", error);
+    } finally {
+      try { lock.releaseLock(); } catch (er) {}
     }
-
-    const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "FASE", "REGLA", "DIAS RESTANTES", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
-    hojaAlertas.getRange(1, 1, 1, headers.length).setValues([headers]);
-    hojaAlertas.getRange(1, 1, 1, headers.length).setBackground("#c0392b").setFontColor("white").setFontWeight("bold");
-
-    if (this.alertasGeneradas.length === 0) {
-      hojaAlertas.getRange(2, 1).setValue("No hay alertas activas en el sistema.");
-      return;
-    }
-
-    // Ordenar alertas (ROJO primero, luego NARANJA, luego AMARILLO)
-    const pesoNivel = { "ROJO": 1, "NARANJA": 2, "AMARILLO": 3, "INFO": 4 };
-    this.alertasGeneradas.sort((a, b) => pesoNivel[a.NIVEL] - pesoNivel[b.NIVEL]);
-
-    const ts = this.hoy.toLocaleString('es-CO');
-    const filas = this.alertasGeneradas.map(a => [
-      ts,
-      a.NIVEL,
-      a.RT,
-      a.PROYECTO,
-      a.ARTICULADOR,
-      a.FASE,
-      a.REGLA,
-      a.DIAS_RESTANTES,
-      a.MENSAJE,
-      a.ESTADO_PREDIAL
-    ]);
-
-    hojaAlertas.getRange(2, 1, filas.length, headers.length).setValues(filas);
-    
-    const rangoNivel = hojaAlertas.getRange(2, 2, filas.length, 1); 
-
-    const ruleRojo = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("ROJO").setBackground("#fce8e6").setFontColor("#c5221f").setRanges([rangoNivel]).build();
-    const ruleNaranja = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("NARANJA").setBackground("#fff3e0").setFontColor("#e65100").setRanges([rangoNivel]).build();
-    const ruleAmarillo = SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo("AMARILLO").setBackground("#fef9e7").setFontColor("#b06000").setRanges([rangoNivel]).build();
-      
-    hojaAlertas.setConditionalFormatRules([ruleRojo, ruleNaranja, ruleAmarillo]);
-    hojaAlertas.autoResizeColumns(1, headers.length);
   }
 
   // ═══════════════════════════════════════════════════════════

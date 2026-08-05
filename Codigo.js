@@ -50,8 +50,18 @@ function parseDateRobust(value) {
 // ══════════════════════════════════════════════════════════
 function saveFollowupData(dataJson) {
   try {
-    const data = typeof dataJson === 'string' ? JSON.parse(dataJson) : dataJson;
     const userEmail = Session.getActiveUser().getEmail();
+
+    // ✅ SEC-P1: validación de autorización server-side (no confiar solo en la UI)
+    const gestorPermisos = new GestorPermisos();
+    const rolUsuario = gestorPermisos.obtenerRol(userEmail);
+    const rolesAutorizados = [getConfig('ROLES.EDITOR'), getConfig('ROLES.ADMIN')];
+    if (!rolUsuario || rolesAutorizados.indexOf(rolUsuario) === -1) {
+      console.warn(`⚠️ Acceso denegado a saveFollowupData para ${userEmail} (rol: ${rolUsuario || 'ninguno'})`);
+      return { success: false, error: 'No tiene permisos para registrar seguimiento. Se requiere rol Editor o Administrador.' };
+    }
+
+    const data = typeof dataJson === 'string' ? JSON.parse(dataJson) : dataJson;
     const formObject = {
       rt:             data['RT']            || data['rt']            || '',
       estadoPredial:  data['ESTADO PREDIAL']|| data['estadoPredial'] || '',
@@ -237,7 +247,7 @@ function getRtFollowupTimeline(rt, filterType = 'ALL') {
         startDate = new Date(2000, 0, 1);
     }
     
-    const dataFilesIds = getConfig('DATA_FILES_IDS') || [getConfig('MAESTRO_PERMISOS')];
+    const dataFilesIds = getDataFilesIds();
     
     dataFilesIds.forEach(id => {
       try {
@@ -326,10 +336,7 @@ function getDashboardData() {
     const seguimientoRecords = [];
 
     // ✅ OBTENER IDs DE ARCHIVOS
-    let dataFilesIds = CONFIG.DATA_FILES_IDS;
-    if (!dataFilesIds || !Array.isArray(dataFilesIds) || dataFilesIds.length === 0) {
-      dataFilesIds = [getConfig('DATA_FILES.PRINCIPAL')];
-    }
+    const dataFilesIds = getDataFilesIds();
     
     // ✅ OBTENER FILTRO ACTIVO DE LA BASE DE DATOS
     let gestorFiltro = null;
@@ -509,7 +516,7 @@ function getDropdownLists() {
       situaciones: new Set()
     };
 
-    const dataFilesIds = getConfig('DATA_FILES_IDS') || [getConfig('MAESTRO_PERMISOS')];
+    const dataFilesIds = getDataFilesIds();
     
     dataFilesIds.forEach(id => {
       try {
@@ -581,7 +588,7 @@ function saveTrackingData(formObject, userEmail) {
     let targetFileId = null;
     let targetRowIndex = -1;
 
-    const dataFilesIds = getConfig('DATA_FILES_IDS') || [getConfig('MAESTRO_PERMISOS')];
+    const dataFilesIds = getDataFilesIds();
 
     // 1. BUSCAR RT EN LAS BASES (lectura)
     for (const id of dataFilesIds) {
@@ -810,7 +817,7 @@ function detectarCambios(formObj, wsDatos, rowIndex) {
  */
 function getRtHistory(rt) {
   const historial = [];
-  const dataFilesIds = getConfig('DATA_FILES_IDS') || [getConfig('MAESTRO_PERMISOS')];
+  const dataFilesIds = getDataFilesIds();
 
   dataFilesIds.forEach(id => {
     try {
@@ -1838,27 +1845,141 @@ function onOpen() {
   ui.createMenu('🛠️ Control Web')
     .addItem('🛑 Activar Mantenimiento (Bloquear Web)', 'ACTIVAR_MANTENIMIENTO')
     .addItem('✅ Desactivar Mantenimiento (Abrir Web)', 'DESACTIVAR_MANTENIMIENTO')
+    .addSeparator()
+    .addItem('🔍 Validar Staging Dato 2', 'validarStaging')
+    .addItem('🚀 Promover Dato 2 a Dato 1', 'promoverDato2aDato1')
     .addToUi();
 }
 
-function ACTIVAR_MANTENIMIENTO() {
-  PropertiesService.getScriptProperties().setProperty('MODO_MANTENIMIENTO', 'true');
-  
-  // Mostrar mensaje de confirmación en el Excel
+function _isAdminOrPowerEditor() {
   try {
-    SpreadsheetApp.getUi().alert('🚧 MANTENIMIENTO ACTIVADO\n\nLos usuarios ya no pueden acceder al tablero. Verán la pantalla de bloqueo al recargar.');
-  } catch(e) {}
-  
-  console.log('🚧 Mantenimiento ACTIVADO.');
+    const email = Session.getActiveUser().getEmail().toLowerCase();
+    const gestor = new GestorPermisos();
+    const rol = gestor.obtenerRol(email) || '';
+    const adminRole = getConfig('ROLES.ADMIN');
+    const editorRole = getConfig('ROLES.EDITOR');
+
+    if (rol === adminRole) return true;
+
+    const powerProp = PropertiesService.getScriptProperties().getProperty('POWER_EDITORS') || '';
+    const powerList = powerProp.split(',').map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+    return powerList.indexOf(email) >= 0 && (rol === editorRole || rol === adminRole);
+  } catch (e) {
+    console.error('Error verificando permisos avanzados: ' + e.message);
+    return false;
+  }
 }
 
-function DESACTIVAR_MANTENIMIENTO() {
-  PropertiesService.getScriptProperties().setProperty('MODO_MANTENIMIENTO', 'false');
-  
-  // Mostrar mensaje de confirmación en el Excel
+function validarStaging() {
+  const ui = SpreadsheetApp.getUi();
   try {
-    SpreadsheetApp.getUi().alert('✅ MANTENIMIENTO DESACTIVADO\n\nEl sistema vuelve a estar en línea. Los usuarios ya pueden entrar al tablero.');
-  } catch(e) {}
-  
-  console.log('✅ Mantenimiento DESACTIVADO. Sistema en línea.');
+    const stagingId = getStagingFileId();
+    if (!stagingId) {
+      ui.alert('Validación Staging', 'No está configurado DATA_FILES.STAGING. Por favor define el ID de Dato 2 en config.js.', ui.ButtonSet.OK);
+      return;
+    }
+
+    const principalId = getConfig('DATA_FILES.PRINCIPAL');
+    if (stagingId === principalId) {
+      ui.alert('Validación Staging', 'El ID de staging no puede ser igual al ID del archivo principal.', ui.ButtonSet.OK);
+      return;
+    }
+
+    const ssStaging = SpreadsheetApp.openById(stagingId);
+    const ssPrincipal = SpreadsheetApp.openById(principalId);
+    const sheetNames = [getConfig('SHEETS.DATOS'), getConfig('SHEETS.SEGUIMIENTO')];
+    const diffs = [];
+
+    sheetNames.forEach(function(name) {
+      const stagingSheet = ssStaging.getSheetByName(name);
+      const principalSheet = ssPrincipal.getSheetByName(name);
+      if (!stagingSheet) {
+        diffs.push(`Hoja '${name}' no existe en staging`);
+        return;
+      }
+      if (!principalSheet) {
+        diffs.push(`Hoja '${name}' no existe en el archivo principal`);
+        return;
+      }
+
+      const stagingHeaders = stagingSheet.getRange(1, 1, 1, stagingSheet.getLastColumn()).getValues()[0].map(function(h) { return String(h || '').trim(); });
+      const principalHeaders = principalSheet.getRange(1, 1, 1, principalSheet.getLastColumn()).getValues()[0].map(function(h) { return String(h || '').trim(); });
+      const onlyInStaging = stagingHeaders.filter(function(h) { return principalHeaders.indexOf(h) < 0; });
+      const onlyInPrincipal = principalHeaders.filter(function(h) { return stagingHeaders.indexOf(h) < 0; });
+      if (onlyInStaging.length || onlyInPrincipal.length) {
+        diffs.push(`Hoja '${name}' desalineada: Staging sólo ${onlyInStaging.length} columnas, Principal sólo ${onlyInPrincipal.length} columnas.`);
+      }
+      diffs.push(`Hoja '${name}': Staging ${Math.max(0, stagingSheet.getLastRow() - 1)} filas, Principal ${Math.max(0, principalSheet.getLastRow() - 1)} filas.`);
+    });
+
+    const message = diffs.length > 0 ? diffs.join('\n') : 'Staging verificado correctamente. No se encontraron diferencias estructurales graves.';
+    ui.alert('Resultado de validación de Staging', message, ui.ButtonSet.OK);
+  } catch (e) {
+    ui.alert('Validación Staging', 'Error al validar staging: ' + e.message, ui.ButtonSet.OK);
+    console.error('Error en validarStaging: ' + e.message);
+  }
+}
+
+function promoverDato2aDato1() {
+  const ui = SpreadsheetApp.getUi();
+  if (!_isAdminOrPowerEditor()) {
+    ui.alert('Promoción Staging', 'No tienes permisos suficientes para promover Dato 2 a Dato 1.', ui.ButtonSet.OK);
+    return;
+  }
+
+  const answer = ui.alert('Promover Dato 2 a Dato 1', 'Esta acción reemplazará los datos de producción con los datos del staging. Asegúrate de haber validado staging primero. ¿Deseas continuar?', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) {
+    ui.alert('Promoción Staging', 'Operación cancelada.', ui.ButtonSet.OK);
+    return;
+  }
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+
+    const stagingId = getStagingFileId();
+    const principalId = getConfig('DATA_FILES.PRINCIPAL');
+    if (!stagingId) throw new Error('No está configurado DATA_FILES.STAGING.');
+    if (stagingId === principalId) throw new Error('El archivo staging no puede ser igual al archivo principal.');
+
+    const ssStaging = SpreadsheetApp.openById(stagingId);
+    const ssPrincipal = SpreadsheetApp.openById(principalId);
+    const sheetNames = [getConfig('SHEETS.DATOS'), getConfig('SHEETS.SEGUIMIENTO')];
+
+    sheetNames.forEach(function(name) {
+      copiarHojaDeStaging(ssStaging, ssPrincipal, name);
+    });
+
+    ui.alert('Promoción Staging', 'Promoción completada correctamente. Revisa el archivo principal para verificar los datos.', ui.ButtonSet.OK);
+  } catch (e) {
+    ui.alert('Promoción Staging', 'Error promoviendo staging: ' + e.message, ui.ButtonSet.OK);
+    console.error('Error en promoverDato2aDato1: ' + e.message);
+  } finally {
+    try { lock.releaseLock(); } catch (err) {}
+  }
+}
+
+function copiarHojaDeStaging(sourceSS, targetSS, sheetName) {
+  try {
+    const sourceSheet = sourceSS.getSheetByName(sheetName);
+    const targetSheet = targetSS.getSheetByName(sheetName);
+    if (!sourceSheet) throw new Error(`Hoja '${sheetName}' no existe en staging.`);
+    if (!targetSheet) throw new Error(`Hoja '${sheetName}' no existe en producción.`);
+
+    const values = sourceSheet.getDataRange().getValues();
+    if (!values || values.length === 0) {
+      targetSheet.clearContents();
+      return;
+    }
+
+    const rows = values.length;
+    const cols = values[0].length;
+    if (targetSheet.getMaxRows() < rows) targetSheet.insertRowsAfter(targetSheet.getMaxRows(), rows - targetSheet.getMaxRows());
+    if (targetSheet.getMaxColumns() < cols) targetSheet.insertColumnsAfter(targetSheet.getMaxColumns(), cols - targetSheet.getMaxColumns());
+    targetSheet.clearContents();
+    targetSheet.getRange(1, 1, rows, cols).setValues(values);
+    SpreadsheetApp.flush();
+  } catch (e) {
+    throw new Error('Error copiando hoja ' + sheetName + ': ' + e.message);
+  }
 }

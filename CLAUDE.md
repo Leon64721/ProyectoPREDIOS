@@ -126,3 +126,34 @@ Contacto/Soporte interno:
 
 Si quieres, actualizo este documento con ejemplos de despliegue paso a paso, los scopes exactos a incluir en `appsscript.json`, o un checklist automatizado para CI/CD. 
 
+## gstack
+Use /browse from gstack for all web browsing. Never use mcp__claude-in-chrome__* tools.
+Available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-design-review,
+/design-consultation, /design-shotgun, /design-html, /review, /ship, /land-and-deploy,
+/canary, /benchmark, /browse, /open-gstack-browser, /qa, /qa-only, /design-review,
+/setup-browser-cookies, /setup-deploy, /setup-gbrain, /sync-gbrain, /retro, /investigate,
+/document-release, /document-generate, /codex, /cso, /autoplan, /pair-agent, /careful, /freeze,
+/guard, /unfreeze, /gstack-upgrade, /learn.
+
+## GBrain Configuration (configured by /setup-gbrain)
+- Mode: local-stdio
+- Engine: pglite
+- Config file: ~/.gbrain/config.json (mode 0600)
+- Setup date: 2026-08-04
+- MCP registered: no (`claude` CLI not found on PATH in this environment — register manually later with `claude mcp add --scope user gbrain -- <path-to-gbrain> serve` once the CLI is available)
+- Embeddings: deferred (no OPENAI_API_KEY/VOYAGE_API_KEY/ZEROENTROPY_API_KEY set) — semantic search unavailable until configured with `gbrain config set embedding_model <id>` + `gbrain embed --stale`
+- Artifacts sync: off
+- Current repo policy: n/a (no git remote configured)
+
+## GBrain Search Guidance (configured by /sync-gbrain)
+<!-- gstack-gbrain-search-guidance:start -->
+
+GBrain is set up locally on this machine (CLI only, no MCP tools registered — `claude` was not
+found on PATH during setup). Semantic search is unavailable until an embedding provider key is
+configured. Until then, prefer Grep for all code lookups in this repo. Once embeddings are
+configured and the repo is imported (`gbrain import "$(pwd)" --no-embed && gbrain embed --stale`),
+prefer `gbrain search "<terms>"` / `gbrain code-def <symbol>` for semantic or symbol-based
+questions, and keep Grep for known exact strings, regex, and file globs.
+
+<!-- gstack-gbrain-search-guidance:end -->
+

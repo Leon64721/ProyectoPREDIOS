@@ -14,12 +14,13 @@ const CONFIG = {
 
   // ✅ ARCHIVOS DE DATOS (ESTRUCTURA ORIGINAL + COMPATIBILIDAD)
   DATA_FILES: {
-    PRINCIPAL: '***REMOVED***',
-    SECUNDARIOS: []
+    PRINCIPAL: '', // Usar el Spreadsheet activo si no se especifica otro ID
+    SECUNDARIOS: [],
+    STAGING: '' // ID de Dato 2 / Staging para validaciones y promoción manual
   },
   
   // ✅ NUEVO: Compatibilidad con código que usa DATA_FILES_IDS
-  DATA_FILES_IDS: ['***REMOVED***'],
+  DATA_FILES_IDS: [],
   
   // ✅ COMPATIBILIDAD: Alias para código antiguo
   MAESTRO_PERMISOS: '***REMOVED***',
@@ -230,6 +231,18 @@ function getConfig(path, defaultValue = null) {
       value = value[key];
     }
     
+    // ✅ Si solicitamos el archivo principal y no hay valor configurado,
+    // usar el spreadsheet activo como fallback para staging y pruebas locales.
+    if (path === 'DATA_FILES.PRINCIPAL' && (value === null || value === undefined || value === '')) {
+      try {
+        const activeId = SpreadsheetApp.getActiveSpreadsheet().getId();
+        console.log(`✅ DATA_FILES.PRINCIPAL no configurado, usando hoja activa: ${activeId}`);
+        return activeId;
+      } catch (err) {
+        console.warn('⚠️ No se pudo obtener Spreadsheet activo para DATA_FILES.PRINCIPAL: ' + err.message);
+      }
+    }
+
     // ✅ Retornar el valor encontrado
     return value;
     
@@ -251,6 +264,29 @@ function getConfigOrDefault(path, defaultValue) {
 }
 
 /**
+ * Obtiene lista de archivos de datos utilizando DATA_FILES_IDS o fallback de MAESTRO_PERMISOS.
+ * @returns {string[]} Array de IDs de hojas de cálculo.
+ */
+function getDataFilesIds() {
+  try {
+    const ids = getConfig('DATA_FILES_IDS', []);
+    if (Array.isArray(ids) && ids.length > 0) {
+      return ids;
+    }
+    const allIds = getAllFileIds();
+    if (Array.isArray(allIds) && allIds.length > 0) {
+      return allIds;
+    }
+    const maestro = getConfig('MAESTRO_PERMISOS');
+    return maestro ? [maestro] : [];
+  } catch (e) {
+    console.error(`Error en getDataFilesIds: ${e.message}`);
+    const maestro = getConfig('MAESTRO_PERMISOS');
+    return maestro ? [maestro] : [];
+  }
+}
+
+/**
  * ✅ MEJORADO: Valida que la configuración sea completa y correcta
  * @returns {boolean} true si es válida, false si no
  * @throws {Error} Si hay configuración crítica faltante
@@ -261,7 +297,6 @@ function validateConfig() {
     
     const required = [
       'DATA_FILES.PRINCIPAL',
-      'DATA_FILES_IDS',
       'SHEETS.DATOS',
       'SHEETS.PERMISOS',
       'SHEETS.LOGS',
@@ -306,6 +341,13 @@ function validateConfig() {
       console.error(`❌ ${error}`);
       throw new Error(error);
     }
+
+    const resolvedIds = getDataFilesIds();
+    if (!Array.isArray(resolvedIds) || resolvedIds.length === 0) {
+      const error = 'Config inválida: no se encontraron archivos de datos válidos en DATA_FILES.PRINCIPAL, DATA_FILES.SECUNDARIOS, DATA_FILES_IDS o MAESTRO_PERMISOS';
+      console.error(`❌ ${error}`);
+      throw new Error(error);
+    }
     
     console.log('✅ Configuración válida');
     console.log(`   DATA_FILES.PRINCIPAL: ${getConfig('DATA_FILES.PRINCIPAL')}`);
@@ -346,7 +388,10 @@ function diagnosticarSistema() {
     
     // 4. Verificar Spreadsheet
     console.log('\n📊 VERIFICANDO ARCHIVO:');
-    const fileId = CONFIG.DATA_FILES.PRINCIPAL;
+    const fileId = getConfig('DATA_FILES.PRINCIPAL');
+    if (!fileId) {
+      throw new Error('DATA_FILES.PRINCIPAL no configurado y no hay hoja activa disponible');
+    }
     const ss = SpreadsheetApp.openById(fileId);
     console.log(`  Nombre: ${ss.getName()}`);
     console.log(`  ID: ${ss.getId()}`);
@@ -626,6 +671,16 @@ function getPrincipalFileId() {
     return fileId;
   } catch (e) {
     console.error(`Error obteniendo archivo principal: ${e.message}`);
+    return null;
+  }
+}
+
+function getStagingFileId() {
+  try {
+    const fileId = getConfig('DATA_FILES.STAGING');
+    return fileId || null;
+  } catch (e) {
+    console.error(`Error obteniendo archivo staging: ${e.message}`);
     return null;
   }
 }

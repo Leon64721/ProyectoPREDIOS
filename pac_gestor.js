@@ -866,7 +866,11 @@ function sincronizarPAC() {
  */
 function aprobarBorradorPAC(motivo) {
   pac_log('aprobarBorradorPAC: ' + (motivo || 'aprobación manual'));
+  // ✅ SEC-P1.5: LockService — publica el borrador sobre PAC_Vigente (escritura masiva compartida)
+  const lock = LockService.getScriptLock();
   try {
+    lock.waitLock(20000);
+
     const ss = pac_getSpreadsheet();
 
     // FIX: nombres correctos de hojas
@@ -909,6 +913,8 @@ function aprobarBorradorPAC(motivo) {
   } catch (e) {
     pac_log('aprobarBorradorPAC ERROR: ' + e.message, 'ERROR');
     return { success: false, mensaje: 'Error al aprobar borrador: ' + e.message };
+  } finally {
+    try { lock.releaseLock(); } catch (er) {}
   }
 }
 
@@ -948,8 +954,11 @@ function rechazarBorradorPAC() {
  */
 function _pac_compararYGenerarBorrador(hojaVigente, hojaBorrador, filasExternas) {
   var res = { totalCambios: 0, nuevos: 0, modificados: 0, eliminados: 0 };
+  // ✅ SEC-P1.5: LockService — genera/reescribe PAC_Borrador (escritura masiva compartida)
+  var lock = LockService.getScriptLock();
 
   try {
+    lock.waitLock(20000);
     hojaBorrador.clearContents();
 
     // ── 1. Detectar nuevos y eliminados ───────────────────────────────────
@@ -1052,6 +1061,8 @@ function _pac_compararYGenerarBorrador(hojaVigente, hojaBorrador, filasExternas)
 
   } catch (e) {
     pac_log('_pac_compararYGenerarBorrador ERROR: ' + e.message, 'ERROR');
+  } finally {
+    try { lock.releaseLock(); } catch (er) {}
   }
 
   return res;

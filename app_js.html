@@ -1,0 +1,4281 @@
+    <script>
+      // ═══════════════════════════════════════════════════════════════════════════════════
+// VARIABLES GLOBALES Y GESTIÓN DE ESTADO
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+let rawData = [];
+let allColsList = [];
+let currentData = [];
+let tableInstance = null;
+let currentUser = '';
+let currentRole = '';
+let pendingAction = null;
+let isTrackingMode = false;
+let currentDropdowns = {};
+let originalData = {};
+let seguimientoData = [];
+let pdfDataStructure = null;
+
+// ✅ NUEVO: Estado de navegación persistente
+let navigationState = {
+    lastOpenedModal: null,
+    scrollPosition: 0,
+    activeFilters: {},
+    activeKpi: 'ALL',
+    activeTramo: 'ALL',
+    lastViewedRT: null
+};
+
+// Configuración de columnas
+const C = {
+    PROYECTO: 'PROYECTO',
+    RT: 'RT',
+    TRAMO: 'TRAMO',
+    ESTADO: 'ESTADO PREDIAL AJUSTADO',
+    FECHA: 'FECHA ESTIMADA DE ENTREGA',
+    DISP: 'PREDIOS DISPONIBLES (INCLUYE CESIONES)',
+    ID: 'CHIP',
+    DIR: 'DIRECCIÓN',
+    EST: 'ESTIMADO $',
+    PAG: 'VALOR PAGADO',
+    FECHA_ISO: 'FECHA_ISO',
+    OBS: 'OBSERVACIONES'
+};
+
+// Estado de filtros
+let state = {
+    dateLimit: null,
+    dateMode: 'ACUM',
+    kpiFilter: 'ALL',
+    kpiSubFilter: null,  // ✅ NUEVO: Para subfiltros CESION/ADQUIRIR
+    selProyecto: 'ALL',
+    selTramo: 'ALL',
+    tramoFromMatrix: 'ALL',
+    matrixTotal: 0, // ✅ NUEVO: Almacenar total actual de matriz
+    matrixPage: 1,
+    matrixPageSize: 100
+};
+
+function setMatrixPageSize(size) {
+    const parsed = parseInt(size, 10);
+    const validSizes = [50, 100, 200];
+    state.matrixPageSize = validSizes.includes(parsed) ? parsed : 100;
+    state.matrixPage = 1;
+    renderMatrix();
+}
+
+function gotoMatrixPage(value) {
+    const page = parseInt(value, 10);
+    if (Number.isNaN(page)) return;
+    setMatrixPage(page);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// MOTOR DE REGLAS GRÁFICO (VISUAL BUILDER)
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+let motorReglasData = null;
+
+function cargarJSONenPantalla() {
+    showLoader('Cargando Motor de Reglas...');
+    google.script.run
+        .withSuccessHandler(function(response) {
+            hideLoader();
+            if (response.success) {
+                let val = response.data;
+                if(val && val !== "{}" && val !== "") {
+                    try {
+                        motorReglasData = JSON.parse(val);
+                        // Cargar en el editor avanzado
+                        document.getElementById('editorJSONReglas').value = JSON.stringify(motorReglasData, null, 4);
+                        // Renderizar las tarjetas visuales
+                        renderizarTarjetasReglas();
+                        renderizarFuentesDeDatos();
+                    } catch(e) {
+                        showToast('Error procesando el JSON guardado', 'danger');
+                    }
+                } else {
+                    document.getElementById('contenedorTarjetasReglas').innerHTML = '<div class="col-12 text-center p-5 text-muted">Aún no hay reglas configuradas. Pega el JSON Maestro en el Modo Desarrollador.</div>';
+                }
+            } else {
+                showToast('Error cargando reglas: ' + response.error, 'danger');
+            }
+        })
+        .withFailureHandler(onError)
+        .obtenerReglasJSON();
+}
+
+function renderizarTarjetasReglas() {
+    const contenedor = document.getElementById('contenedorTarjetasReglas');
+    contenedor.innerHTML = '';
+
+    if (!motorReglasData || !motorReglasData.ReglasDeNegocio || motorReglasData.ReglasDeNegocio.length === 0) {
+        contenedor.innerHTML = '<div class="col-12 text-center p-5 text-muted">No hay reglas definidas.</div>';
+        return;
+    }
+
+    motorReglasData.ReglasDeNegocio.forEach((regla, index) => {
+        const colorBorde = regla.activa ? '#27ae60' : '#95a5a6';
+        const badgeEstado = regla.activa ? 
+            `<span class="badge bg-success" style="font-size:0.7rem;"><i class="fas fa-check-circle"></i> ACTIVA</span>` : 
+            `<span class="badge bg-secondary" style="font-size:0.7rem;"><i class="fas fa-power-off"></i> INACTIVA</span>`;
+        
+        let detalleAlerta = '';
+        if(regla.alerta_bloqueo) detalleAlerta = `<span class="badge bg-danger ms-1">Bloqueo: ${regla.alerta_bloqueo.nivel}</span>`;
+        if(regla.regla_tiempo) detalleAlerta = `<span class="badge bg-warning text-dark ms-1"><i class="far fa-clock"></i> Control Tiempos</span>`;
+
+        const card = `
+        <div class="col-md-6 mb-4">
+            <div class="card h-100 shadow-sm" style="border-radius: 10px; border-left: 5px solid ${colorBorde}; transition: transform 0.2s;">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="badge bg-light text-primary border border-primary">${regla.fase || 'GENERAL'}</span>
+                        ${badgeEstado}
+                    </div>
+                    <h6 class="fw-bold mb-1" style="color: #2c3e50;">${regla.nombre}</h6>
+                    <p class="small text-muted mb-2" style="font-size: 0.8rem; height: 40px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;">
+                        ${regla.descripcion}
+                    </p>
+                    <div class="mb-3">
+                        <small class="text-primary fw-bold" style="font-size:0.7rem;">ID: ${regla.id_regla}</small><br>
+                        ${detalleAlerta}
+                    </div>
+                </div>
+                <div class="card-footer bg-white border-top-0 pt-0">
+                    <button class="btn btn-sm btn-outline-primary w-100 fw-bold" onclick="abrirEditorVisual(${index})">
+                        <i class="fas fa-edit"></i> Configurar Regla
+                    </button>
+                </div>
+            </div>
+        </div>`;
+        contenedor.innerHTML += card;
+    });
+}
+
+function renderizarFuentesDeDatos() {
+    const contenedor = document.getElementById('contenedorTarjetasFuentes');
+    contenedor.innerHTML = '';
+
+    if (!motorReglasData || !motorReglasData.FuentesDeDatos) return;
+
+    for (const [llave, fuente] of Object.entries(motorReglasData.FuentesDeDatos)) {
+        const card = `
+        <div class="col-md-6 mb-3">
+            <div class="card shadow-sm border-0 bg-light">
+                <div class="card-body">
+                    <h6 class="fw-bold text-success mb-2"><i class="fas fa-database"></i> ${llave}</h6>
+                    <ul class="list-unstyled small mb-0">
+                        <li><strong>Archivo ID:</strong> <span class="text-muted" style="word-break: break-all;">${fuente.id_archivo}</span></li>
+                        <li><strong>Hoja:</strong> <span class="text-primary fw-bold">${fuente.hoja_datos}</span></li>
+                        <li><strong>Llave de Cruce:</strong> <span class="badge bg-dark">${fuente.llave_cruce}</span></li>
+                    </ul>
+                </div>
+            </div>
+        </div>`;
+        contenedor.innerHTML += card;
+    }
+}
+
+function abrirEditorVisual(index) {
+    if(!motorReglasData) return;
+    const regla = motorReglasData.ReglasDeNegocio[index];
+    
+    document.getElementById('editReglaIndex').value = index;
+    document.getElementById('editReglaId').value = regla.id_regla;
+    document.getElementById('editReglaNombre').value = regla.nombre;
+    document.getElementById('editReglaActiva').value = regla.activa ? "true" : "false";
+    document.getElementById('editReglaFase').value = regla.fase || '';
+    document.getElementById('editReglaDesc').value = regla.descripcion || '';
+
+    // Extraer solo la lógica (condiciones, validaciones) para mostrarla en el recuadro gris
+    const logica = {};
+    if(regla.condiciones) logica.condiciones = regla.condiciones;
+    if(regla.regla_tiempo) logica.regla_tiempo = regla.regla_tiempo;
+    if(regla.alerta_bloqueo) logica.alerta_bloqueo = regla.alerta_bloqueo;
+    if(regla.evaluacion_cruzada) logica.evaluacion_cruzada = regla.evaluacion_cruzada;
+    
+    document.getElementById('editReglaLogicaCode').textContent = JSON.stringify(logica, null, 2);
+
+    const modal = new bootstrap.Modal(document.getElementById('modalEditarReglaVis'));
+    modal.show();
+}
+
+function guardarEdicionReglaVisual() {
+    const index = document.getElementById('editReglaIndex').value;
+    if(index === "" || !motorReglasData) return;
+
+    // Actualizar el objeto JS
+    motorReglasData.ReglasDeNegocio[index].nombre = document.getElementById('editReglaNombre').value.trim();
+    motorReglasData.ReglasDeNegocio[index].activa = document.getElementById('editReglaActiva').value === "true";
+    motorReglasData.ReglasDeNegocio[index].fase = document.getElementById('editReglaFase').value.trim();
+    motorReglasData.ReglasDeNegocio[index].descripcion = document.getElementById('editReglaDesc').value.trim();
+
+    // Sincronizar con el Textarea (Modo Desarrollador)
+    const jsonStringActualizado = JSON.stringify(motorReglasData, null, 4);
+    document.getElementById('editorJSONReglas').value = jsonStringActualizado;
+
+    // Renderizar de nuevo las tarjetas
+    renderizarTarjetasReglas();
+
+    // Cerrar modal
+    bootstrap.Modal.getInstance(document.getElementById('modalEditarReglaVis')).hide();
+    showToast('Regla editada temporalmente. No olvides dar clic en "Guardar Configuración" arriba.', 'info');
+}
+
+function guardarJSONdesdePantalla() {
+    const jsonString = document.getElementById('editorJSONReglas').value.trim();
+    
+    if(!jsonString) { showToast('El editor está vacío', 'warning'); return; }
+
+    try { JSON.parse(jsonString); } catch (e) {
+        showConfirmation('❌ El formato JSON tiene errores de sintaxis en el Modo Desarrollador. Corrígelo antes de guardar.');
+        return; 
+    }
+
+    showLoader('Guardando configuración en la Base de Datos...');
+    google.script.run
+        .withSuccessHandler(function(response) {
+            hideLoader();
+            if (response.success) {
+                showToast('✅ ' + response.message, 'success');
+                cargarJSONenPantalla(); // Recargar para asegurar sincro
+            } else { showToast('❌ Error: ' + response.error, 'danger'); }
+        })
+        .withFailureHandler(onError)
+        .guardarReglasJSON(jsonString, currentUser);
+}
+
+function formatearJSON() {
+    const textarea = document.getElementById('editorJSONReglas');
+    try {
+        const obj = JSON.parse(textarea.value);
+        textarea.value = JSON.stringify(obj, null, 4); 
+        motorReglasData = obj; // Sincroniza
+        renderizarTarjetasReglas(); // Actualiza gráfica
+        renderizarFuentesDeDatos();
+        showToast('Código formateado y gráficas actualizadas', 'info');
+    } catch (e) {
+        showToast('No se puede formatear: JSON inválido', 'warning');
+    }
+}
+
+// Inicializar al hacer clic en el menú
+$(document).on('click', '.menu-item', function() {
+    const onclickAttr = $(this).attr('onclick') || "";
+    if (onclickAttr.includes("showPage('motorReglas'")) {
+        cargarJSONenPantalla();
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES DE GESTIÓN DE ESTADO
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+function saveNavigationState() {
+    navigationState.scrollPosition = $(window).scrollTop();
+    navigationState.activeFilters = {
+        proyecto: $('#filterProyecto').val(),
+        tramo: $('#filterTramo').val(),
+        estado: $('#filterEstado').val(),
+        fecha: $('#dateFilter').val(),
+        modo: $('#dateMode').val()
+    };
+    navigationState.activeKpi = state.kpiFilter;
+    navigationState.activeTramo = state.tramoFromMatrix;
+    
+    console.log('💾 Estado guardado:', navigationState);
+}
+
+function restoreNavigationState() {
+    if (!navigationState.activeFilters) return;
+    
+    console.log('🔄 Restaurando estado:', navigationState);
+    
+    // Restaurar filtros
+    $('#filterProyecto').val(navigationState.activeFilters.proyecto || 'ALL');
+    $('#filterTramo').val(navigationState.activeFilters.tramo || 'ALL');
+    $('#filterEstado').val(navigationState.activeFilters.estado || 'ALL');
+    $('#dateFilter').val(navigationState.activeFilters.fecha || '');
+    $('#dateMode').val(navigationState.activeFilters.modo || 'ACUM');
+    
+    // Restaurar estado interno
+    state.kpiFilter = navigationState.activeKpi;
+    state.tramoFromMatrix = navigationState.activeTramo;
+    
+    // Aplicar filtros
+    applyFilters();
+    
+    // Restaurar scroll
+    setTimeout(() => {
+        $(window).scrollTop(navigationState.scrollPosition);
+    }, 300);
+}
+
+
+      // ═══════════════════════════════════════════════════════════════════════════════════
+// INICIALIZACIÓN
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+$(document).ready(function() {
+    console.log('🚀 Inicializando Tablero Enterprise Integrado v3.0...');
+    
+    // ✅ Configurar limpieza de modales
+    setupModalCleanup();
+    bindSearchableFilterInputs();
+    
+    try {
+        google.script.run
+            .withSuccessHandler(function(data) {
+                try {
+                    console.log('✅ Datos de usuario recibidos:', data);
+                    
+                    if (!data) {
+                        throw new Error('Datos de usuario vacíos');
+                    }
+                    
+                    currentUser = data.user || 'Usuario';
+                    currentRole = data.role || 'Lector';
+                    
+                    $('#user-display').text(currentUser);
+                    $('#role-display').text(currentRole);
+                    
+                    console.log('👤 Usuario: ' + currentUser);
+                    console.log('👥 Rol: ' + currentRole);
+                    
+                    loadDashboardData();
+                } catch (e) {
+                    console.error('❌ Error procesando datos de usuario: ' + e.message);
+                    currentUser = 'Usuario';
+                    currentRole = 'Lector';
+                    $('#user-display').text(currentUser);
+                    $('#role-display').text(currentRole);
+                    loadDashboardData();
+                }
+            })
+            .withFailureHandler(function(error) {
+                console.error('❌ Error obteniendo datos de usuario: ' + error.message);
+                currentUser = 'Usuario';
+                currentRole = 'Lector';
+                $('#user-display').text(currentUser);
+                $('#role-display').text(currentRole);
+                loadDashboardData();
+            })
+            .getUserAndRole();
+    } catch (e) {
+        console.error('❌ Error crítico en inicialización: ' + e.message);
+        currentUser = 'Usuario';
+        currentRole = 'Lector';
+        loadDashboardData();
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// LIMPIEZA DE MODALES
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+function setupModalCleanup() {
+    // Limpiar modal de tracking al cerrar
+    $('#trackingModal').on('hidden.bs.modal', function() {
+        $('#trackingForm')[0].reset();
+        $('#changeSummary').addClass('d-none');
+        $('#btnConfirmSave').addClass('d-none');
+        originalData = {};
+        console.log('🧹 Modal de tracking limpiado');
+    });
+    
+    // Limpiar modal de detalles al cerrar
+    $('#detailModal').on('hidden.bs.modal', function() {
+        if (tableInstance) {
+            try {
+                tableInstance.destroy();
+                tableInstance = null;
+            } catch(e) {
+                console.warn('⚠️ Error destruyendo tabla:', e.message);
+            }
+        }
+        $('#detailTable').empty();
+        console.log('🧹 Modal de detalles limpiado');
+    });
+    
+    // Limpiar modal de detalles RT al cerrar
+    $('#rtDetailModal').on('hidden.bs.modal', function() {
+        $('#rtDetailBody').empty();
+        $('#rtTimelineBody').empty();
+        console.log('🧹 Modal de detalles RT limpiado');
+    });
+    
+    console.log('✅ Sistema de limpieza de modales configurado');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES DE GESTIÓN DE ESTADO
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+function saveNavigationState() {
+    navigationState.scrollPosition = $(window).scrollTop();
+    navigationState.activeFilters = {
+        proyecto: $('#filterProyecto').val(),
+        tramo: $('#filterTramo').val(),
+        estado: $('#filterEstado').val(),
+        fecha: $('#dateFilter').val(),
+        modo: $('#dateMode').val()
+    };
+    navigationState.activeKpi = state.kpiFilter;
+    navigationState.activeTramo = state.tramoFromMatrix;
+    
+    console.log('💾 Estado guardado:', navigationState);
+}
+
+function restoreNavigationState() {
+    if (!navigationState.activeFilters) {
+        console.log('⚠️ No hay estado previo para restaurar');
+        return;
+    }
+    
+    console.log('🔄 Restaurando estado:', navigationState);
+    
+    try {
+        // Restaurar filtros en los selectores
+        $('#filterProyecto').val(navigationState.activeFilters.proyecto || 'ALL');
+        
+        // Actualizar tramos disponibles según proyecto
+        onProyectoChange();
+        
+        // Restaurar tramo
+        $('#filterTramo').val(navigationState.activeFilters.tramo || 'ALL');
+        
+        // Actualizar estados disponibles según tramo
+        onTramoChange();
+        
+        // Restaurar estado
+        $('#filterEstado').val(navigationState.activeFilters.estado || 'ALL');
+        $('#dateFilter').val(navigationState.activeFilters.fecha || '');
+        $('#dateMode').val(navigationState.activeFilters.modo || 'ACUM');
+        
+        // Restaurar estado interno
+        state.selProyecto = navigationState.activeFilters.proyecto || 'ALL';
+        state.selTramo = navigationState.activeFilters.tramo || 'ALL';
+        state.dateLimit = navigationState.activeFilters.fecha || null;
+        state.dateMode = navigationState.activeFilters.modo || 'ACUM';
+        state.kpiFilter = navigationState.activeKpi;
+        state.tramoFromMatrix = navigationState.activeTramo;
+        
+        // Restaurar KPI activo visualmente
+        $('.kpi-card').removeClass('active');
+        if(state.kpiFilter === 'DISPONIBLE') $('#card-disp').addClass('active');
+        else if(state.kpiFilter === 'PENDIENTE') $('#card-pend').addClass('active');
+        else if(state.kpiFilter === 'ADQUIRIR') $('#card-adq').addClass('active');
+        else $('#card-total').addClass('active');
+        
+        // Aplicar filtros
+        applyFilters();
+        
+        // Restaurar scroll después de un pequeño delay
+        setTimeout(() => {
+            $(window).scrollTop(navigationState.scrollPosition);
+            console.log('✅ Estado restaurado completamente');
+        }, 300);
+        
+    } catch(e) {
+        console.error('❌ Error restaurando estado:', e.message);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// MÓDULO DE ALERTAS TEMPRANAS (BANDEJA DE ENTRADA)
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// Botón para ejecutar el motor manualmente desde la pantalla
+function ejecutarMotorManual() {
+    showLoader('Ejecutando Motor de Reglas...', 'Analizando fechas, festivos y cruzando con la matriz. Esto tomará unos segundos.');
+    google.script.run
+        .withSuccessHandler(function(res) {
+            hideLoader();
+            if(res.success) {
+                showToast(`✅ Motor finalizado con éxito. ${res.totalAlertas} alertas procesadas.`, 'success');
+                cargarAlertasWeb(); // Recarga la bandeja automáticamente
+            } else {
+                showToast('❌ Error: ' + res.error, 'danger');
+            }
+        })
+        .withFailureHandler(onError)
+        .ejecutarEvaluadorAlertas();
+}
+
+// Trae las alertas guardadas en la hoja oculta ALERTAS_ACTIVAS
+function cargarAlertasWeb() {
+    $('#alertasContainer').html('<div class="text-center p-5 text-muted"><i class="fas fa-spinner fa-spin fa-2x mb-3"></i><br>Consultando base de datos de alertas...</div>');
+    
+    google.script.run
+        .withSuccessHandler(function(res) {
+            try {
+                const alertas = JSON.parse(res);
+                renderizarAlertas(alertas);
+            } catch(e) {
+                showToast('Error parseando las alertas', 'danger');
+            }
+        })
+        .withFailureHandler(onError)
+        .obtenerAlertasWeb();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// MÓDULO DE ALERTAS MEJORADO (Filtros, KPIs y Exportación)
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+let alertasGlobales = [];
+let filtroNivelActivo = 'ALL';
+
+function renderizarAlertas(alertas) {
+    alertasGlobales = alertas || [];
+    const container = document.getElementById('alertasContainer');
+    
+    let countRojo = 0, countNaranja = 0, countAmarillo = 0;
+
+    if (alertasGlobales.length === 0) {
+        container.innerHTML = `
+            <div class="no-data" style="background: white; border-radius: 10px; padding: 40px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                <i class="fas fa-check-circle text-success" style="font-size: 4rem; opacity: 0.8;"></i>
+                <h5 class="mt-3 text-dark fw-bold">¡Todo en orden!</h5>
+                <p>No hay alertas activas ni incumplimientos en el sistema en este momento.</p>
+            </div>`;
+        $('#kpi-alertas-rojo').text(0); $('#kpi-alertas-naranja').text(0); $('#kpi-alertas-amarillo').text(0); $('#kpi-alertas-total').text(0);
+        return;
+    }
+
+    // 1. Poblar Dropdowns dinámicamente con los datos de las alertas
+    popularDropdownsAlertas();
+
+    let html = '<div class="list-group shadow-sm" id="listaTarjetasAlertas">';
+    
+    // 2. Generar Tarjetas con estilos fijos para evitar que Naranja y Amarillo se crucen
+    alertasGlobales.forEach(a => {
+        let colorBorder, icon, bgStyle, textClass;
+        
+        if (a.NIVEL === 'ROJO') {
+            colorBorder = '#c0392b'; icon = 'fa-times-circle'; textClass = 'text-danger'; countRojo++;
+            bgStyle = 'background-color: #fce8e6; color: #c0392b; border: 1px solid #c0392b;';
+        } else if (a.NIVEL === 'NARANJA') {
+            colorBorder = '#e67e22'; icon = 'fa-exclamation-triangle'; textClass = 'text-warning'; countNaranja++;
+            // Naranja real, no el amarillo quemado de Bootstrap
+            bgStyle = 'background-color: #fdf2e9; color: #d35400; border: 1px solid #e67e22;';
+        } else {
+            colorBorder = '#f1c40f'; icon = 'fa-info-circle'; textClass = 'text-warning'; countAmarillo++;
+            // Amarillo oro
+            bgStyle = 'background-color: #fef9e7; color: #b48600; border: 1px solid #f1c40f;';
+        }
+
+        const diasBadge = a['DIAS RESTANTES'] !== 'N/A' && a['DIAS RESTANTES'] !== '' ? 
+            `<span class="badge bg-secondary ms-2" style="font-size: 0.75rem;"><i class="far fa-clock"></i> ${a['DIAS RESTANTES']} días</span>` : '';
+
+        // Inject attributes for easy filtering
+        html += `
+        <div class="list-group-item list-group-item-action mb-2 border-0 shadow-sm tarjeta-alerta" 
+             data-nivel="${a.NIVEL}" data-proyecto="${a.PROYECTO}" data-regla="${a.REGLA}" data-artic="${a.ARTICULADOR}"
+             style="border-left: 6px solid ${colorBorder} !important; border-radius: 8px;">
+            <div class="d-flex w-100 justify-content-between align-items-center mb-2">
+                <h6 class="mb-0 fw-bold ${textClass}" style="font-size: 0.95rem;">
+                    <i class="fas ${icon} me-1"></i> [RT: ${a.RT}] - ${a.REGLA}
+                </h6>
+                <small class="text-muted" style="font-size: 0.7rem;">Detectado: ${a.TIMESTAMP}</small>
+            </div>
+            
+            <p class="mb-2 small" style="color: #444; font-size: 0.85rem; background: #f8f9fa; padding: 8px; border-radius: 5px;">
+                <strong>Mensaje del Motor:</strong> ${a.MENSAJE}
+            </p>
+            
+            <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+                <span class="badge bg-light text-dark border border-secondary" style="font-size: 0.7rem;"><i class="fas fa-folder"></i> ${a.PROYECTO}</span>
+                <span class="badge bg-light text-dark border border-secondary" style="font-size: 0.7rem;"><i class="fas fa-user"></i> ${a.ARTICULADOR}</span>
+                <span class="badge" style="font-size: 0.7rem; ${bgStyle}">NIVEL ${a.NIVEL}</span>
+                ${diasBadge}
+                
+                <button class="btn btn-sm btn-outline-info py-0 ms-auto fw-bold" onclick="openRtDetailModule('${a.RT}')" style="font-size: 0.75rem;">
+                    <i class="fas fa-external-link-alt"></i> Ver Predio
+                </button>
+            </div>
+        </div>`;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+
+    // 3. Actualizar los KPIs de arriba
+    $('#kpi-alertas-rojo').text(countRojo);
+    $('#kpi-alertas-naranja').text(countNaranja);
+    $('#kpi-alertas-amarillo').text(countAmarillo);
+    $('#kpi-alertas-total').text(alertasGlobales.length);
+
+    // Refrescar la vista actual si hay filtros aplicados
+    aplicarFiltrosAlertas();
+}
+
+// Extrae las opciones únicas para poblar los filtros desplegables
+function popularDropdownsAlertas() {
+    const reglas = [...new Set(alertasGlobales.map(a => a.REGLA))].sort();
+    const proyectos = [...new Set(alertasGlobales.map(a => a.PROYECTO))].sort();
+    const articuladores = [...new Set(alertasGlobales.map(a => a.ARTICULADOR))].sort();
+
+    const $regla = $('#filterAlertaRegla');
+    const $proy = $('#filterAlertaProyecto');
+    const $artic = $('#filterAlertaArticulador');
+
+    $regla.find('option:not(:first)').remove();
+    reglas.forEach(r => $regla.append(`<option value="${r}">${r}</option>`));
+
+    $proy.find('option:not(:first)').remove();
+    proyectos.forEach(p => $proy.append(`<option value="${p}">${p}</option>`));
+
+    $artic.find('option:not(:first)').remove();
+    articuladores.forEach(ar => $artic.append(`<option value="${ar}">${ar}</option>`));
+}
+
+// Al dar clic en un KPI de la parte superior (Rojo, Naranja, Amarillo, Todos)
+function filtrarAlertasPorNivel(nivel) {
+    filtroNivelActivo = nivel;
+    
+    // Efecto visual en las tarjetas de los KPIs
+    $('.kpi-alerta').css('opacity', '0.6').css('border-left-width', '4px');
+    
+    if (nivel === 'ROJO') $('#kpi-card-rojo').css('opacity', '1').css('border-left-width', '8px');
+    else if (nivel === 'NARANJA') $('#kpi-card-naranja').css('opacity', '1').css('border-left-width', '8px');
+    else if (nivel === 'AMARILLO') $('#kpi-card-amarillo').css('opacity', '1').css('border-left-width', '8px');
+    else $('#kpi-card-todos').css('opacity', '1').css('border-left-width', '8px');
+
+    aplicarFiltrosAlertas();
+}
+
+function limpiarFiltrosAlertas() {
+    $('#filterAlertaRegla').val('ALL');
+    $('#filterAlertaProyecto').val('ALL');
+    $('#filterAlertaArticulador').val('ALL');
+    filtrarAlertasPorNivel('ALL');
+}
+
+// Función maestra que oculta/muestra las tarjetas según todos los filtros Y ACTUALIZA LOS KPIs
+function aplicarFiltrosAlertas() {
+    const selRegla = document.getElementById('filterAlertaRegla').value;
+    const selProy = document.getElementById('filterAlertaProyecto').value;
+    const selArtic = document.getElementById('filterAlertaArticulador').value;
+    
+    const tarjetas = document.querySelectorAll('.tarjeta-alerta');
+    
+    // Variables para contar las alertas visibles
+    let countRojo = 0;
+    let countNaranja = 0;
+    let countAmarillo = 0;
+    
+    tarjetas.forEach(t => {
+        const tNivel = t.getAttribute('data-nivel');
+        const tRegla = t.getAttribute('data-regla');
+        const tProy = t.getAttribute('data-proyecto');
+        const tArtic = t.getAttribute('data-artic');
+        
+        let mostrar = true;
+        
+        // Aplicar lógica de filtros
+        if (filtroNivelActivo !== 'ALL' && tNivel !== filtroNivelActivo) mostrar = false;
+        if (selRegla !== 'ALL' && tRegla !== selRegla) mostrar = false;
+        if (selProy !== 'ALL' && tProy !== selProy) mostrar = false;
+        if (selArtic !== 'ALL' && tArtic !== selArtic) mostrar = false;
+        
+        t.style.display = mostrar ? '' : 'none';
+        
+        // Si la tarjeta quedó visible, sumamos al contador correspondiente
+        if (mostrar) {
+            if (tNivel === 'ROJO') countRojo++;
+            else if (tNivel === 'NARANJA') countNaranja++;
+            else if (tNivel === 'AMARILLO') countAmarillo++;
+        }
+    });
+
+    // Actualizar los KPIs visuales en la parte superior
+    $('#kpi-alertas-rojo').text(countRojo);
+    $('#kpi-alertas-naranja').text(countNaranja);
+    $('#kpi-alertas-amarillo').text(countAmarillo);
+    $('#kpi-alertas-total').text(countRojo + countNaranja + countAmarillo);
+}
+
+// Exporta SÓLO las alertas que cumplan con los filtros activos actualmente en pantalla
+// ✅ Exportar Excel (Envío por correo o descarga local)
+function exportarAlertasExcel() {
+    if (alertasGlobales.length === 0) {
+        showToast('No hay alertas para exportar', 'warning');
+        return;
+    }
+
+    const email = prompt("Ingrese el correo electrónico para enviar el reporte en formato Excel (.xlsx).\n\nSi solo desea descargar un CSV localmente, deje este campo vacío y presione Aceptar:");
+    
+    // Si presiona Cancelar (email === null), no hacemos nada.
+    if (email === null) return; 
+
+    // Capturamos el estado actual de los filtros
+    const filtrosActivos = {
+        nivel: filtroNivelActivo,
+        regla: document.getElementById('filterAlertaRegla').value,
+        proyecto: document.getElementById('filterAlertaProyecto').value,
+        articulador: document.getElementById('filterAlertaArticulador').value
+    };
+
+    if (email.trim() !== "") {
+        // Enviar por correo vía Backend (.xlsx)
+        showLoader("Generando Excel y enviando correo...");
+        google.script.run
+            .withSuccessHandler(res => {
+                hideLoader();
+                if(res.success) showToast(res.message, 'success');
+                else showToast("Error: " + res.error, 'danger');
+            })
+            .withFailureHandler(onError)
+            .procesarReporteAlertas(email.trim(), filtrosActivos);
+    } else {
+        // Descarga Local (CSV) - Tu código original
+        const alertasFiltradas = alertasGlobales.filter(a => {
+            if (filtrosActivos.nivel !== 'ALL' && a.NIVEL !== filtrosActivos.nivel) return false;
+            if (filtrosActivos.regla !== 'ALL' && a.REGLA !== filtrosActivos.regla) return false;
+            if (filtrosActivos.proyecto !== 'ALL' && a.PROYECTO !== filtrosActivos.proyecto) return false;
+            if (filtrosActivos.articulador !== 'ALL' && a.ARTICULADOR !== filtrosActivos.articulador) return false;
+            return true;
+        });
+
+        if (alertasFiltradas.length === 0) {
+            showToast('No hay resultados bajo estos filtros para exportar.', 'warning');
+            return;
+        }
+
+        showToast('Descargando archivo CSV local...', 'info');
+        const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "FASE", "REGLA", "DIAS RESTANTES", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
+        let csvContent = headers.join(';') + '\n';
+        
+        alertasFiltradas.forEach(a => {
+            const row = [
+                `"${a.TIMESTAMP}"`, `"${a.NIVEL}"`, `"${a.RT}"`, `"${a.PROYECTO}"`, `"${a.ARTICULADOR}"`,
+                `"${a.FASE}"`, `"${a.REGLA}"`, `"${a.DIAS_RESTANTES}"`, 
+                `"${String(a.MENSAJE).replace(/"/g, '""')}"`, `"${a.ESTADO_PREDIAL}"`
+            ];
+            csvContent += row.join(';') + '\n';
+        });
+
+        const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `Alertas_Tempranas_${filtrosActivos.nivel}_${new Date().toISOString().split('T')[0]}.csv`;
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+}
+
+// ✅ Programar el reporte recurrente
+function programarReporte() {
+    const email = prompt("Email para envío automático del reporte:");
+    if (!email) return;
+
+    let frecuencia = prompt("Frecuencia de envío (Escribe DIARIO o SEMANAL):");
+    if (!frecuencia) return;
+    frecuencia = frecuencia.toUpperCase().trim();
+
+    if (frecuencia !== "DIARIO" && frecuencia !== "SEMANAL") {
+        showToast("Frecuencia inválida. Debe ser DIARIO o SEMANAL.", "warning");
+        return;
+    }
+    
+    showLoader("Configurando programación en el servidor...");
+    google.script.run
+        .withSuccessHandler(res => {
+            hideLoader();
+            if(res.success) {
+                showConfirmation(`Se ha programado el envío automático exitosamente a ${email} de forma ${frecuencia}.`);
+            } else {
+                showToast("Error: " + res.error, "danger");
+            }
+        })
+        .withFailureHandler(onError)
+        .programarEnvioAutomatico(email, frecuencia);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES DE NAVEGACIÓN
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+function showPage(pageId, element) {
+    // Guardar estado antes de cambiar de página
+    saveNavigationState();
+    
+    $('.page-section').removeClass('active');
+    $('.menu-item').removeClass('active');
+    $('#page-' + pageId).addClass('active');
+    if (element) $(element).addClass('active');
+    
+    console.log('📄 Navegando a: ' + pageId);
+    
+    // Si volvemos a la página de matriz, restaurar estado
+    if (pageId === 'matriz') {
+        setTimeout(() => {
+            restoreNavigationState();
+        }, 100);
+    }
+}
+
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // FUNCIONES DE DATOS
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function loadDashboardData() {
+  showLoader('Cargando datos del tablero (aplicando filtros del servidor)...');
+  
+  google.script.run.withSuccessHandler(response => {
+    hideLoader();
+    
+    if (!response.success) {
+      showAlert('Error: ' + response.message, 'warning');
+      return;
+    }
+    
+    try {
+      // ✅ Guardar filtro activo y lista COMPLETA de proyectos (para el admin)
+      window.filtroMatrizActivoGlobal = response.filtroMatrizActivo ? JSON.parse(response.filtroMatrizActivo) : null;
+      window.proyectosListaUnicaGlobal = response.allProyectos ? JSON.parse(response.allProyectos) : [];
+      
+      onDataLoaded(response);
+      
+      // Manejar visualmente el badge del Filtro Matriz
+      const filtroActivo = window.filtroMatrizActivoGlobal;
+      const filterBadge = document.getElementById('filterBadge');
+      if (filtroActivo && filtroActivo.id) {
+        if (filterBadge) filterBadge.innerHTML = `<span class="badge bg-info"><i class="fas fa-filter"></i> ${filtroActivo.nombre}</span>`;
+      } else {
+        if (filterBadge) filterBadge.innerHTML = ''; 
+      }
+      
+    } catch (e) {
+      console.error('Error parseando datos:', e);
+      showAlert('Error procesando datos: ' + e.message, 'danger');
+    }
+    
+  }).withFailureHandler(error => {
+    hideLoader();
+    showAlert('Error cargando datos: ' + error, 'danger');
+  }).getDashboardData();
+}
+
+function onDataLoaded(result) {
+    try {
+        console.log('✅ Datos cargados del servidor');
+
+        rawData = JSON.parse(result.records); // ✅ YA VIENEN FILTRADOS DESDE EL SERVIDOR
+        allColsList = JSON.parse(result.columns);
+        seguimientoData = JSON.parse(result.seguimiento || '[]');
+        currentData = rawData.slice();
+
+        rawData.forEach(row => { row['FECHA_ISO'] = parseDateRobust(row[C.FECHA]); });
+
+        populateDropdowns();
+        setDefaultDate();
+        
+        google.script.run.withSuccessHandler(function(lists) {
+            currentDropdowns = JSON.parse(lists);
+        }).getDropdownLists();
+
+        applyFilters();
+        
+        // ✅ Cargar agrupaciones y renderizar checkboxes de la pestaña "Filtro Matriz"
+        cargarFiltrosMatriz();
+        renderProyectosCheckboxes();
+
+        $('#loader').fadeOut(300);
+
+    } catch (e) {
+        console.error('❌ Error en onDataLoaded: ' + e.message);
+        showNotification('Error', 'Error al cargar datos: ' + e.message, 'danger');
+        $('#loader').fadeOut(300);
+    }
+}
+
+        function setDefaultDate() {
+            const today = new Date();
+            const maxDate = new Date(today.getFullYear() + 10, 11, 31);
+            document.getElementById('dateFilter').valueAsDate = maxDate;
+            state.dateLimit = maxDate.toISOString().split('T')[0];
+        }
+
+        function parseDateRobust(dateStr) {
+    if (!dateStr || String(dateStr).trim() === "") return '2099-12-31';
+
+    if (dateStr instanceof Date) {
+        // Manejar fechas nativas para que no se corran por zona horaria
+        const offset = dateStr.getTimezoneOffset() * 60000;
+        const localDate = new Date(dateStr.getTime() - offset);
+        return localDate.toISOString().split('T')[0];
+    }
+
+    let s = String(dateStr).toLowerCase().trim().replace(/\./g, '');
+
+    if (s.match(/^\d{4}-\d{2}-\d{2}$/)) return s;
+
+    let ddmmMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+    if (ddmmMatch) {
+        let d = ddmmMatch[1].padStart(2, '0');
+        let m = ddmmMatch[2].padStart(2, '0');
+        let y = ddmmMatch[3];
+        if (y.length === 2) y = "20" + y; 
+        return `${y}-${m}-${d}`;
+    }
+
+    let foundYear = null;
+    let yearMatch = s.match(/(20\d{2})/);
+    if (yearMatch) {
+        foundYear = yearMatch[1];
+    } else {
+        let shortMatch = s.match(/[-/\s](\d{2})$/);
+        if(shortMatch) foundYear = "20" + shortMatch[1];
+    }
+
+    if (!foundYear) return '2099-12-31';
+
+    // Super-atrapador de Trimestres (Atrapa T4, 4 trimestre, Trimestre 4)
+    let t = null;
+    let trimMatch1 = s.match(/(\d)\s*trimestre/);
+    let trimMatch2 = s.match(/trimestre\s*(\d)/);
+    let trimMatch3 = s.match(/t(\d)/);
+
+    if (trimMatch1) t = parseInt(trimMatch1[1]);
+    else if (trimMatch2) t = parseInt(trimMatch2[1]);
+    else if (trimMatch3) t = parseInt(trimMatch3[1]);
+
+    if (t !== null && t >= 1 && t <= 4) {
+        if (t === 1) return `${foundYear}-03-31`;
+        if (t === 2) return `${foundYear}-06-30`;
+        if (t === 3) return `${foundYear}-09-30`;
+        if (t === 4) return `${foundYear}-12-31`;
+    }
+
+    const meses = {
+        'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04', 'may': '05', 'jun': '06',
+        'jul': '07', 'ago': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dic': '12'
+    };
+
+    let foundMonth = null;
+    for (const [key, val] of Object.entries(meses)) {
+        if (s.includes(key)) { 
+            foundMonth = val; 
+            break; 
+        }
+    }
+
+    if (foundMonth && foundYear) return `${foundYear}-${foundMonth}-28`;
+
+    return '2099-12-31';
+}
+
+        function parseMoneyRobust(cellValue) {
+            if (!cellValue) return 0;
+            
+            let str = String(cellValue).trim();
+            if (!isNaN(str) && str !== '') return parseFloat(str);
+            
+            str = str.replace(/[^\d.,]/g, '');
+            if (!str) return 0;
+            
+            const lastCommaPos = str.lastIndexOf(',');
+            const lastDotPos = str.lastIndexOf('.');
+            
+            let normalized = str;
+            
+            if (lastCommaPos > lastDotPos) {
+                normalized = str.replace(/\./g, '').replace(',', '.');
+            } else if (lastDotPos > lastCommaPos) {
+                normalized = str.replace(/,/g, '');
+            } else if (lastCommaPos === -1 && lastDotPos === -1) {
+                normalized = str;
+            } else if (lastCommaPos >= 0 && lastDotPos === -1) {
+                normalized = str.replace(/,/g, '');
+            }
+            
+            const result = parseFloat(normalized);
+            return isNaN(result) ? 0 : result;
+        }
+
+        function populateDropdowns() {
+    try {
+        console.log('🔄 Poblando dropdowns...');
+        if (!rawData || rawData.length === 0) return;
+
+        // ✅ Usamos la base purgada
+        const baseDataForDropdowns = getBaseFilteredData();
+
+        const proyectos = [...new Set(baseDataForDropdowns.map(r => r[C.PROYECTO]))].filter(p => p).sort();
+        const tramos = [...new Set(baseDataForDropdowns.map(r => r[C.TRAMO]))].filter(t => t).sort();
+        const estados = [...new Set(baseDataForDropdowns.map(r => r[C.ESTADO]))].filter(e => e).sort();
+
+        $('#filterProyecto').find('option:not(:first)').remove();
+        proyectos.forEach(p => $('#filterProyecto').append('<option value="' + p + '">' + p + '</option>'));
+
+        $('#filterTramo').find('option:not(:first)').remove();
+        tramos.forEach(t => $('#filterTramo').append('<option value="' + t + '">' + t + '</option>'));
+
+        $('#filterEstado').find('option:not(:first)').remove();
+        estados.forEach(e => $('#filterEstado').append('<option value="' + e + '">' + e + '</option>'));
+
+        console.log('✅ Dropdowns poblados correctamente (con Filtro Matriz)');
+    } catch (e) {
+        console.error('❌ Error poblando dropdowns: ' + e.message);
+    }
+}
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // FILTROS EN CADENA - PROYECTO → TRAMO → ESTADO
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function onProyectoChange() {
+    const proySelected = $('#filterProyecto').val();
+    const baseData = getBaseFilteredData(); // ✅ Usamos base purgada
+    
+    let tramos = [];
+    if (proySelected === 'ALL') {
+        tramos = [...new Set(baseData.map(r => r[C.TRAMO]))].filter(t => t).sort();
+    } else {
+        tramos = [...new Set(
+            baseData.filter(r => r[C.PROYECTO] === proySelected).map(r => r[C.TRAMO])
+        )].filter(t => t).sort();
+    }
+    
+    const $tramoSelect = $('#filterTramo');
+    const currentTramoValue = $tramoSelect.val();
+    $tramoSelect.find('option:not(:first)').remove();
+    
+    tramos.forEach(t => {
+        $tramoSelect.append(`<option value="${t}">${t}</option>`);
+    });
+    
+    if (!tramos.includes(currentTramoValue)) {
+        $tramoSelect.val('ALL');
+    }
+    
+    $('#filterEstado').find('option:not(:first)').remove();
+    $('#filterEstado').append('<option value="ALL">Todos los Estados</option>');
+    
+    applyFilters();
+}
+
+function onTramoChange() {
+    const proySelected = $('#filterProyecto').val();
+    const tramoSelected = $('#filterTramo').val();
+    
+    let filteredData = getBaseFilteredData(); // ✅ Usamos base purgada
+    
+    if (proySelected !== 'ALL') {
+        filteredData = filteredData.filter(r => r[C.PROYECTO] === proySelected);
+    }
+    if (tramoSelected !== 'ALL') {
+        filteredData = filteredData.filter(r => r[C.TRAMO] === tramoSelected);
+    }
+    
+    const estados = [...new Set(filteredData.map(r => r[C.ESTADO]))].filter(e => e).sort();
+    
+    const $estadoSelect = $('#filterEstado');
+    const currentEstadoValue = $estadoSelect.val();
+    $estadoSelect.find('option:not(:first)').remove();
+    
+    estados.forEach(e => {
+        $estadoSelect.append(`<option value="${e}">${e}</option>`);
+    });
+    
+    if (!estados.includes(currentEstadoValue)) {
+        $estadoSelect.val('ALL');
+    }
+    
+    applyFilters();
+}
+
+        // ✅ OBTENER ÚLTIMA OBSERVACIÓN DEL SEGUIMIENTO
+        function getLatestObservation(rt) {
+            if (!rt || seguimientoData.length === 0) return null;
+            
+            const rtStr = String(rt).trim().toUpperCase();
+            const rtRecords = seguimientoData.filter(s => {
+                const sRt = String(s['RT'] || '').trim().toUpperCase();
+                return sRt === rtStr;
+            });
+            
+            if (rtRecords.length === 0) return null;
+            
+            rtRecords.sort((a, b) => {
+                const dateA = parseFollowupDate(a['FECHA_REGISTRO'] || a['FECHA'] || '');
+                const dateB = parseFollowupDate(b['FECHA_REGISTRO'] || b['FECHA'] || '');
+                return dateB - dateA;
+            });
+            
+            const latestRecord = rtRecords[0];
+            return latestRecord['OBSERVACIONES'] || latestRecord['OBS'] || null;
+        }
+
+        function parseFollowupDate(dateStr) {
+            if (!dateStr) return new Date(0);
+            const str = String(dateStr).trim();
+            const parsed = new Date(str);
+            if (!isNaN(parsed)) return parsed;
+            
+            const match = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s*(\d{1,2})?:?(\d{2})?:?(\d{2})?/);
+            if (match) {
+                const day = parseInt(match[1]);
+                const month = parseInt(match[2]) - 1;
+                const year = parseInt(match[3]);
+                const hour = parseInt(match[4]) || 0;
+                const minute = parseInt(match[5]) || 0;
+                const second = parseInt(match[6]) || 0;
+                return new Date(year, month, day, hour, minute, second);
+            }
+            return new Date(0);
+        }
+
+        function cleanTextUpper(text) {
+            if (!text) return '';
+            return String(text)
+                .toUpperCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .trim();
+        }
+
+        // \u2705 SEC-P1: escapa HTML antes de interpolar texto libre de usuario (OBSERVACIONES,
+        // SITUACIONES ESPECIALES, etc.) en innerHTML/insertAdjacentHTML \u2014 previene XSS almacenado.
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // FUNCIONES DE FILTROS
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function applyFilters() {
+            try {
+                state.dateLimit = $('#dateFilter').val();
+                state.dateMode = $('#dateMode').val();
+                state.selProyecto = $('#filterProyecto').val();
+                state.selTramo = $('#filterTramo').val();
+                state.tramoFromMatrix = 'ALL';
+
+                filterData();
+                renderTrimestres();
+                updateKPIs();
+                renderMatrix();
+                
+                console.log('✅ Filtros aplicados: ' + currentData.length + ' registros');
+            } catch (e) {
+                console.error('❌ Error aplicando filtros: ' + e.message);
+            }
+        }
+
+        // ✅ NUEVO: Función para anular proyectos de la base según Filtro Matriz
+function getBaseFilteredData() {
+    // --- NUEVO: Limpiar inactivos también de los menús desplegables ---
+    const datosActivos = rawData.filter(d => String(d['ACTIVO/INACTIVO']).toUpperCase().trim() !== 'INACTIVO');
+
+    if (!window.filtroMatrizActivoGlobal || !window.filtroMatrizActivoGlobal.id) {
+        return datosActivos;
+    // Si no hay filtro, devuelve todo (solo los activos)
+    }
+    const f = window.filtroMatrizActivoGlobal;
+    return datosActivos.filter(r => {
+        const p = r[C.PROYECTO] || '';
+        if (f.proyectosIncluidos && f.proyectosIncluidos.length > 0) {
+            return f.proyectosIncluidos.includes(p);
+        } else if (f.proyectosExcluidos && f.proyectosExcluidos.length > 0) {
+            return !f.proyectosExcluidos.includes(p);
+        }
+        return true;
+    });
+}
+
+    function filterData() {
+            const estado = $('#filterEstado').val();
+            currentData = rawData.filter(d => {
+                
+                // --- NUEVO: OCULTAR INACTIVOS DE LA MATRIZ Y KPIs ---
+                const estadoActivo = String(d['ACTIVO/INACTIVO'] || "").toUpperCase().trim();
+                if (estadoActivo === 'INACTIVO' || estadoActivo === 'NO ACTIVO') {
+                    return false; // Excluye inmediatamente de la vista general
+                }
+                // ----------------------------------------------------
+
+                const rowDate = d['FECHA_ISO'];
+                const isNullDate = (rowDate === '2099-12-31');
+                let dateOk = true;
+                
+                if (state.dateLimit && !isNullDate) {
+                    if (state.dateMode === 'ACUM') dateOk = rowDate <= state.dateLimit;
+                    else dateOk = rowDate.substring(0, 7) === state.dateLimit.substring(0, 7);
+                }
+                
+                const proyVal = d[C.PROYECTO] || 'SIN PROYECTO';
+                const proyOk = (state.selProyecto === 'ALL') || (proyVal === state.selProyecto);
+                const tramoVal = d[C.TRAMO] || 'SIN TRAMO';
+                const tramoOk = (state.selTramo === 'ALL') || (tramoVal === state.selTramo);
+                const estadoOk = (estado === 'ALL') || (d[C.ESTADO] === estado);
+                
+                let kpiOk = true;
+                const est = String(d[C.ESTADO] || "").toUpperCase();
+                const disp = String(d[C.DISP] || "").toUpperCase();
+                const isCesion = est.includes('CESI') || est.includes('CESIÓN');
+                
+                if (state.kpiFilter === 'DISPONIBLE') {
+                    kpiOk = disp.includes('DISPONIBLE') && !disp.includes('PENDIENTE');
+                    if (state.kpiSubFilter === 'CESION') kpiOk = kpiOk && isCesion;
+                    else if (state.kpiSubFilter === 'ADQUIRIR') kpiOk = kpiOk && !isCesion;
+                } 
+                else if (state.kpiFilter === 'PENDIENTE') {
+                    kpiOk = disp.includes('PENDIENTE');
+                    if (state.kpiSubFilter === 'CESION') kpiOk = kpiOk && isCesion;
+                    else if (state.kpiSubFilter === 'ADQUIRIR') kpiOk = kpiOk && !isCesion;
+                }
+                else if (state.kpiFilter === 'CESION') kpiOk = isCesion;
+                else if (state.kpiFilter === 'ADQUIRIR') kpiOk = !isCesion;
+                
+                return dateOk && proyOk && tramoOk && estadoOk && kpiOk;
+            });
+        }
+
+const searchableSelectState = {
+    filterProyecto: [],
+    filterTramo: [],
+    filterEstado: []
+};
+
+const searchableSelectConfig = {
+    filterProyecto: { inputId: 'filterProyectoSearch', metaId: 'filterProyectoSearchMeta', onCommit: onProyectoChange },
+    filterTramo: { inputId: 'filterTramoSearch', metaId: 'filterTramoSearchMeta', onCommit: onTramoChange },
+    filterEstado: { inputId: 'filterEstadoSearch', metaId: 'filterEstadoSearchMeta', onCommit: applyFilters }
+};
+
+function updateSearchMeta(selectId, totalOptions, matchedOptions, query) {
+    const cfg = searchableSelectConfig[selectId];
+    if (!cfg) return;
+
+    const el = document.getElementById(cfg.metaId);
+    if (!el) return;
+
+    const normalizedQuery = String(query || '').trim();
+    if (!normalizedQuery) {
+        el.textContent = 'Opciones disponibles: ' + totalOptions;
+        return;
+    }
+
+    el.textContent = 'Coincidencias: ' + matchedOptions + ' de ' + totalOptions;
+}
+
+function bindSearchableFilterInputs() {
+    Object.keys(searchableSelectConfig).forEach(function(selectId) {
+        const cfg = searchableSelectConfig[selectId];
+        const input = document.getElementById(cfg.inputId);
+        const select = document.getElementById(selectId);
+        if (!input || !select) return;
+
+        input.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                cfg.onCommit();
+                return;
+            }
+
+            if (ev.key === 'ArrowDown') {
+                ev.preventDefault();
+                select.focus();
+                return;
+            }
+
+            if (ev.key === 'Escape') {
+                ev.preventDefault();
+                input.value = '';
+                applySelectSearch(selectId, '');
+                cfg.onCommit();
+            }
+        });
+    });
+}
+
+function cacheSelectOptions(selectId) {
+    const options = [];
+    $('#' + selectId + ' option').each(function() {
+        options.push({ value: this.value, text: this.textContent || this.innerText || '' });
+    });
+    searchableSelectState[selectId] = options;
+}
+
+function applySelectSearch(selectId, query) {
+    const allOptions = searchableSelectState[selectId] || [];
+    if (!allOptions.length) return;
+
+    const normalizedQuery = String(query || '').toUpperCase().trim();
+    const firstOption = allOptions[0];
+    const currentValue = $('#' + selectId).val();
+    const filtered = normalizedQuery
+        ? allOptions.slice(1).filter(o => String(o.text).toUpperCase().includes(normalizedQuery))
+        : allOptions.slice(1);
+
+    const $select = $('#' + selectId);
+    $select.empty();
+
+    if (firstOption) {
+        $select.append('<option value="' + firstOption.value + '">' + firstOption.text + '</option>');
+    }
+    filtered.forEach(function(o) {
+        $select.append('<option value="' + o.value + '">' + o.text + '</option>');
+    });
+
+    const stillExists = filtered.some(o => o.value === currentValue) || (firstOption && currentValue === firstOption.value);
+    $select.val(stillExists ? currentValue : (firstOption ? firstOption.value : 'ALL'));
+
+    if (normalizedQuery && filtered.length === 1) {
+        $select.val(filtered[0].value);
+    }
+
+    updateSearchMeta(selectId, allOptions.length > 0 ? allOptions.length - 1 : 0, filtered.length, query);
+}
+
+function refreshSelectSearch(selectId, searchInputId) {
+    cacheSelectOptions(selectId);
+    const query = $('#' + searchInputId).val() || '';
+    applySelectSearch(selectId, query);
+}
+
+function populateDropdowns() {
+    if (!rawData || rawData.length === 0) return;
+
+    const baseData = getBaseFilteredData();
+
+    const proyectos = [...new Set(baseData.map(r => r[C.PROYECTO]))].filter(Boolean).sort();
+    const tramos = [...new Set(baseData.map(r => r[C.TRAMO]))].filter(Boolean).sort();
+    const estados = [...new Set(baseData.map(r => r[C.ESTADO]))].filter(Boolean).sort();
+
+    const currentProyecto = $('#filterProyecto').val() || 'ALL';
+    const currentTramo = $('#filterTramo').val() || 'ALL';
+    const currentEstado = $('#filterEstado').val() || 'ALL';
+
+    $('#filterProyecto').empty().append('<option value="ALL">🔍 Todos los Proyectos</option>');
+    proyectos.forEach(p => $('#filterProyecto').append('<option value="' + p + '">' + p + '</option>'));
+
+    $('#filterTramo').empty().append('<option value="ALL">🔍 Todos los Tramos</option>');
+    tramos.forEach(t => $('#filterTramo').append('<option value="' + t + '">' + t + '</option>'));
+
+    $('#filterEstado').empty().append('<option value="ALL">🔍 Todos los Estados</option>');
+    estados.forEach(e => $('#filterEstado').append('<option value="' + e + '">' + e + '</option>'));
+
+    $('#filterProyecto').val(proyectos.includes(currentProyecto) ? currentProyecto : 'ALL');
+    $('#filterTramo').val(tramos.includes(currentTramo) ? currentTramo : 'ALL');
+    $('#filterEstado').val(estados.includes(currentEstado) ? currentEstado : 'ALL');
+
+    refreshSelectSearch('filterProyecto', 'filterProyectoSearch');
+    refreshSelectSearch('filterTramo', 'filterTramoSearch');
+    refreshSelectSearch('filterEstado', 'filterEstadoSearch');
+}
+
+function onProyectoChange() {
+    const proySelected = $('#filterProyecto').val();
+    const baseData = getBaseFilteredData();
+    let tramos = [];
+
+    if (proySelected === 'ALL') {
+        tramos = [...new Set(baseData.map(r => r[C.TRAMO]))].filter(Boolean).sort();
+    } else {
+        tramos = [...new Set(baseData.filter(r => r[C.PROYECTO] === proySelected).map(r => r[C.TRAMO]))].filter(Boolean).sort();
+    }
+
+    const currentTramoValue = $('#filterTramo').val() || 'ALL';
+    $('#filterTramoSearch').val('');
+    $('#filterEstadoSearch').val('');
+    $('#filterTramo').empty().append('<option value="ALL">🔍 Todos los Tramos</option>');
+    tramos.forEach(t => $('#filterTramo').append('<option value="' + t + '">' + t + '</option>'));
+    $('#filterTramo').val(tramos.includes(currentTramoValue) ? currentTramoValue : 'ALL');
+
+    $('#filterEstado').empty().append('<option value="ALL">🔍 Todos los Estados</option>');
+    refreshSelectSearch('filterTramo', 'filterTramoSearch');
+    refreshSelectSearch('filterEstado', 'filterEstadoSearch');
+    applyFilters();
+}
+
+function onTramoChange() {
+    const proySelected = $('#filterProyecto').val();
+    const tramoSelected = $('#filterTramo').val();
+    let filteredData = getBaseFilteredData();
+
+    if (proySelected !== 'ALL') filteredData = filteredData.filter(r => r[C.PROYECTO] === proySelected);
+    if (tramoSelected !== 'ALL') filteredData = filteredData.filter(r => r[C.TRAMO] === tramoSelected);
+
+    const estados = [...new Set(filteredData.map(r => r[C.ESTADO]))].filter(Boolean).sort();
+    const currentEstadoValue = $('#filterEstado').val() || 'ALL';
+
+    $('#filterEstado').empty().append('<option value="ALL">🔍 Todos los Estados</option>');
+    estados.forEach(e => $('#filterEstado').append('<option value="' + e + '">' + e + '</option>'));
+    $('#filterEstado').val(estados.includes(currentEstadoValue) ? currentEstadoValue : 'ALL');
+
+    refreshSelectSearch('filterEstado', 'filterEstadoSearch');
+    applyFilters();
+}
+
+
+        function resetFilters() {
+            $('#filterProyecto').val('ALL');
+            $('#filterTramo').val('ALL');
+            $('#filterEstado').val('ALL');
+                    $('#filterProyectoSearch').val('');
+                    $('#filterTramoSearch').val('');
+                    $('#filterEstadoSearch').val('');
+                    refreshSelectSearch('filterProyecto', 'filterProyectoSearch');
+                    refreshSelectSearch('filterTramo', 'filterTramoSearch');
+                    refreshSelectSearch('filterEstado', 'filterEstadoSearch');
+            setDefaultDate();
+            $('#dateMode').val('ACUM');
+            state.kpiFilter = 'ALL';
+            state.tramoFromMatrix = 'ALL';
+            
+            $('.kpi-card').removeClass('active');
+            $('#card-total').addClass('active');
+            
+            applyFilters();
+            console.log('✅ Filtros limpios');
+        }
+
+        // ✅ NUEVO - CON LÓGICA DE SUBDIVISIONES
+function toggleKpiFilter(filterType, filterName) {
+    try {
+        console.log('🎯 Aplicando filtro KPI: ' + filterType + ' (' + filterName + ')');
+        
+        // ✅ MAPEO DE FILTROS
+        const filterMap = {
+            'ALL': { kpiFilter: 'ALL', subFilter: null },
+            'TOTAL': { kpiFilter: 'ALL', subFilter: null },
+            'TOTAL_CESION': { kpiFilter: 'CESION', subFilter: 'CESION' },
+            'TOTAL_ADQUIRIR': { kpiFilter: 'ADQUIRIR', subFilter: 'ADQUIRIR' },
+            'DISPONIBLE': { kpiFilter: 'DISPONIBLE', subFilter: null },
+            'DISPONIBLE_CESION': { kpiFilter: 'DISPONIBLE', subFilter: 'CESION' },
+            'DISPONIBLE_ADQUIRIR': { kpiFilter: 'DISPONIBLE', subFilter: 'ADQUIRIR' },
+            'PENDIENTE': { kpiFilter: 'PENDIENTE', subFilter: null },
+            'PENDIENTE_CESION': { kpiFilter: 'PENDIENTE', subFilter: 'CESION' },
+            'PENDIENTE_ADQUIRIR': { kpiFilter: 'PENDIENTE', subFilter: 'ADQUIRIR' }
+        };
+
+        const filter = filterMap[filterType] || { kpiFilter: 'ALL', subFilter: null };
+        
+        state.kpiFilter = filter.kpiFilter;
+        state.kpiSubFilter = filter.subFilter;
+        
+        $('.kpi-card').css('opacity', '0.7').css('border-left-width', '4px');
+        
+        if (filterType === 'ALL' || filterType === 'TOTAL') {
+            $('#card-total').css('opacity', '1').css('border-left-width', '6px');
+        } else if (filterType.startsWith('DISPONIBLE')) {
+            $('#card-disp').css('opacity', '1').css('border-left-width', '6px');
+        } else if (filterType.startsWith('PENDIENTE')) {
+            $('#card-pend').css('opacity', '1').css('border-left-width', '6px');
+        }
+        
+        filterData();
+        renderTrimestres();
+        renderMatrix();
+        updateKPIs();
+        
+        const filterLabels = {
+            'ALL': 'Total General',
+            'TOTAL': 'Total General',
+            'TOTAL_CESION': 'Total - Cesion',
+            'TOTAL_ADQUIRIR': 'Total - Por Adquirir',
+            'DISPONIBLE': 'Disponibles',
+            'DISPONIBLE_CESION': 'Disponibles - Cesion',
+            'DISPONIBLE_ADQUIRIR': 'Disponibles - Por Adquirir',
+            'PENDIENTE': 'Pendientes',
+            'PENDIENTE_CESION': 'Pendientes - Cesion',
+            'PENDIENTE_ADQUIRIR': 'Pendientes - Por Adquirir'
+        };
+        
+        showToast('Filtrando: ' + (filterLabels[filterType] || filterType), 'info');
+        
+        console.log('Filtro KPI aplicado:', { filterType, filterName, estado: state });
+        
+    } catch (e) {
+        console.error('Error aplicando filtro KPI:', e.message);
+        showToast('Error: ' + e.message, 'danger');
+    }
+}
+
+
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // CRONOGRAMA TRIMESTRAL CON FILTROS CLICKEABLES
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function renderTrimestres() {
+    try {
+        let groups = {};
+        
+        let dataToProcess = currentData.filter(d => {
+            if(state.kpiFilter === 'ALL') return true;
+            const s = String(d[C.DISP] || "").toUpperCase();
+            const est = String(d[C.ESTADO] || "").toUpperCase();
+            
+            if(state.kpiFilter === 'DISPONIBLE') return s.includes('DISPONIBLE') && !s.includes('PENDIENTE');
+            if(state.kpiFilter === 'PENDIENTE') return s.includes('PENDIENTE');
+            if(state.kpiFilter === 'ADQUIRIR') return !est.includes('CESI');
+            if(state.kpiFilter === 'CESION') return est.includes('CESI');
+            return true;
+        });
+
+        dataToProcess.forEach(d => {
+            if(d['FECHA_ISO'] === '2099-12-31') return;
+            
+            // Extraer directamente para EVITAR husos horarios y fallos por meses
+            let [y, m, day] = d['FECHA_ISO'].split('-');
+            let year = parseInt(y);
+            let month = parseInt(m) - 1; 
+            let q = Math.floor(month / 3) + 1;
+            let key = `${year}-T${q}`;
+            
+            if(!groups[key]) groups[key] = { total: 0, disp: 0, pagado: 0, estimado: 0 };
+            
+            groups[key].total++;
+            const s = String(d[C.DISP] || "").toUpperCase();
+            if(s.includes('DISPONIBLE') && !s.includes('PENDIENTE')) groups[key].disp++;
+            
+            groups[key].estimado += parseMoneyRobust(d[C.EST]);
+            groups[key].pagado += parseMoneyRobust(d[C.PAG]);
+        });
+
+        let html = '';
+        Object.keys(groups).sort().forEach(k => {
+            let g = groups[k];
+            let pend = g.total - g.disp;
+            let percDisp = g.total > 0 ? (g.disp / g.total) * 100 : 0;
+            let percPago = g.estimado > 0 ? (g.pagado / g.estimado) * 100 : 0;
+            
+            html += `
+                <div class="trim-card" style="cursor: pointer; transition: all 0.3s ease;" 
+                     onclick="filterByTrimestre('${k}', ${g.disp}, ${pend})"
+                     title="Haz clic para filtrar por este trimestre">
+                    <h6>${k}</h6>
+                    <div class="trim-val">${g.total}</div>
+                    
+                    <div class="trim-stats">
+                        <div class="trim-stat" style="cursor: pointer; padding: 5px; border-radius: 4px; background: rgba(39,174,96,0.1);"
+                             onclick="filterByTrimestre('${k}', ${g.disp}, 'DISPONIBLE'); event.stopPropagation();"
+                             title="Filtrar solo disponibles">
+                            <i class="fas fa-check-circle"></i>
+                            <span><strong>${g.disp}</strong> Disp</span>
+                        </div>
+                        <div class="trim-stat" style="cursor: pointer; padding: 5px; border-radius: 4px; background: rgba(192,57,43,0.1);"
+                             onclick="filterByTrimestre('${k}', ${pend}, 'PENDIENTE'); event.stopPropagation();"
+                             title="Filtrar solo pendientes">
+                            <i class="fas fa-clock"></i>
+                            <span><strong>${pend}</strong> Pend</span>
+                        </div>
+                    </div>
+                    
+                    <div class="trim-percent">
+                        <div style="cursor: pointer; padding: 5px; border-radius: 4px; background: rgba(52,152,219,0.1); margin-bottom: 5px;"
+                             onclick="filterByTrimestre('${k}', 'DISPONIBILIDAD'); event.stopPropagation();"
+                             title="Filtrar por disponibilidad">
+                            📋 <strong>${percDisp.toFixed(0)}%</strong> Disponibilidad
+                        </div>
+                        <div style="cursor: pointer; padding: 5px; border-radius: 4px; background: rgba(46,204,113,0.1);"
+                             onclick="filterByTrimestre('${k}', 'ADQUISICION'); event.stopPropagation();"
+                             title="Filtrar por adquisición">
+                            💰 <strong>${percPago.toFixed(0)}%</strong> Adquisición
+                        </div>
+                    </div>
+                    
+                    <div class="trim-progress">
+                        <div class="trim-progress-bar" style="width: ${percDisp}%"></div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        if(html === '') html = '<div class="text-muted small p-2">Sin fechas programadas en el rango.</div>';
+        $('#trim-wrapper').html(html);
+        
+        // Alerta si hay un trimestre activo (Devuelve la opacidad y borde si es necesario)
+        if ($('#trimestre-alert').is(':visible')) {
+            const activeTrim = $('#trimestre-name').text().split(' ')[0];
+            $('.trim-card').css('opacity', '0.4');
+            $(`.trim-card:contains('${activeTrim}')`).css('opacity', '1').css('border', '2px solid #f1c40f');
+        }
+
+        console.log('✅ Cronograma trimestral renderizado con cálculos corregidos');
+    } catch (e) {
+        console.error('❌ Error renderizando cronograma: ' + e.message);
+    }
+}
+
+        function filterByTrimestre(trimestre, cantidad, tipo) {
+    console.log(`🔍 Filtrando por trimestre: ${trimestre}, Tipo: ${tipo}`);
+    
+    // 1. Partir de los datos base (sin inactivos y con el filtro matriz global ya aplicado)
+    let filteredData = getBaseFilteredData();
+    
+    // 2. Respetar los filtros actuales de Proyecto, Tramo y Estado
+    const proySelected = $('#filterProyecto').val();
+    const tramoSelected = $('#filterTramo').val();
+    const estadoSelected = $('#filterEstado').val();
+    
+    if (proySelected !== 'ALL') filteredData = filteredData.filter(r => r[C.PROYECTO] === proySelected);
+    if (tramoSelected !== 'ALL') filteredData = filteredData.filter(r => r[C.TRAMO] === tramoSelected);
+    if (estadoSelected !== 'ALL') filteredData = filteredData.filter(r => r[C.ESTADO] === estadoSelected);
+    
+    // 3. Respetar Filtro KPI (Ej: Solo los de "Cesión")
+    filteredData = filteredData.filter(d => {
+        let kpiOk = true;
+        const est = String(d[C.ESTADO] || "").toUpperCase();
+        const disp = String(d[C.DISP] || "").toUpperCase();
+        const isCesion = est.includes('CESI') || est.includes('CESIÓN');
+        
+        if (state.kpiFilter === 'DISPONIBLE') {
+            kpiOk = disp.includes('DISPONIBLE') && !disp.includes('PENDIENTE');
+            if (state.kpiSubFilter === 'CESION') kpiOk = kpiOk && isCesion;
+            else if (state.kpiSubFilter === 'ADQUIRIR') kpiOk = kpiOk && !isCesion;
+        } 
+        else if (state.kpiFilter === 'PENDIENTE') {
+            kpiOk = disp.includes('PENDIENTE');
+            if (state.kpiSubFilter === 'CESION') kpiOk = kpiOk && isCesion;
+            else if (state.kpiSubFilter === 'ADQUIRIR') kpiOk = kpiOk && !isCesion;
+        }
+        else if (state.kpiFilter === 'CESION') kpiOk = isCesion;
+        else if (state.kpiFilter === 'ADQUIRIR') kpiOk = !isCesion;
+        
+        return kpiOk;
+    });
+
+    // 4. Filtrar por las fechas del trimestre (Separando manualmente para evitar Bug de Zona Horaria)
+    const [yearStr, trimNum] = trimestre.split('-T');
+    const year = parseInt(yearStr);
+    const q = parseInt(trimNum);
+    
+    const startMonth = (q - 1) * 3;
+    const startDate = new Date(year, startMonth, 1);
+    const endDate = new Date(year, startMonth + 3, 0, 23, 59, 59);
+    
+    filteredData = filteredData.filter(d => {
+        if(d['FECHA_ISO'] === '2099-12-31') return false;
+        
+        let [y, m, day] = d['FECHA_ISO'].split('-');
+        let date = new Date(parseInt(y), parseInt(m) - 1, parseInt(day));
+        
+        return date >= startDate && date <= endDate;
+    });
+    
+    // 5. Si hicieron clic en los sub-filtros de la tarjeta (Disp/Pend)
+    if (tipo === 'DISPONIBLE') {
+        filteredData = filteredData.filter(d => {
+            const s = String(d[C.DISP] || "").toUpperCase();
+            return s.includes('DISPONIBLE') && !s.includes('PENDIENTE');
+        });
+    } 
+    else if (tipo === 'PENDIENTE') {
+        filteredData = filteredData.filter(d => {
+            const s = String(d[C.DISP] || "").toUpperCase();
+            return s.includes('PENDIENTE');
+        });
+    } 
+    else if (tipo === 'DISPONIBILIDAD') {
+        state.kpiFilter = 'DISPONIBLE';
+        filteredData = filteredData.filter(d => {
+            const s = String(d[C.DISP] || "").toUpperCase();
+            return s.includes('DISPONIBLE') && !s.includes('PENDIENTE');
+        });
+    } 
+    else if (tipo === 'ADQUISICION') {
+        state.kpiFilter = 'ADQUIRIR';
+        filteredData = filteredData.filter(d => {
+            const est = String(d[C.ESTADO] || "").toUpperCase();
+            return !est.includes('CESI');
+        });
+    }
+    
+    // 6. Aplicar la data filtrada
+    currentData = filteredData;
+    
+    $('#trimestre-alert').show();
+    $('#trimestre-name').text(trimestre + (typeof tipo === 'string' ? ` (${tipo})` : ''));
+    
+    showToast(`✅ Filtrando ${filteredData.length} registros del trimestre ${trimestre}`, 'success');
+    
+    updateKPIs();
+    renderMatrix();
+    
+    // 7. EFECTO VISUAL UX: Opacamos las otras tarjetas, resaltamos la cliqueada.
+    $('.trim-card').css('opacity', '0.4').css('border', 'none');
+    if(event && event.currentTarget) {
+        event.currentTarget.closest('.trim-card').style.opacity = '1';
+        event.currentTarget.closest('.trim-card').style.border = '2px solid #f1c40f';
+    }
+    
+    setTimeout(() => {
+        const matrixBox = document.querySelector('.matrix-box');
+        if(matrixBox) matrixBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+}
+
+        function clearTrimestreFilter() {
+    // 1. Apagamos la alerta visual PRIMERO para que el sistema sepa que ya no hay filtro
+    $('#trimestre-alert').hide();
+    
+    // 2. Le devolvemos la opacidad al 100% y le quitamos el borde dorado a TODAS las tarjetas de un plumazo
+    $('.trim-card').css('opacity', '1').css('border', 'none');
+    
+    // 3. Volvemos a aplicar los filtros de arriba (Proyecto, Tramo, etc.)
+    // Esto regenera "currentData" a la normalidad y redibuja la matriz correctamente
+    applyFilters(); 
+    
+    // 4. Mostramos el mensaje de éxito
+    showToast('ℹ️ Vista general restaurada', 'info');
+    
+    // 5. EFECTO UX: Hacemos un scroll suave de regreso al cronograma por si quedaron muy abajo
+    setTimeout(() => {
+        const trimWrapper = document.getElementById('trim-wrapper');
+        if(trimWrapper) {
+            trimWrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, 100);
+}
+
+        function showToast(message, type) {
+            const bgColor = type === 'success' ? '#27ae60' : type === 'danger' ? '#c0392b' : '#3498db';
+            const toast = $(`
+                <div style="position: fixed; top: 80px; right: 20px; z-index: 9999; background: ${bgColor}; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-weight: 600; animation: slideIn 0.3s ease;">
+                    ${message}
+                </div>
+            `);
+            
+            $('body').append(toast);
+            
+            setTimeout(() => {
+                toast.fadeOut(300, function() {
+                    $(this).remove();
+                });
+            }, 3000);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // KPIs
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        // ✅ NUEVO - MEJORADO CON SUBDIVISIONES
+function updateKPIs() {
+    try {
+        let kpiData = currentData;
+        if (state.tramoFromMatrix !== 'ALL') {
+            kpiData = currentData.filter(d => d[C.TRAMO] === state.tramoFromMatrix);
+            $('#tramo-alert').show();
+            $('#tramo-name').text(state.tramoFromMatrix);
+        } else {
+            $('#tramo-alert').hide();
+        }
+
+        // ✅ CONTADORES PRINCIPALES
+        let totalGeneral = kpiData.length;
+        let totalCesion = 0;
+        let totalAdquirir = 0;
+
+        // ✅ DISPONIBLES
+        let dispTotal = 0;
+        let dispCesion = 0;
+        let dispAdquirir = 0;
+
+        // ✅ PENDIENTES
+        let pendTotal = 0;
+        let pendCesion = 0;
+        let pendAdquirir = 0;
+
+        // ✅ FINANCIERO
+        let sumEst = 0, sumPag = 0;
+
+        // ✅ PROCESAR DATOS
+        kpiData.forEach(d => {
+            const disp = String(d[C.DISP] || "").toUpperCase();
+            const est = String(d[C.ESTADO] || "").toUpperCase();
+            const isCesion = est.includes('CESI') || est.includes('CESIÓN');
+
+            // Contar TOTAL GENERAL
+            if (isCesion) {
+                totalCesion++;
+            } else {
+                totalAdquirir++;
+            }
+
+            // Contar DISPONIBLES
+            if (disp.includes('DISPONIBLE') && !disp.includes('PENDIENTE')) {
+                dispTotal++;
+                if (isCesion) {
+                    dispCesion++;
+                } else {
+                    dispAdquirir++;
+                }
+            }
+            // Contar PENDIENTES
+            else if (disp.includes('PENDIENTE')) {
+                pendTotal++;
+                if (isCesion) {
+                    pendCesion++;
+                } else {
+                    pendAdquirir++;
+                }
+            }
+
+            // Financiero
+            sumEst += parseMoneyRobust(d[C.EST]);
+            sumPag += parseMoneyRobust(d[C.PAG]);
+        });
+
+        // ✅ ACTUALIZAR TOTAL GENERAL
+        $('#val-total').text(totalGeneral);
+        $('#val-total-cesion').text(totalCesion);
+        $('#val-total-adquirir').text(totalAdquirir);
+
+        // ✅ ACTUALIZAR DISPONIBLES
+        $('#val-disp').text(dispTotal);
+        $('#val-disp-cesion').text(dispCesion);
+        $('#val-disp-adquirir').text(dispAdquirir);
+
+        // ✅ ACTUALIZAR PENDIENTES
+        $('#val-pend').text(pendTotal);
+        $('#val-pend-cesion').text(pendCesion);
+        $('#val-pend-adquirir').text(pendAdquirir);
+
+        // ✅ ACTUALIZAR FINANCIERO
+        let sumSal = sumEst - sumPag;
+        let ejec = sumEst > 0 ? (sumPag / sumEst) * 100 : 0;
+
+        const fmt = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
+        $('#fin-est').text(fmt.format(sumEst));
+        $('#fin-pag').text(fmt.format(sumPag));
+        $('#fin-sal').text(fmt.format(sumSal));
+        $('#fin-ejec').text(ejec.toFixed(1) + '%');
+        
+        $('#sysRecords').text(rawData.length);
+        
+        console.log('✅ KPIs actualizados:', {
+            totalGeneral,
+            totalCesion,
+            totalAdquirir,
+            dispTotal,
+            pendTotal
+        });
+    } catch (e) {
+        console.error('❌ Error actualizando KPIs: ' + e.message);
+    }
+}
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // MATRIZ
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function renderMatrix() {
+            try {
+                const matrixData = currentData.filter(d => {
+                    if (state.kpiFilter === 'ALL') return true;
+                    const s = String(d[C.DISP] || '').toUpperCase();
+                    const est = String(d[C.ESTADO] || '').toUpperCase();
+
+                    if (state.kpiFilter === 'DISPONIBLE') return s.includes('DISPONIBLE') && !s.includes('PENDIENTE');
+                    if (state.kpiFilter === 'PENDIENTE') return s.includes('PENDIENTE');
+                    if (state.kpiFilter === 'ADQUIRIR') return !est.includes('CESI');
+                    return true;
+                });
+
+                const states = [...new Set(matrixData.map(d => d[C.ESTADO] || 'SIN ESTADO'))].sort();
+                const tramos = [...new Set(matrixData.map(d => d[C.TRAMO] || 'SIN TRAMO'))].sort();
+
+                if (tramos.length === 0) {
+                    $('#matrix-wrapper').html('<div class="text-center p-3 text-muted">No hay datos que coincidan.</div>');
+                    state.matrixTotal = 0;
+                    return;
+                }
+
+                const totalPages = Math.max(1, Math.ceil(tramos.length / state.matrixPageSize));
+                if (state.matrixPage > totalPages) state.matrixPage = totalPages;
+                const startIndex = (state.matrixPage - 1) * state.matrixPageSize;
+                const pagedTramos = tramos.slice(startIndex, startIndex + state.matrixPageSize);
+
+                let html = '<table class="table-matrix">';
+                html += `<thead><tr>
+                  <th rowspan="2" class="bg-head" style="width:150px; vertical-align:middle;">TRAMO</th>
+                  <th colspan="${states.length}" class="bg-head text-center" style="vertical-align:middle;">ESTADOS DEL PROCESO</th>
+                  <th rowspan="2" class="bg-head" style="vertical-align:middle;">TOTAL</th>
+                  <th rowspan="2" class="bg-head" style="vertical-align:middle;">% DISP</th>
+                </tr><tr>`;
+                states.forEach(s => html += `<th class="header-col">${s.toUpperCase()}</th>`);
+                html += `</tr></thead><tbody>`;
+
+                let displayedTotal = 0;
+                let colTot = new Array(states.length).fill(0);
+
+                pagedTramos.forEach(t => {
+                    const isSelected = (state.tramoFromMatrix === t) ? 'tramo-selected' : '';
+                    html += `<tr><td class="col-tramo ${isSelected}" onclick="toggleMatrixTramo('${t}')">${t}</td>`;
+
+                    const rowD = matrixData.filter(d => d[C.TRAMO] === t);
+                    const rowReal = currentData.filter(d => d[C.TRAMO] === t);
+                    const totR = rowReal.length;
+                    const dispR = rowReal.filter(d => {
+                        const s = String(d[C.DISP] || '').toUpperCase();
+                        return s.includes('DISPONIBLE') && !s.includes('PENDIENTE');
+                    }).length;
+
+                    states.forEach((s, idx) => {
+                        const c = rowD.filter(d => d[C.ESTADO] === s).length;
+                        colTot[idx] += c;
+                        const cls = c > 0 ? 'cell-val tracking-cell' : 'cell-0';
+                        const txt = c > 0 ? c : '-';
+                        html += `<td class="${cls}" onclick="openModal('${t}', '${s}')">${txt}</td>`;
+                    });
+
+                    html += `<td class="cell-total">${totR}</td>`;
+                    const perc = totR > 0 ? (dispR / totR) * 100 : 0;
+                    const color = perc < 50 ? '#c0392b' : (perc < 90 ? '#f39c12' : '#27ae60');
+                    html += `<td>
+                        <div style="font-weight:700; color:${color}; font-size:0.8rem">${perc.toFixed(0)}%</div>
+                        <div class="prog-bg"><div class="prog-fill" style="width:${perc}%; background:${color}"></div></div>
+                    </td></tr>`;
+
+                    displayedTotal += totR;
+                });
+
+                html += `<tr class="bg-light fw-bold" style="border-top:2px solid #333"><td>TOTAL</td>`;
+                colTot.forEach(c => html += `<td>${c}</td>`);
+                html += `<td id="matrix-total-value" style="font-weight: 900; color: var(--accent); font-size: 1.1rem;">${displayedTotal}</td><td>-</td></tr></tbody></table>`;
+
+                html += `<div id="matrix-pagination" class="d-flex flex-wrap justify-content-between align-items-center mt-3" style="font-size:0.9rem; gap:10px;">
+                      <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <button class="btn btn-sm btn-secondary" onclick="setMatrixPage(${state.matrixPage - 1})" ${state.matrixPage === 1 ? 'disabled' : ''}>Anterior</button>
+                        <button class="btn btn-sm btn-secondary" onclick="setMatrixPage(${state.matrixPage + 1})" ${state.matrixPage === totalPages ? 'disabled' : ''}>Siguiente</button>
+                      </div>
+                      <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <label for="matrixPageSize" class="mb-0">Filas por página:</label>
+                        <select id="matrixPageSize" class="form-select form-select-sm" style="width: auto;" onchange="setMatrixPageSize(this.value)">
+                          <option value="50" ${state.matrixPageSize === 50 ? 'selected' : ''}>50</option>
+                          <option value="100" ${state.matrixPageSize === 100 ? 'selected' : ''}>100</option>
+                          <option value="200" ${state.matrixPageSize === 200 ? 'selected' : ''}>200</option>
+                        </select>
+                      </div>
+                      <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <span>Página</span>
+                        <input id="matrixPageInput" type="number" min="1" max="${totalPages}" value="${state.matrixPage}" class="form-control form-control-sm" style="width: 80px;" onchange="gotoMatrixPage(this.value)">
+                        <span>de ${totalPages} · Mostrando ${pagedTramos.length} de ${tramos.length} tramos</span>
+                      </div>
+                  </div>`;
+
+                $('#matrix-wrapper').html(html);
+                state.matrixTotal = displayedTotal;
+                console.log(`✅ Matriz renderizada - Página ${state.matrixPage}/${totalPages}, registros mostrados: ${displayedTotal}`);
+            } catch (e) {
+                console.error('❌ Error renderizando matriz: ' + e.message);
+            }
+        }
+
+        function toggleMatrixTramo(tramo) {
+            if (state.tramoFromMatrix === tramo) state.tramoFromMatrix = 'ALL';
+            else state.tramoFromMatrix = tramo;
+            updateKPIs();
+            renderMatrix();
+        }
+
+        function setMatrixPage(page) {
+            const states = [...new Set(currentData.map(d => d[C.ESTADO] || 'SIN ESTADO'))].sort();
+            const tramos = [...new Set(currentData.map(d => d[C.TRAMO] || 'SIN TRAMO'))].sort();
+            const totalPages = Math.max(1, Math.ceil(tramos.length / state.matrixPageSize));
+            if (page < 1) page = 1;
+            if (page > totalPages) page = totalPages;
+            if (page === state.matrixPage) return;
+            state.matrixPage = page;
+            renderMatrix();
+        }
+
+        function clearTramoFilter() {
+            state.tramoFromMatrix = 'ALL';
+            $('#tramo-alert').hide();
+            updateKPIs();
+            renderMatrix();
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // MODAL Y SEGUIMIENTO
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        window.openModal = function(tramo, estado) {
+    try {
+        console.log('📋 Abriendo modal para:', tramo, estado);
+        
+        // ✅ GUARDAR ESTADO ANTES DE ABRIR
+        saveNavigationState();
+        navigationState.lastOpenedModal = { tramo, estado };
+        
+        const tableData = currentData.filter(d => {
+            let passKpi = true;
+            const s = String(d[C.DISP] || "").toUpperCase();
+            const est = String(d[C.ESTADO] || "").toUpperCase();
+
+            if(state.kpiFilter === 'DISPONIBLE') passKpi = s.includes('DISPONIBLE') && !s.includes('PENDIENTE');
+            if(state.kpiFilter === 'PENDIENTE') passKpi = s.includes('PENDIENTE');
+            if(state.kpiFilter === 'ADQUIRIR') passKpi = !est.includes('CESI');
+            
+            return d[C.TRAMO] === tramo && d[C.ESTADO] === estado && passKpi;
+        });
+
+        $('#modalTitle').html(`<b>${tramo}</b> / <b>${estado.toUpperCase()}</b> (${tableData.length} registros)`);
+        
+        if ($.fn.DataTable.isDataTable('#detailTable')) {
+            try {
+                $('#detailTable').DataTable().destroy();
+            } catch(e) {
+                console.warn('⚠️ Error destruyendo DataTable:', e.message);
+            }
+        }
+        
+        $('#detailTable').html('');
+        $('#detailTable').empty();
+
+        let colsDef = [
+            { 
+                title: "RT", 
+                data: C.RT, 
+                className: "fw-bold text-primary bg-light", 
+                defaultContent: "",
+                render: function(data) {
+                    return data || '-';
+                }
+            },
+            { 
+                title: "ID", 
+                data: C.ID, 
+                defaultContent: "",
+                render: function(data) {
+                    return data || '-';
+                }
+            },
+            { 
+                title: "DIRECCIÓN", 
+                data: C.DIR, 
+                defaultContent: "",
+                render: function(data) {
+                    return data || '-';
+                }
+            },
+            { 
+                title: "ESTADO", 
+                data: C.ESTADO, 
+                defaultContent: "",
+                render: function(data) {
+                    return data || '-';
+                }
+            },
+            { 
+                title: "DISPONIBILIDAD", 
+                data: C.DISP, 
+                defaultContent: "",
+                render: function(data) {
+                    return data || '-';
+                }
+            },
+            { 
+                title: "FECHA ENTREGA", 
+                data: "FECHA_ISO", 
+                defaultContent: "",
+                render: function(data) {
+                    return data || '-';
+                }
+            },
+            {
+                title: "OBSERVACIONES",
+                data: C.OBS,
+                defaultContent: "",
+                render: function(d, t, row) {
+                    if (t === 'display') {
+                        const latestObs = getLatestObservation(row[C.RT]);
+                        const obsToShow = cleanTextUpper(latestObs || row[C.OBS] || '');
+                        return `<div class="wrap-obs">${obsToShow}</div>`;
+                    }
+                    return d || '-';
+                }
+            },
+            { 
+                title: "VALOR PAGADO", 
+                data: C.PAG, 
+                defaultContent: 0, 
+                render: function(data) {
+                    const num = parseMoneyRobust(data);
+                    return new Intl.NumberFormat('es-CO', { 
+                        style: 'currency', 
+                        currency: 'COP', 
+                        maximumFractionDigits: 0 
+                    }).format(num);
+                }
+            }
+        ];
+
+        if (isTrackingMode) {
+            colsDef.unshift({
+                title: "ACCIÓN",
+                data: null,
+                defaultContent: '<button class="btn btn-warning btn-sm btn-edit-row fw-bold"><i class="fas fa-pen"></i> EDITAR</button>',
+                orderable: false,
+                width: "80px",
+                render: function() {
+                    return '<button class="btn btn-warning btn-sm btn-edit-row fw-bold"><i class="fas fa-pen"></i> EDITAR</button>';
+                }
+            });
+            
+            colsDef.push({
+                title: "DETALLES",
+                data: C.RT,
+                defaultContent: '',
+                render: function(data) {
+                    const rtEscaped = String(data).replace(/'/g, "\\'").replace(/"/g, '\\"');
+                    return `<button class="btn btn-info btn-sm" 
+                                   onclick="openRtDetailModule('${rtEscaped}')" 
+                                   title="Ver detalles completos de ${data}">
+                                <i class="fas fa-magnifying-glass"></i>
+                            </button>`;
+                },
+                orderable: false,
+                width: "60px"
+            });
+        }
+
+        allColsList.forEach(c => {
+            if(!colsDef.some(def => def.data === c)) {
+                colsDef.push({ 
+                    title: c, 
+                    data: c, 
+                    visible: false, 
+                    defaultContent: "",
+                    render: function(data) {
+                        return data || '-';
+                    }
+                });
+            }
+        });
+
+        // ✅ CONFIGURAR EVENTO DE CIERRE
+        const modalElement = document.getElementById('detailModal');
+        const modalInstance = new bootstrap.Modal(modalElement);
+        
+        $(modalElement).off('hidden.bs.modal').on('hidden.bs.modal', function() {
+            console.log('🔄 Modal cerrado - Restaurando estado');
+            restoreNavigationState();
+        });
+        
+        modalInstance.show();
+
+        try {
+            tableInstance = $('#detailTable').DataTable({
+                data: tableData, 
+                columns: colsDef, 
+                dom: 'Bfrtip',
+                buttons: [
+                    { 
+                        extend: 'excelHtml5', 
+                        text: '📥 Excel Completo', 
+                        className: 'btn btn-success btn-sm', 
+                        exportOptions: { columns: ':all' } 
+                    },
+                    { 
+                        extend: 'colvis', 
+                        text: 'Ver Columnas', 
+                        className: 'btn btn-secondary btn-sm' 
+                    }
+                ],
+                scrollX: true, 
+                pageLength: 10, 
+                language: { 
+                    url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json' 
+                },
+                initComplete: function() {
+                    console.log('✅ DataTable inicializado correctamente');
+                }
+            });
+
+            $('#detailTable tbody').off('click', '.btn-edit-row').on('click', '.btn-edit-row', function () {
+                var data = tableInstance.row($(this).parents('tr')).data();
+                bootstrap.Modal.getInstance(document.getElementById('detailModal')).hide();
+                openEditModal(data);
+            });
+            
+            setTimeout(() => {
+                if(tableInstance) {
+                    tableInstance.columns.adjust().draw();
+                }
+            }, 300);
+
+            console.log('📋 Modal abierto: ' + tramo + ' / ' + estado + ' (' + tableData.length + ' registros)');
+        } catch(dtError) {
+            console.error('❌ Error inicializando DataTable:', dtError.message);
+            showToast('❌ Error mostrando tabla: ' + dtError.message, 'danger');
+        }
+
+    } catch (e) {
+        console.error('❌ Error abriendo modal:', e.message);
+        console.error('📍 Stack:', e.stack);
+        showToast('❌ Error abriendo detalles: ' + e.message, 'danger');
+    }
+};
+
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // MODO SEGUIMIENTO
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function toggleTrackingMode() {
+            isTrackingMode = !isTrackingMode;
+            const btn = $('#btnTrackingMode');
+            
+            if(isTrackingMode) {
+                btn.removeClass('btn-warning').addClass('btn-danger');
+                btn.html('<i class="fas fa-times-circle"></i> DESACTIVAR MODO');
+                $('body').addClass('tracking-mode-active');
+                showToast('✅ Modo Seguimiento ACTIVADO', 'success');
+            } else {
+                btn.removeClass('btn-danger').addClass('btn-warning');
+                btn.html('<i class="fas fa-pen-to-square"></i> MODO SEGUIMIENTO');
+                $('body').removeClass('tracking-mode-active');
+                showToast('ℹ️ Modo Seguimiento DESACTIVADO', 'info');
+            }
+            
+            console.log('🔄 Modo seguimiento:', isTrackingMode ? 'ACTIVADO' : 'DESACTIVADO');
+        }
+
+        function openEditModal(rowData) {
+    try {
+        console.log('✏️ Abriendo editor para RT:', rowData[C.RT]);
+        
+        // ✅ Guardar datos originales
+        originalData = JSON.parse(JSON.stringify(rowData));
+        
+        $('#trackRt').val(rowData[C.RT]);
+        $('#trackRtDisplay').text(rowData[C.RT]);
+        
+        // ✅ FUNCIÓN MEJORADA CON OPCIÓN "AGREGAR NUEVO"
+        const fillSelectWithNew = (selectId, listKey, currentValue) => {
+            const $select = $('#' + selectId);
+            $select.empty();
+            
+            // Agregar opción vacía
+            $select.append('<option value="">-- Seleccionar --</option>');
+            
+            // Buscar la clave correcta (case-insensitive)
+            let options = [];
+            const keys = Object.keys(currentDropdowns);
+            const matchingKey = keys.find(k => k.toLowerCase() === listKey.toLowerCase());
+            
+            if (matchingKey) {
+                options = currentDropdowns[matchingKey] || [];
+            }
+            
+            // Agregar todas las opciones de la lista
+            options.forEach(opt => {
+                $select.append(`<option value="${opt}">${opt}</option>`);
+            });
+            
+            // ✅ AGREGAR OPCIÓN "CREAR NUEVO..."
+            $select.append(`<option value="__NEW__" style="background: #e8f5e9; font-weight: bold; color: #27ae60;">➕ Agregar nuevo...</option>`);
+            
+            // Si el valor actual NO está en la lista, agregarlo
+            if (currentValue && currentValue.trim() !== '' && !options.includes(currentValue)) {
+                console.log(`⚠️ Agregando valor no listado en ${selectId}: "${currentValue}"`);
+                $select.append(`<option value="${currentValue}">${currentValue} ⚠️</option>`);
+            }
+            
+            // Seleccionar el valor actual
+            if (currentValue && currentValue.trim() !== '') {
+                $select.val(currentValue);
+            }
+            
+            // ✅ EVENTO PARA DETECTAR "AGREGAR NUEVO"
+            $select.off('change').on('change', function() {
+                if ($(this).val() === '__NEW__') {
+                    promptNewValue(selectId, listKey, currentValue);
+                }
+            });
+            
+            console.log(`✅ ${selectId} configurado con: "${currentValue}"`);
+        };
+        
+        // ✅ FUNCIÓN PARA SOLICITAR NUEVO VALOR
+        const promptNewValue = (selectId, listKey, previousValue) => {
+            const $select = $('#' + selectId);
+            const fieldName = $select.prev('label').text() || selectId;
+            
+            // Crear modal personalizado
+            const modalHtml = `
+                <div class="modal fade" id="newValueModal" tabindex="-1" data-bs-backdrop="static">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header bg-success text-white">
+                                <h5 class="modal-title">
+                                    <i class="fas fa-plus-circle"></i> Agregar Nuevo Valor
+                                </h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Campo:</strong> ${fieldName}
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Nuevo valor:</label>
+                                    <input type="text" 
+                                           class="form-control" 
+                                           id="newValueInput" 
+                                           placeholder="Escribe el nuevo valor..."
+                                           style="text-transform: uppercase;">
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="saveToList" checked>
+                                    <label class="form-check-label" for="saveToList">
+                                        Guardar en la lista para uso futuro
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                                    <i class="fas fa-times"></i> Cancelar
+                                </button>
+                                <button type="button" class="btn btn-success" id="btnSaveNewValue">
+                                    <i class="fas fa-check"></i> Agregar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Eliminar modal anterior si existe
+            $('#newValueModal').remove();
+            
+            // Agregar modal al DOM
+            $('body').append(modalHtml);
+            
+            // Mostrar modal
+            const modal = new bootstrap.Modal(document.getElementById('newValueModal'));
+            modal.show();
+            
+            // Focus en el input
+            $('#newValueModal').on('shown.bs.modal', function() {
+                $('#newValueInput').focus();
+            });
+            
+            // Evento del botón "Agregar"
+            $('#btnSaveNewValue').off('click').on('click', function() {
+                const newValue = $('#newValueInput').val().trim().toUpperCase();
+                const saveToList = $('#saveToList').is(':checked');
+                
+                if (!newValue) {
+                    showToast('⚠️ Debes ingresar un valor', 'warning');
+                    return;
+                }
+                
+                console.log('✅ Nuevo valor:', newValue);
+                
+                // Agregar la nueva opción al select
+                $select.find('option[value="__NEW__"]').before(
+                    `<option value="${newValue}" selected>${newValue} ✨ NUEVO</option>`
+                );
+                
+                // Seleccionar el nuevo valor
+                $select.val(newValue);
+                
+                // Si se marcó "guardar en lista", actualizar el dropdown global
+                if (saveToList) {
+                    const keys = Object.keys(currentDropdowns);
+                    const matchingKey = keys.find(k => k.toLowerCase() === listKey.toLowerCase());
+                    
+                    if (matchingKey && currentDropdowns[matchingKey]) {
+                        if (!currentDropdowns[matchingKey].includes(newValue)) {
+                            currentDropdowns[matchingKey].push(newValue);
+                            console.log(`✅ "${newValue}" agregado a la lista "${matchingKey}"`);
+                            
+                            // Guardar en servidor (opcional)
+                            try {
+                                google.script.run
+                                    .withSuccessHandler(function(result) {
+                                        if (result.success) {
+                                            console.log('✅ Nuevo valor guardado en servidor');
+                                        }
+                                    })
+                                    .withFailureHandler(function(error) {
+                                        console.warn('⚠️ No se pudo guardar en servidor:', error.message);
+                                    })
+                                    .addDropdownValue(matchingKey, newValue, currentUser);
+                            } catch(e) {
+                                console.warn('⚠️ Error guardando en servidor:', e.message);
+                            }
+                        }
+                    }
+                }
+                
+                showToast(`✅ Valor "${newValue}" agregado correctamente`, 'success');
+                modal.hide();
+            });
+            
+            // Evento para cancelar
+            $('#newValueModal').on('hidden.bs.modal', function() {
+                // Si canceló, volver al valor anterior
+                if ($select.val() === '__NEW__') {
+                    $select.val(previousValue || '');
+                }
+                $('#newValueModal').remove();
+            });
+            
+            // Enter para confirmar
+            $('#newValueInput').on('keypress', function(e) {
+                if (e.which === 13) {
+                    $('#btnSaveNewValue').click();
+                }
+            });
+        };
+        
+        // ✅ Llenar todos los selectores con opción "Agregar nuevo"
+        fillSelectWithNew('trackEstadoPredial', 'estadoPredial', rowData['ESTADO PREDIAL']);
+        fillSelectWithNew('trackEstadoAjustado', 'estadoAjustado', rowData[C.ESTADO]);
+        fillSelectWithNew('trackDisp', 'disp', rowData[C.DISP]);
+        fillSelectWithNew('trackEstadoRt', 'estadoRt', rowData['ESTADO RT']);
+        fillSelectWithNew('trackTitulos', 'estadoTitulos', rowData['ESTADO TITULOS']);
+        fillSelectWithNew('trackTasacion', 'estadoTasacion', rowData['ESTADO TASACIÓN']);
+        fillSelectWithNew('trackAvaluo', 'estadoAvaluo', rowData['ESTADO AVALUO']);
+        fillSelectWithNew('trackSituaciones', 'situaciones', rowData['SITUACIONES ESPECIALES']);
+        
+        // ✅ Fecha de avalúo
+        if (rowData['FECHA AVALUO']) {
+            let d = new Date(rowData['FECHA AVALUO']);
+            if (!isNaN(d.getTime())) {
+                $('#trackFechaAvaluo').val(d.toISOString().split('T')[0]);
+            }
+        } else {
+            $('#trackFechaAvaluo').val('');
+        }
+        
+        // ✅ Observaciones
+        const latestObs = getLatestObservation(rowData[C.RT]);
+        const obsToShow = latestObs || rowData[C.OBS] || '';
+        $('#trackObservaciones').val(cleanTextUpper(obsToShow));
+        
+        // Limpiar situaciones manual
+        $('#trackSituacionesManual').val('');
+        
+        // Limpiar resumen de cambios
+        $('#changeSummary').addClass('d-none');
+        $('#btnConfirmSave').addClass('d-none');
+        
+        // Abrir modal
+        new bootstrap.Modal(document.getElementById('trackingModal')).show();
+        
+        console.log('✅ Modal de edición abierto con opción "Agregar nuevo"');
+        
+    } catch(e) {
+        console.error('❌ Error abriendo editor:', e.message);
+        console.error('📍 Stack:', e.stack);
+        showToast('❌ Error: ' + e.message, 'danger');
+    }
+}
+
+
+
+
+        
+
+        function verifyChanges() {
+            try {
+                const changes = [];
+                
+                const fields = {
+                    'ESTADO PREDIAL': $('#trackEstadoPredial').val(),
+                    'ESTADO PREDIAL AJUSTADO': $('#trackEstadoAjustado').val(),
+                    'PREDIOS DISPONIBLES (INCLUYE CESIONES)': $('#trackDisp').val(),
+                    'ESTADO RT': $('#trackEstadoRt').val(),
+                    'ESTADO TITULOS': $('#trackTitulos').val(),
+                    'ESTADO TASACIÓN': $('#trackTasacion').val(),
+                    'ESTADO AVALUO': $('#trackAvaluo').val(),
+                    'FECHA AVALUO': $('#trackFechaAvaluo').val(),
+                    'SITUACIONES ESPECIALES': $('#trackSituaciones').val() || $('#trackSituacionesManual').val(),
+                    'OBSERVACIONES': cleanTextUpper($('#trackObservaciones').val())
+                };
+                
+                for(const [field, newVal] of Object.entries(fields)) {
+                    const oldVal = originalData[field] || '';
+                    if(String(newVal).trim() !== String(oldVal).trim()) {
+                        changes.push(`<li><strong>${escapeHtml(field)}:</strong><br>Anterior: "${escapeHtml(oldVal)}"<br>Nuevo: "${escapeHtml(newVal)}"</li>`);
+                    }
+                }
+                
+                if(changes.length === 0) {
+                    showToast('ℹ️ No hay cambios para guardar', 'info');
+                    return;
+                }
+                
+                $('#changeList').html(changes.join(''));
+                $('#changeSummary').removeClass('d-none');
+                $('#btnConfirmSave').removeClass('d-none');
+                
+                console.log('✅ Cambios detectados:', changes.length);
+                
+            } catch(e) {
+                console.error('❌ Error verificando cambios:', e.message);
+                showToast('❌ Error: ' + e.message, 'danger');
+            }
+        }
+
+        function submitTracking() {
+    try {
+        const rt = $('#trackRt').val();
+        
+        const updatedData = {
+            'RT': rt,
+            'ESTADO PREDIAL': $('#trackEstadoPredial').val(),
+            'ESTADO PREDIAL AJUSTADO': $('#trackEstadoAjustado').val(),
+            'PREDIOS DISPONIBLES (INCLUYE CESIONES)': $('#trackDisp').val(),
+            'ESTADO RT': $('#trackEstadoRt').val(),
+            'ESTADO TITULOS': $('#trackTitulos').val(),
+            'ESTADO TASACIÓN': $('#trackTasacion').val(),
+            'ESTADO AVALUO': $('#trackAvaluo').val(),
+            'FECHA AVALUO': $('#trackFechaAvaluo').val(),
+            'SITUACIONES ESPECIALES': $('#trackSituaciones').val() || $('#trackSituacionesManual').val(),
+            'OBSERVACIONES': cleanTextUpper($('#trackObservaciones').val()),
+            'USUARIO': currentUser,
+            'FECHA_REGISTRO': new Date().toISOString()
+        };
+        
+        console.log('💾 Guardando cambios para RT:', rt);
+        
+        $('#loader').fadeIn();
+        
+        google.script.run
+            .withSuccessHandler(function(result) {
+                $('#loader').fadeOut();
+                
+                if(result.success) {
+                    showToast('✅ Cambios guardados exitosamente', 'success');
+                    
+                    // ✅ CERRAR MODAL DE EDICIÓN
+                    const trackingModalElement = document.getElementById('trackingModal');
+                    const trackingModal = bootstrap.Modal.getInstance(trackingModalElement);
+                    if (trackingModal) {
+                        trackingModal.hide();
+                    }
+                    
+                    // ✅ RECARGAR DATOS Y RESTAURAR ESTADO
+                    console.log('🔄 Recargando datos después de guardar...');
+                    google.script.run
+                        .withSuccessHandler(function(refreshedData) {
+                            onDataLoaded(refreshedData);
+                            
+                            // ✅ RESTAURAR ESTADO DESPUÉS DE RECARGAR
+                            setTimeout(() => {
+                                restoreNavigationState();
+                                
+                                // ✅ REABRIR MODAL ORIGINAL SI EXISTÍA
+                                if (navigationState.lastOpenedModal) {
+                                    const { tramo, estado } = navigationState.lastOpenedModal;
+                                    setTimeout(() => {
+                                        openModal(tramo, estado);
+                                    }, 500);
+                                }
+                            }, 300);
+                        })
+                        .withFailureHandler(function(error) {
+                            console.error('❌ Error recargando datos:', error);
+                            showToast('⚠️ Datos guardados pero error al refrescar', 'warning');
+                            restoreNavigationState();
+                        })
+                        .getDashboardData();
+                    
+                } else {
+                    showToast('❌ Error: ' + result.error, 'danger');
+                }
+            })
+            .withFailureHandler(function(error) {
+                $('#loader').fadeOut();
+                console.error('❌ Error guardando:', error);
+                showToast('❌ Error: ' + error.message, 'danger');
+            })
+            .saveFollowupData(JSON.stringify(updatedData));
+        
+    } catch(e) {
+        console.error('❌ Error en submitTracking:', e.message);
+        showToast('❌ Error: ' + e.message, 'danger');
+    }
+}
+
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // DETALLES RT CON CAMPOS CONFIGURABLES Y TIMELINE
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function openRtDetailModule(rt) {
+    try {
+        console.log('🔍 Abriendo detalles para RT:', rt);
+        
+        // ✅ GUARDAR ESTADO
+        saveNavigationState();
+        navigationState.lastViewedRT = rt;
+        
+        const rtRecord = rawData.find(r => String(r[C.RT]).toUpperCase() === rt.toUpperCase());
+        if (!rtRecord) {
+            showToast('❌ RT no encontrado', 'danger');
+            return;
+        }
+        
+        let visibleFields = JSON.parse(localStorage.getItem('rtDetailFields') || '[]');
+        if (visibleFields.length === 0) {
+            visibleFields = [
+                C.RT, C.ID, C.DIR, C.PROYECTO, C.TRAMO, 
+                C.ESTADO, C.DISP, C.FECHA, C.EST, C.PAG, C.OBS
+            ];
+            localStorage.setItem('rtDetailFields', JSON.stringify(visibleFields));
+        }
+        
+        const fieldSelector = document.getElementById('fieldSelector');
+        fieldSelector.innerHTML = '';
+        
+        allColsList.forEach(col => {
+            const isVisible = visibleFields.includes(col);
+            const checkbox = document.createElement('div');
+            checkbox.className = 'form-check';
+            checkbox.innerHTML = `
+                <input class="form-check-input" 
+                       type="checkbox" 
+                       id="field_${col}" 
+                       ${isVisible ? 'checked' : ''} 
+                       onchange="toggleDetailField('${col}')">
+                <label class="form-check-label small" for="field_${col}">
+                    ${col.substring(0, 20)}...
+                </label>
+            `;
+            fieldSelector.appendChild(checkbox);
+        });
+        
+        const detailBody = document.getElementById('rtDetailBody');
+        detailBody.innerHTML = '';
+        
+        visibleFields.forEach(field => {
+            const value = rtRecord[field] || '-';
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td style="font-weight: 700; width: 30%; background: #f8f9fa;">
+                    ${field}
+                </td>
+                <td>
+                    ${typeof value === 'object' ? JSON.stringify(value) : value}
+                </td>
+            `;
+            detailBody.appendChild(row);
+        });
+        
+        document.getElementById('detailRtNumber').textContent = rt;
+        
+        // --- NUEVO: ALERTA PARA PREDIOS INACTIVOS EN MODAL LUPA ---
+        const estadoActivo = String(rtRecord['ACTIVO/INACTIVO'] || "").toUpperCase().trim();
+        const headerModal = document.querySelector('#rtDetailModal .modal-header');
+        
+        // Limpiar banner anterior si existe al cerrar otro predio
+        const oldBanner = document.getElementById('bannerInactivoModal');
+        if (oldBanner) oldBanner.remove();
+
+        if (estadoActivo === 'INACTIVO') {
+            const obs = rtRecord['OBSERVACIONES'] || rtRecord['SITUACIONES ESPECIALES'] || 'Sin observación';
+            const bannerHTML = `
+            <div id="bannerInactivoModal" class="alert alert-danger m-0 px-4 py-2 rounded-0 border-0 text-center fw-bold" style="border-bottom: 2px solid darkred !important;">
+                <i class="fas fa-exclamation-triangle"></i> ATENCIÓN: PREDIO INACTIVO - ${escapeHtml(obs)}
+            </div>`;
+            headerModal.insertAdjacentHTML('afterend', bannerHTML);
+        }
+        // -----------------------------------------------------------
+
+        // ✅ CONFIGURAR EVENTO DE CIERRE
+        const modalElement = document.getElementById('rtDetailModal');
+        const modalInstance = new bootstrap.Modal(modalElement);
+        
+        $(modalElement).off('hidden.bs.modal').on('hidden.bs.modal', function() {
+            console.log('🔄 Modal de detalles cerrado - Restaurando estado');
+            restoreNavigationState();
+        });
+        
+        modalInstance.show();
+        
+        loadRtTimeline(rt, 'LAST_3_MONTHS');
+        
+        console.log('✅ Módulo de detalles abierto');
+        
+    } catch (e) {
+        console.error('❌ Error abriendo detalles:', e.message);
+        showToast('❌ Error: ' + e.message, 'danger');
+    }
+}
+
+
+
+        function toggleDetailField(fieldName) {
+            let visibleFields = JSON.parse(localStorage.getItem('rtDetailFields') || '[]');
+            
+            if (visibleFields.includes(fieldName)) {
+                visibleFields = visibleFields.filter(f => f !== fieldName);
+            } else {
+                visibleFields.push(fieldName);
+            }
+            
+            localStorage.setItem('rtDetailFields', JSON.stringify(visibleFields));
+            console.log('💾 Campos guardados:', visibleFields);
+            
+            const rtNumber = document.getElementById('detailRtNumber').textContent;
+            openRtDetailModule(rtNumber);
+        }
+
+        function resetDetailFields() {
+            localStorage.removeItem('rtDetailFields');
+            const rtNumber = document.getElementById('detailRtNumber').textContent;
+            openRtDetailModule(rtNumber);
+            showToast('✅ Campos restaurados', 'success');
+        }
+
+        function loadRtTimeline(rt, filterType = 'ALL') {
+            try {
+                console.log(`📅 Cargando timeline: RT=${rt}, Filtro=${filterType}`);
+                
+                const timelineBody = document.getElementById('rtTimelineBody');
+                timelineBody.innerHTML = '<tr><td colspan="5" class="text-center"><div class="spinner-border spinner-border-sm" role="status"></div></td></tr>';
+                
+                google.script.run
+                    .withSuccessHandler(function(result) {
+                        const data = JSON.parse(result);
+                        
+                        if (data.error) {
+                            timelineBody.innerHTML = `<tr><td colspan="5" class="text-danger">Error: ${data.error}</td></tr>`;
+                            return;
+                        }
+                        
+                        if (data.timeline.length === 0) {
+                            timelineBody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">Sin registros de seguimiento</td></tr>`;
+                            return;
+                        }
+                        
+                        timelineBody.innerHTML = '';
+                        data.timeline.forEach((record, idx) => {
+                            const row = document.createElement('tr');
+                            row.style.backgroundColor = idx % 2 === 0 ? '#f9f9f9' : '#ffffff';
+                            
+                            row.innerHTML = `
+                                <td>
+                                    <small class="fw-bold">${record.fechaCompleta}</small>
+                                </td>
+                                <td>
+                                    <small>${record.estado}</small>
+                                </td>
+                                <td>
+                                    <small>${record.disponibilidad}</small>
+                                </td>
+                                <td>
+                                    <small class="wrap-obs" style="max-width: 250px; display: block;">
+                                        ${escapeHtml(record.observaciones)}
+                                    </small>
+                                </td>
+                                <td>
+                                    <small>${record.usuario}</small>
+                                </td>
+                            `;
+                            timelineBody.appendChild(row);
+                        });
+                        
+                        console.log(`✅ Timeline cargado: ${data.timeline.length} registros`);
+                        showToast(`✅ ${data.timeline.length} registros de seguimiento`, 'success');
+                        
+                    })
+                    .withFailureHandler(function(error) {
+                        console.error('❌ Error cargando timeline:', error);
+                        timelineBody.innerHTML = `<tr><td colspan="5" class="text-danger">Error: ${error.message}</td></tr>`;
+                        showToast('❌ Error cargando timeline', 'danger');
+                    })
+                    .getRtFollowupTimeline(rt, filterType);
+                    
+            } catch (e) {
+                console.error('❌ Error en loadRtTimeline:', e.message);
+                showToast('❌ Error: ' + e.message, 'danger');
+            }
+        }
+        // ═══════════════════════════════════════════════════════════════════════════════════
+// LIMPIEZA DE MODALES
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+function setupModalCleanup() {
+    // Limpiar modal de tracking al cerrar
+    $('#trackingModal').on('hidden.bs.modal', function() {
+        $('#trackingForm')[0].reset();
+        $('#changeSummary').addClass('d-none');
+        $('#btnConfirmSave').addClass('d-none');
+        console.log('🧹 Modal de tracking limpiado');
+    });
+    
+    // Limpiar modal de detalles al cerrar
+    $('#detailModal').on('hidden.bs.modal', function() {
+        if (tableInstance) {
+            try {
+                tableInstance.destroy();
+                tableInstance = null;
+            } catch(e) {
+                console.warn('⚠️ Error destruyendo tabla:', e.message);
+            }
+        }
+        $('#detailTable').empty();
+        console.log('🧹 Modal de detalles limpiado');
+    });
+}
+// ═══════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES AUXILIARES - LOADER, ALERTS Y NOTIFICACIONES
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * ✅ Muestra el loader
+ */
+function showLoader(message = 'Cargando...', subtext = 'Por favor espera') {
+    try {
+        const loader = document.getElementById('loader');
+        if (loader) {
+            loader.style.display = 'flex';
+            const loaderText = loader.querySelector('.loader-text');
+            const loaderSubtext = loader.querySelector('.loader-subtext');
+            
+            if (loaderText) loaderText.textContent = message;
+            if (loaderSubtext) loaderSubtext.textContent = subtext;
+            
+            console.log('⏳ Loader mostrado:', message);
+        }
+    } catch (e) {
+        console.error('❌ Error mostrando loader:', e.message);
+    }
+}
+
+/**
+ * ✅ Oculta el loader
+ */
+function hideLoader() {
+    try {
+        const loader = document.getElementById('loader');
+        if (loader) {
+            loader.style.display = 'none';
+            console.log('✅ Loader ocultado');
+        }
+    } catch (e) {
+        console.error('❌ Error ocultando loader:', e.message);
+    }
+}
+
+/**
+ * ✅ Muestra alerta
+ */
+function showAlert(message, type = 'info') {
+    try {
+        type = type || 'info';
+        const alertClass = `alert-${type}`;
+        
+        const alertHtml = `
+            <div class="alert alert-custom ${alertClass}" style="position: fixed; top: 100px; right: 20px; z-index: 9999; min-width: 300px; animation: slideIn 0.3s ease;">
+                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'danger' ? 'exclamation-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'}"></i>
+                <div>
+                    <strong>${type.toUpperCase()}</strong>
+                    <p style="margin: 5px 0 0 0; font-size: 0.9rem;">${message}</p>
+                </div>
+            </div>
+        `;
+        
+        const alertContainer = document.createElement('div');
+        alertContainer.innerHTML = alertHtml;
+        document.body.appendChild(alertContainer.firstElementChild);
+        
+        setTimeout(() => {
+            const alert = document.body.lastElementChild;
+            if (alert && alert.classList.contains('alert-custom')) {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.3s ease';
+                setTimeout(() => alert.remove(), 300);
+            }
+        }, 3000);
+        
+        console.log(`[${type.toUpperCase()}] ${message}`);
+    } catch (e) {
+        console.error('❌ Error mostrando alerta:', e.message);
+    }
+}
+
+/**
+ * ✅ Muestra notificación (alternativa a showAlert)
+ */
+function showNotification(title, message, type = 'info') {
+    try {
+        const bgColor = type === 'success' ? '#27ae60' : 
+                       type === 'danger' ? '#c0392b' : 
+                       type === 'warning' ? '#f39c12' : '#3498db';
+        
+        const notifHtml = `
+            <div style="position: fixed; top: 80px; right: 20px; z-index: 9999; 
+                        background: ${bgColor}; color: white; padding: 15px 20px; 
+                        border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); 
+                        font-weight: 600; animation: slideIn 0.3s ease; min-width: 300px;">
+                <strong>${title}</strong>
+                <p style="margin: 5px 0 0 0; font-size: 0.9rem;">${message}</p>
+            </div>
+        `;
+        
+        const notifContainer = document.createElement('div');
+        notifContainer.innerHTML = notifHtml;
+        document.body.appendChild(notifContainer.firstElementChild);
+        
+        setTimeout(() => {
+            const notif = document.body.lastElementChild;
+            if (notif && notif.style.background) {
+                notif.style.opacity = '0';
+                notif.style.transition = 'opacity 0.3s ease';
+                setTimeout(() => notif.remove(), 300);
+            }
+        }, 3000);
+        
+        console.log(`[${type.toUpperCase()}] ${title}: ${message}`);
+    } catch (e) {
+        console.error('❌ Error mostrando notificación:', e.message);
+    }
+}
+
+/**
+ * ✅ Muestra toast (notificación pequeña)
+ */
+function showToast(message, type = 'info') {
+    try {
+        const bgColor = type === 'success' ? '#27ae60' : 
+                       type === 'danger' ? '#c0392b' : 
+                       type === 'warning' ? '#f39c12' : '#3498db';
+        
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            background: ${bgColor};
+            color: white;
+            padding: 12px 20px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            font-weight: 600;
+            animation: slideUp 0.3s ease;
+            max-width: 300px;
+        `;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transition = 'opacity 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+        
+        console.log(`[${type.toUpperCase()}] ${message}`);
+    } catch (e) {
+        console.error('❌ Error mostrando toast:', e.message);
+    }
+}
+
+/**
+ * ✅ Muestra confirmación
+ */
+function showConfirmation(message) {
+    try {
+        const confirmMessage = document.getElementById('confirmMessage');
+        if (confirmMessage) {
+            confirmMessage.textContent = message;
+            const modal = new bootstrap.Modal(document.getElementById('confirmModal'));
+            modal.show();
+            console.log('❓ Confirmación mostrada:', message);
+        }
+    } catch (e) {
+        console.error('❌ Error mostrando confirmación:', e.message);
+    }
+}
+
+/**
+ * ✅ Confirma acción
+ */
+function confirmAction() {
+    try {
+        if (pendingAction) {
+            pendingAction();
+            pendingAction = null;
+        }
+        const modal = bootstrap.Modal.getInstance(document.getElementById('confirmModal'));
+        if (modal) modal.hide();
+        console.log('✅ Acción confirmada');
+    } catch (e) {
+        console.error('❌ Error confirmando acción:', e.message);
+    }
+}
+
+/**
+ * ✅ Manejo de errores del servidor
+ */
+function onError(error) {
+    try {
+        console.error('❌ Error del servidor:', error);
+        const message = error.message || error.toString() || 'Error desconocido';
+        showNotification('Error', message, 'danger');
+    } catch (e) {
+        console.error('❌ Error en onError:', e.message);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// ESTILOS PARA ANIMACIONES
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+const styleSheet = document.createElement('style');
+styleSheet.textContent = `
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateX(100px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+    
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(100px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+        to {
+            opacity: 1;
+        }
+    }
+`;
+document.head.appendChild(styleSheet);
+
+console.log('✅ Funciones auxiliares de notificaciones cargadas');
+
+
+
+// ✅ Llamar en $(document).ready()
+
+
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // GENERACIÓN DE PDF - VERSIÓN SERVIDOR
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function generatePdfReport() {
+            $('#loader').fadeIn().find('.loader-text').text('Generando Reporte PDF en servidor...');
+
+            try {
+                const matrixData = currentData.filter(d => {
+                    if(state.kpiFilter === 'ALL') return true;
+                    const s = String(d[C.DISP] || "").toUpperCase();
+                    const est = String(d[C.ESTADO] || "").toUpperCase();
+                    
+                    if(state.kpiFilter === 'DISPONIBLE') return s.includes('DISPONIBLE') && !s.includes('PENDIENTE');
+                    if(state.kpiFilter === 'PENDIENTE') return s.includes('PENDIENTE');
+                    if(state.kpiFilter === 'ADQUIRIR') return !est.includes('CESI');
+                    return true;
+                });
+
+                const states = [...new Set(matrixData.map(d => d[C.ESTADO] || 'SIN ESTADO'))].sort();
+                const tramos = [...new Set(matrixData.map(d => d[C.TRAMO] || 'SIN TRAMO'))].sort();
+
+                pdfDataStructure = {
+                    filtros: {
+                        agrupacion: window.filtroMatrizActivoGlobal ? window.filtroMatrizActivoGlobal.nombre : 'Ninguna', // <- LÍNEA NUEVA
+                        proyecto: state.selProyecto === 'ALL' ? 'Todos' : state.selProyecto,
+                        tramo: state.selTramo === 'ALL' ? 'Todos' : state.selTramo,
+                        fecha: state.dateLimit || 'Sin especificar',
+                        modo: state.dateMode,
+                        kpi: state.kpiFilter === 'ALL' ? 'Todos' : state.kpiFilter
+                    },
+                    matriz: {
+                        states: states,
+                        tramos: tramos,
+                        data: []
+                    },
+                    detalles: [],
+                    seguimientoData: seguimientoData
+                };
+
+                let gTotal = 0;
+                let colTot = new Array(states.length).fill(0);
+
+                tramos.forEach((t, tIdx) => {
+                    const rowD = matrixData.filter(d => d[C.TRAMO] === t);
+                    const rowReal = currentData.filter(d => d[C.TRAMO] === t);
+                    let totR = rowReal.length;
+                    let dispR = rowReal.filter(d => {
+                        const s = String(d[C.DISP] || "").toUpperCase();
+                        return s.includes('DISPONIBLE') && !s.includes('PENDIENTE');
+                    }).length;
+
+                    let rowData = { tramo: t, valores: [], total: totR, percDisp: 0 };
+
+                    states.forEach((s, idx) => {
+                        const c = rowD.filter(d => d[C.ESTADO] === s).length;
+                        colTot[idx] += c;
+                        rowData.valores.push({ count: c, estado: s, tramoIdx: tIdx, estadoIdx: idx });
+                    });
+
+                    const perc = totR > 0 ? (dispR/totR)*100 : 0;
+                    rowData.percDisp = perc;
+
+                    pdfDataStructure.matriz.data.push(rowData);
+                    gTotal += totR;
+                });
+
+                pdfDataStructure.matriz.colTotales = colTot;
+                pdfDataStructure.matriz.granTotal = gTotal;
+
+                tramos.forEach((t, tIdx) => {
+                    states.forEach((s, sIdx) => {
+                        const detailData = currentData.filter(d => {
+                            let passKpi = true;
+                            const est = String(d[C.ESTADO] || "").toUpperCase();
+                            const disp = String(d[C.DISP] || "").toUpperCase();
+
+                            if(state.kpiFilter === 'DISPONIBLE') passKpi = disp.includes('DISPONIBLE') && !disp.includes('PENDIENTE');
+                            if(state.kpiFilter === 'PENDIENTE') passKpi = disp.includes('PENDIENTE');
+                            if(state.kpiFilter === 'ADQUIRIR') passKpi = !est.includes('CESI');
+                            
+                            return d[C.TRAMO] === t && d[C.ESTADO] === s && passKpi;
+                        });
+
+                        if (detailData.length > 0) {
+                            pdfDataStructure.detalles.push({
+                                tramo: t,
+                                estado: s,
+                                tramoIdx: tIdx,
+                                estadoIdx: sIdx,
+                                count: detailData.length,
+                                registros: detailData.map(row => {
+                                    const latestObs = getLatestObservation(row[C.RT]);
+                                    const obsToUse = latestObs || row[C.OBS] || row['OBSERVACIONES'] || '';
+                                    
+                                    return {
+                                        rt: row[C.RT],
+                                        id: row[C.ID] || '',
+                                        direccion: row[C.DIR] || '',
+                                        disponibilidad: row[C.DISP] || '',
+                                        observaciones: obsToUse,
+                                        valorPagado: parseMoneyRobust(row[C.PAG])
+                                    };
+                                })
+                            });
+                        }
+                    });
+                });
+
+                console.log('✅ Estructura PDF generada:', {
+                    filtros: pdfDataStructure.filtros,
+                    matriz: {
+                        tramos: pdfDataStructure.matriz.tramos.length,
+                        estados: pdfDataStructure.matriz.states.length
+                    },
+                    detalles: pdfDataStructure.detalles.length,
+                    totalRegistros: pdfDataStructure.detalles.reduce((sum, d) => sum + d.count, 0)
+                });
+
+                google.script.run
+                    .withSuccessHandler(function(result) {
+                        $('#loader').fadeOut();
+                        
+                                                if (result.success) {
+                            console.log('✅ PDF generado:', result);
+                                                        let modalHtml = '';
+                                                        if (result.emailSent) {
+                                                                modalHtml = `
+                                                                    <div class="modal fade" id="pdfSuccessModal" tabindex="-1">
+                                                                        <div class="modal-dialog modal-lg modal-dialog-centered">
+                                                                            <div class="modal-content">
+                                                                                <div class="modal-header bg-success text-white">
+                                                                                    <h5 class="modal-title"><i class="fas fa-check-circle"></i> PDF Enviado</h5>
+                                                                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                                                                </div>
+                                                                                <div class="modal-body">
+                                                                                    <div class="alert alert-success">
+                                                                                        <i class="fas fa-file-pdf"></i>
+                                                                                        <strong>Archivo:</strong> ${result.fileName}
+                                                                                        <p class="mb-0">El PDF ha sido enviado por correo a <strong>${result.emailedTo}</strong>.</p>
+                                                                                    </div>
+                                                                                    <div class="mt-3 p-2 bg-light rounded">
+                                                                                         <small class="text-muted"><strong>📊 Detalles incluidos:</strong> ${result.detallesIncluidos} de ${result.detallesTotal}</small>
+                                                                                    </div>
+                                                                                </div>
+                                                                                <div class="modal-footer">
+                                                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>`;
+                                                        } else {
+                                                                modalHtml = `
+                                                                    <div class="modal fade" id="pdfSuccessModal" tabindex="-1">
+                                                                        <div class="modal-dialog modal-xl modal-dialog-centered">
+                                                                            <div class="modal-content">
+                                                                                <div class="modal-header bg-success text-white">
+                                                                                    <h5 class="modal-title"><i class="fas fa-check-circle"></i> PDF Generado Exitosamente</h5>
+                                                                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                                                                </div>
+                                                                                <div class="modal-body">
+                                                                                    <div class="alert alert-success"><i class="fas fa-file-pdf"></i> <strong>Archivo:</strong> ${result.fileName}</div>
+                                                                                    <div class="ratio ratio-16x9 mb-3" style="height: 500px;"><iframe src="${result.previewUrl}" frameborder="0" allowfullscreen style="border-radius: 8px;"></iframe></div>
+                                                                                    <div class="d-grid gap-2">
+                                                                                        <a href="${result.viewUrl}" class="btn btn-primary btn-lg" target="_blank"><i class="fas fa-external-link-alt"></i> Abrir en Drive</a>
+                                                                                        <a href="${result.downloadUrl}" class="btn btn-success btn-lg" download><i class="fas fa-download"></i> Descargar PDF</a>
+                                                                                        <button class="btn btn-outline-secondary" onclick="copyToClipboard('${result.viewUrl}')"><i class="fas fa-copy"></i> Copiar Enlace</button>
+                                                                                    </div>
+                                                                                    <div class="mt-3 p-2 bg-light rounded"><small class="text-muted"><strong>📊 Detalles incluidos:</strong> ${result.detallesIncluidos} de ${result.detallesTotal}</small></div>
+                                                                                </div>
+                                                                                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button></div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>`;
+                                                        }
+
+                                                        $('#pdfSuccessModal').remove();
+                                                        $('body').append(modalHtml);
+                                                        new bootstrap.Modal(document.getElementById('pdfSuccessModal')).show();
+                                                        showToast('✅ PDF generado correctamente', 'success');
+                        } else {
+                            console.error('❌ Error del servidor:', result);
+                            showToast('❌ Error: ' + result.error, 'danger');
+                        }
+                    })
+                    .withFailureHandler(function(error) {
+                        $('#loader').fadeOut();
+                        console.error('❌ Error generando PDF:', error);
+                        showToast('❌ Error: ' + error.message, 'danger');
+                    })
+                    .generateServerPdfReport(JSON.stringify(pdfDataStructure));
+
+            } catch (error) {
+                console.error('❌ Error preparando PDF:', error);
+                $('#loader').fadeOut();
+                showToast('❌ Error: ' + error.message, 'danger');
+            }
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('✅ Enlace copiado al portapapeles', 'success');
+            }).catch(err => {
+                console.error('Error copiando:', err);
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                showToast('✅ Enlace copiado', 'success');
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // FUNCIONES AUXILIARES Y UTILIDADES
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function searchRTDetails() {
+            try {
+                const rtInput = $('#searchRT').val().trim().toUpperCase();
+                if (!rtInput) {
+                    showNotification('Error', 'Ingresa un número RT', 'danger');
+                    return;
+                }
+
+                // --- BÚSQUEDA INTELIGENTE EN TODA LA BASE ---
+                const row = rawData.find(r => {
+                    const rtDb = String(r[C.RT] || '').toUpperCase().trim();
+                    return rtDb === rtInput || rtDb.includes(rtInput); // Encuentra exacto o si lo contiene
+                });
+
+                if (!row) {
+                    showNotification('Error', 'RT ' + rtInput + ' no encontrado en la base de datos.', 'danger');
+                    return;
+                }
+
+                let html = '';
+
+                // --- NUEVO: ALERTA PARA PREDIOS INACTIVOS ---
+                const estadoActivo = String(row['ACTIVO/INACTIVO'] || "").toUpperCase().trim();
+                if (estadoActivo === 'INACTIVO' || estadoActivo === 'NO ACTIVO') {
+                    const observacion = row['OBSERVACIONES'] || row['OBS'] || row['SITUACIONES ESPECIALES'] || 'Predio retirado del proceso.';
+                    html += `
+                    <div class="alert alert-danger fw-bold shadow-sm mb-3" style="border-left: 5px solid darkred;">
+                        <i class="fas fa-exclamation-triangle fa-2x float-start me-3"></i>
+                        <h5 class="alert-heading text-danger">ATENCIÓN: PREDIO INACTIVO</h5>
+                        <p class="mb-0 text-dark"><strong>Motivo / Observación:</strong> ${escapeHtml(observacion)}</p>
+                    </div>`;
+                }
+                // --------------------------------------------
+
+                html += '<div class="card shadow-sm"><div class="card-body p-0"><table class="table table-bordered table-striped m-0">';
+                for (let key in row) {
+                    // No mostramos campos técnicos internos al usuario
+                    if (key !== 'FECHA_ISO' && key !== '_FILE_ID') {
+                        html += '<tr><td style="font-weight: 700; width: 35%; background-color:#f8f9fa;">' + escapeHtml(key) + '</td><td>' + escapeHtml(row[key] || '-') + '</td></tr>';
+                    }
+                }
+                html += '</table></div></div>';
+
+                $('#detailsContainer').html(html);
+                console.log('📋 Detalles encontrados para RT: ' + row[C.RT]);
+                
+                // Limpia la barra de búsqueda para la próxima consulta
+                $('#searchRT').val('');
+                
+            } catch (e) {
+                console.error('❌ Error buscando RT: ' + e.message);
+                showNotification('Error', 'Hubo un problema procesando la búsqueda.', 'danger');
+            }
+        }
+
+        function applyHistorialFilters() {
+            try {
+                const rt = $('#filterHistRT').val().toUpperCase();
+                console.log('🔍 Aplicando filtros al historial...');
+                showNotification('Info', 'Cargando historial...', 'info');
+                google.script.run
+                    .withSuccessHandler(onHistorialLoaded)
+                    .withFailureHandler(onError)
+                    .getRtHistory(rt || 'ALL');
+            } catch (e) {
+                console.error('❌ Error aplicando filtros: ' + e.message);
+            }
+        }
+
+        function onHistorialLoaded(result) {
+            try {
+                const historial = JSON.parse(result);
+                const tbody = $('#historialBody');
+                tbody.empty();
+
+                if (!historial || historial.length === 0) {
+                    tbody.html('<tr><td colspan="7" class="no-data"><i class="fas fa-inbox"></i><p>No hay cambios registrados</p></td></tr>');
+                    return;
+                }
+
+                historial.forEach(cambio => {
+                    const tr = $('<tr>');
+                    tr.append('<td>' + (new Date(cambio.fecha).toLocaleString('es-CO')) + '</td>');
+                    tr.append('<td>' + (cambio.rt || '-') + '</td>');
+                    tr.append('<td>' + (cambio.usuario || '-') + '</td>');
+                    tr.append('<td>' + (cambio.estado || '-') + '</td>');
+                    tr.append('<td>' + (cambio.disponibilidad || '-') + '</td>');
+                    tr.append('<td>' + (cambio.cambios || '-') + '</td>');
+                    tr.append('<td><span class="badge-status badge-info">Modificado</span></td>');
+                    tbody.append(tr);
+                });
+
+                console.log('✅ Historial cargado');
+            } catch (e) {
+                console.error('❌ Error procesando historial: ' + e.message);
+            }
+        }
+
+        function applyAuditoriaFilters() {
+            try {
+                const user = $('#filterAudUser').val();
+                console.log('🔍 Aplicando filtros a auditoría...');
+                showNotification('Info', 'Cargando auditoría...', 'info');
+                google.script.run
+                    .withSuccessHandler(onAuditoriaLoaded)
+                    .withFailureHandler(onError)
+                    .getUserLogs(user || 'ALL');
+            } catch (e) {
+                console.error('❌ Error aplicando filtros: ' + e.message);
+            }
+        }
+
+        function onAuditoriaLoaded(result) {
+            try {
+                const logs = JSON.parse(result);
+                const tbody = $('#auditoriaBody');
+                tbody.empty();
+
+                if (!logs || logs.length === 0) {
+                    tbody.html('<tr><td colspan="4" class="no-data"><i class="fas fa-inbox"></i><p>No hay registros de auditoría</p></td></tr>');
+                    return;
+                }
+
+                logs.forEach(log => {
+                    const tr = $('<tr>');
+                    tr.append('<td>' + (new Date(log.fecha).toLocaleString('es-CO')) + '</td>');
+                    tr.append('<td>' + (log.usuario || '-') + '</td>');
+                    tr.append('<td><span class="badge-status badge-info">' + (log.accion || '-') + '</span></td>');
+                    tr.append('<td>' + (log.detalles || '-') + '</td>');
+                    tbody.append(tr);
+                });
+
+                console.log('✅ Auditoría cargada');
+            } catch (e) {
+                console.error('❌ Error procesando auditoría: ' + e.message);
+            }
+        }
+
+        function openPermissionModal() {
+            $('#permEmail').val('');
+            $('#permRole').val('');
+            new bootstrap.Modal(document.getElementById('permissionModal')).show();
+        }
+
+        function savePermission() {
+            try {
+                const email = $('#permEmail').val();
+                const rol = $('#permRole').val();
+
+                if (!email || !rol) {
+                    showNotification('Error', 'Completa todos los campos', 'danger');
+                    return;
+                }
+
+                console.log('💾 Guardando permiso...', { email, rol });
+
+                google.script.run
+                    .withSuccessHandler(onPermissionSaved)
+                    .withFailureHandler(onError)
+                    .savePermission(email, rol, [], currentUser);
+
+            } catch (e) {
+                console.error('❌ Error guardando permiso: ' + e.message);
+                showNotification('Error', e.message, 'danger');
+            }
+        }
+
+        function onPermissionSaved(result) {
+            console.log('✅ Permiso guardado:', result);
+            if (result.success) {
+                showNotification('Éxito', 'Permiso guardado correctamente', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('permissionModal')).hide();
+                loadPermissions();
+            } else {
+                showNotification('Error', result.error || 'Error guardando permiso', 'danger');
+            }
+        }
+
+        function loadPermissions() {
+            try {
+                console.log('📋 Cargando permisos...');
+                google.script.run
+                    .withSuccessHandler(onPermissionsLoaded)
+                    .withFailureHandler(onError)
+                    .getPermissionsData();
+            } catch (e) {
+                console.error('❌ Error cargando permisos: ' + e.message);
+            }
+        }
+
+        function onPermissionsLoaded(result) {
+            try {
+                const datos = JSON.parse(result);
+                const tbody = $('#permisosBody');
+                tbody.empty();
+
+                if (!datos.permissions || datos.permissions.length === 0) {
+                    tbody.html('<tr><td colspan="6" class="no-data"><i class="fas fa-inbox"></i><p>No hay permisos registrados</p></td></tr>');
+                    return;
+                }
+
+                datos.permissions.forEach(perm => {
+                    const tr = $('<tr>');
+                    tr.append('<td>' + (perm.email || perm.Email || '-') + '</td>');
+                    tr.append('<td><span class="badge-status badge-info">' + (perm.rol || perm.Rol || '-') + '</span></td>');
+                    tr.append('<td>' + ((perm.proyectos || perm.Proyectos || 'Todos')) + '</td>');
+                    tr.append('<td><span class="badge-status badge-success">Activo</span></td>');
+                    tr.append('<td>' + (perm.fecha || '-') + '</td>');
+                    tr.append('<td><button class="btn btn-sm btn-outline-danger" onclick="deletePermission(\'' + (perm.email || perm.Email) + '\')"><i class="fas fa-trash"></i></button></td>');
+                    tbody.append(tr);
+                });
+
+                console.log('✅ Permisos cargados');
+            } catch (e) {
+                console.error('❌ Error procesando permisos: ' + e.message);
+            }
+        }
+
+        function deletePermission(email) {
+            pendingAction = function() {
+                google.script.run
+                    .withSuccessHandler(onPermissionDeleted)
+                    .withFailureHandler(onError)
+                    .deletePermission(email, currentUser);
+            };
+            showConfirmation('¿Eliminar permiso de ' + email + '?');
+        }
+
+        function onPermissionDeleted(result) {
+            if (result.success) {
+                showNotification('Éxito', 'Permiso eliminado', 'success');
+                loadPermissions();
+            } else {
+                showNotification('Error', result.error || 'Error eliminando permiso', 'danger');
+            }
+        }
+
+        function createNewReport() {
+            $('#reportName').val('');
+            $('#reportType').val('');
+            new bootstrap.Modal(document.getElementById('reportModal')).show();
+        }
+
+        function generateReport() {
+            try {
+                const nombre = $('#reportName').val();
+                const tipo = $('#reportType').val();
+
+                if (!nombre || !tipo) {
+                    showNotification('Error', 'Completa los campos requeridos', 'danger');
+                    return;
+                }
+
+                const config = { nombre, tipo };
+
+                console.log('📄 Generando reporte...', config);
+
+                google.script.run
+                    .withSuccessHandler(onReportGenerated)
+                    .withFailureHandler(onError)
+                    .saveReport(nombre, config, {}, currentUser);
+
+            } catch (e) {
+                console.error('❌ Error generando reporte: ' + e.message);
+                showNotification('Error', e.message, 'danger');
+            }
+        }
+
+        function onReportGenerated(result) {
+            console.log('✅ Reporte generado:', result);
+            if (result.success) {
+                showNotification('Éxito', 'Reporte generado correctamente', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('reportModal')).hide();
+                loadReports();
+            } else {
+                showNotification('Error', result.error || 'Error generando reporte', 'danger');
+            }
+        }
+
+        function loadReports() {
+            try {
+                console.log('📄 Cargando reportes...');
+                google.script.run
+                    .withSuccessHandler(onReportsLoaded)
+                    .withFailureHandler(onError)
+                    .getSavedReports(currentUser);
+            } catch (e) {
+                console.error('❌ Error cargando reportes: ' + e.message);
+            }
+        }
+
+        function onReportsLoaded(result) {
+            try {
+                const reportes = JSON.parse(result);
+                const container = $('#reportesContainer');
+                container.empty();
+
+                if (!reportes || reportes.length === 0) {
+                    container.html('<div class="no-data" style="grid-column: 1/-1;"><i class="fas fa-file-pdf"></i><p>No hay reportes guardados</p></div>');
+                    return;
+                }
+
+                reportes.forEach(reporte => {
+                    container.append(
+                        '<div class="kpi-card" style="border-left-color: var(--info);">' +
+                        '<div class="kpi-title"><span>' + (reporte.nombre || 'Reporte') + '</span><i class="fas fa-file-pdf" style="color: var(--danger);"></i></div>' +
+                        '<div class="kpi-subtitle" style="margin-top: 10px;"><strong>Tipo:</strong> ' + (reporte.tipo || '-') + '<br><strong>Fecha:</strong> ' + (reporte.fecha || '-') + '</div>' +
+                        '<div style="margin-top: 15px; display: flex; gap: 8px;">' +
+                        '<button class="btn btn-sm btn-outline-primary" onclick="downloadReport(\'' + (reporte.id || reporte.nombre) + '\')"><i class="fas fa-download"></i> Descargar</button>' +
+                        '<button class="btn btn-sm btn-outline-danger" onclick="deleteReport(\'' + (reporte.id || reporte.nombre) + '\')"><i class="fas fa-trash"></i></button>' +
+                        '</div></div>'
+                    );
+                });
+
+                console.log('✅ Reportes cargados');
+            } catch (e) {
+                console.error('❌ Error procesando reportes: ' + e.message);
+            }
+        }
+
+        function downloadReport(reportId) {
+            console.log('📥 Descargando reporte: ' + reportId);
+            showNotification('Info', 'Descargando reporte...', 'info');
+        }
+
+        function deleteReport(reportId) {
+            pendingAction = function() {
+                google.script.run
+                    .withSuccessHandler(onReportDeleted)
+                    .withFailureHandler(onError)
+                    .deleteReport(reportId, currentUser);
+            };
+            showConfirmation('¿Eliminar este reporte?');
+        }
+
+        function onReportDeleted(result) {
+            if (result.success) {
+                showNotification('Éxito', 'Reporte eliminado', 'success');
+                loadReports();
+            } else {
+                showNotification('Error', result.error || 'Error eliminando reporte', 'danger');
+            }
+        }
+
+        function validateIntegrity() {
+            try {
+                console.log('🔍 Validando integridad del sistema...');
+                showNotification('Info', 'Validando...', 'info');
+                google.script.run
+                    .withSuccessHandler(onIntegrityValidated)
+                    .withFailureHandler(onError)
+                    .validateDataIntegrity();
+            } catch (e) {
+                console.error('❌ Error validando: ' + e.message);
+            }
+        }
+
+        function onIntegrityValidated(result) {
+            try {
+                const datos = JSON.parse(result);
+                let html = '<div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Hoja</th><th>Estado</th><th>Detalles</th></tr></thead><tbody>';
+
+                for (const [hoja, info] of Object.entries(datos)) {
+                    const badgeClass = info.status === 'OK' ? 'badge-success' : 'badge-danger';
+                    html += '<tr><td><strong>' + hoja + '</strong></td><td><span class="badge-status ' + badgeClass + '">' + info.status + '</span></td><td>' + (info.headers || info.message || '-') + ' registros</td></tr>';
+                }
+
+                html += '</tbody></table></div>';
+
+                new bootstrap.Modal(document.getElementById('detailModal')).show();
+                $('#modalTitle').text('Validación de Integridad');
+                $('#detailTable').parent().html(html);
+
+                console.log('✅ Integridad validada');
+            } catch (e) {
+                console.error('❌ Error procesando validación: ' + e.message);
+            }
+        }
+
+        function clearCache() {
+            pendingAction = function() {
+                localStorage.clear();
+                sessionStorage.clear();
+                showNotification('Éxito', 'Caché limpiado', 'success');
+                console.log('✅ Caché limpiado');
+            };
+            showConfirmation('¿Limpiar el caché del navegador?');
+        }
+
+        function exportSystemInfo() {
+            try {
+                console.log('📥 Exportando información del sistema...');
+                google.script.run
+                    .withSuccessHandler(onSystemInfoExported)
+                    .withFailureHandler(onError)
+                    .getSystemInfo();
+            } catch (e) {
+                console.error('❌ Error exportando: ' + e.message);
+            }
+        }
+
+        function onSystemInfoExported(result) {
+            try {
+                const datos = JSON.parse(result);
+                const json = JSON.stringify(datos, null, 2);
+                const blob = new Blob([json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'system-info-' + new Date().toISOString().split('T')[0] + '.json';
+                a.click();
+
+                showNotification('Éxito', 'Información exportada', 'success');
+                console.log('✅ Información exportada');
+            } catch (e) {
+                console.error('❌ Error descargando: ' + e.message);
+            }
+        }
+
+        function exportToExcel() {
+            try {
+                console.log('📥 Exportando a Excel...');
+                google.script.run
+                    .withSuccessHandler(onDataExported)
+                    .withFailureHandler(onError)
+                    .exportDataToCSV('Datos');
+            } catch (e) {
+                console.error('❌ Error exportando: ' + e.message);
+            }
+        }
+
+        function onDataExported(csv) {
+            try {
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = 'matriz-' + new Date().toISOString().split('T')[0] + '.csv';
+                link.click();
+
+                showNotification('Éxito', 'Datos exportados', 'success');
+                console.log('✅ Datos exportados');
+            } catch (e) {
+                console.error('❌ Error descargando: ' + e.message);
+            }
+        }
+
+        function refreshData() {
+            console.log('🔄 Recargando datos...');
+            $('#loader').fadeIn(300);
+            loadDashboardData();
+        }
+
+        function showNotification(title, message, type) {
+            type = type || 'info';
+            $('#notifTitle').text(title);
+            $('#notifMessage').text(message);
+            
+            const modal = new bootstrap.Modal(document.getElementById('notificationModal'));
+            modal.show();
+            
+            console.log('[' + type.toUpperCase() + '] ' + title + ': ' + message);
+            
+            setTimeout(() => {
+                modal.hide();
+            }, 3000);
+        }
+
+        function showConfirmation(message) {
+            $('#confirmMessage').text(message);
+            new bootstrap.Modal(document.getElementById('confirmModal')).show();
+        }
+
+        function confirmAction() {
+            if (pendingAction) {
+                pendingAction();
+                pendingAction = null;
+            }
+            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+        }
+
+        function onError(error) {
+            console.error('❌ Error:', error);
+            showNotification('Error', error.message || 'Error en el servidor', 'danger');
+        }
+
+        function showAbout() {
+            const html = `
+                <div style="text-align: center; padding: 20px;">
+                    <h4 style="color: var(--accent); margin-bottom: 15px;">
+                        <i class="fas fa-building-columns"></i> Sistema de Gestión Predial Enterprise
+                    </h4>
+                    <p><strong>Versión:</strong> 3.0.0 - Integrado</p>
+                    <p><strong>Fecha de Compilación:</strong> ${new Date().toLocaleDateString('es-CO')}</p>
+                    <p><strong>Desarrollado por:</strong> Equipo Técnico</p>
+                    <hr>
+                    <p style="font-size: 0.9rem; color: var(--text-muted);">
+                        Sistema integral para la gestión de predios, seguimiento de adquisiciones, 
+                        control de disponibilidad, auditoría de cambios y generación de reportes PDF.
+                    </p>
+                    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                        <h6 style="font-weight: 700; margin-bottom: 10px;">Características Principales:</h6>
+                        <ul style="text-align: left; font-size: 0.85rem; list-style-position: inside;">
+                            <li>✅ Matriz de seguimiento interactiva</li>
+                            <li>✅ Cronograma trimestral automático con filtros clickeables</li>
+                            <li>✅ Modo de edición con validación de cambios</li>
+                            <li>✅ Historial completo de modificaciones con timeline</li>
+                            <li>✅ Generación de reportes PDF en servidor con preview</li>
+                            <li>✅ Parsing robusto de números y fechas</li>
+                            <li>✅ Control de acceso por roles</li>
+                            <li>✅ Auditoría completa de acciones</li>
+                            <li>✅ Exportación a Excel/CSV</li>
+                            <li>✅ Integración con múltiples bases de datos</li>
+                            <li>✅ Filtros en cadena Proyecto → Tramo → Estado</li>
+                            <li>✅ Detalles RT con campos configurables</li>
+                        </ul>
+                    </div>
+                    <p style="font-size: 0.8rem; color: #999; margin-top: 20px;">
+                        © 2024-2026 - Todos los derechos reservados
+                    </p>
+                </div>
+            `;
+            
+            new bootstrap.Modal(document.getElementById('detailModal')).show();
+            $('#modalTitle').text('Acerca de');
+            $('#detailTable').parent().html(html);
+        }
+
+        function logout() {
+            pendingAction = function() {
+                google.script.run.logAction(currentUser, 'Cierre de Sesión', 'Usuario desconectado');
+                window.location.href = 'https://accounts.google.com/logout';
+            };
+            showConfirmation('¿Cerrar sesión?');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // FUNCIONES DE NAVEGACIÓN EXTERNA - HERRAMIENTAS
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        function abrirNormalizacion() {
+            const URL_NORMALIZACION = 'https://docs.google.com/spreadsheets/d/1pB8sXqsrddUIQY6sE1Sllpqye2V75lGjwgDwoUH3_90/edit?pli=1&gid=2100236556#gid=2100236556';
+            
+            console.log('🔧 Abriendo herramienta de Normalización...');
+            window.open(URL_NORMALIZACION, '_blank');
+            
+            try {
+                google.script.run
+                    .withSuccessHandler(function() {
+                        console.log('✅ Acceso a Normalización registrado');
+                    })
+                    .withFailureHandler(function(error) {
+                        console.warn('⚠️ No se pudo registrar el acceso:', error.message);
+                    })
+                    .logAction(currentUser, 'Acceso a Normalización', 'Abrió CONSOLIDADO Script');
+            } catch (e) {
+                console.warn('⚠️ Error registrando acceso:', e.message);
+            }
+            
+            showToast('📂 Abriendo Base de Datos para Normalización...', 'info');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // INICIALIZACIÓN AUTOMÁTICA DE MÓDULOS AL CAMBIAR DE PÁGINA
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        $(document).on('click', '.menu-item', function() {
+            const pageId = $(this).attr('onclick').match(/'([^']+)'/)[1];
+            
+            switch(pageId) {
+                case 'permisos':
+                    loadPermissions();
+                    break;
+                case 'reportes':
+                    loadReports();
+                    break;
+                case 'auditoria':
+                    applyAuditoriaFilters();
+                    break;
+                case 'historial':
+                    applyHistorialFilters();
+                    break;
+                case 'alertas':                // <--- LÍNEA NUEVA
+                    cargarAlertasWeb();        // <--- LÍNEA NUEVA
+                    break;                     // <--- LÍNEA NUEVA
+                case 'motorReglas':            // <--- LÍNEA NUEVA
+                    cargarJSONenPantalla();    // <--- LÍNEA NUEVA
+                    break;                     // <--- LÍNEA NUEVA
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // ATAJOS DE TECLADO
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        $(document).keydown(function(e) {
+            if (e.ctrlKey && e.keyCode === 82) {
+                e.preventDefault();
+                refreshData();
+            }
+            
+            if (e.ctrlKey && e.keyCode === 69) {
+                e.preventDefault();
+                exportToExcel();
+            }
+            
+            if (e.ctrlKey && e.keyCode === 80) {
+                e.preventDefault();
+                generatePdfReport();
+            }
+            
+            if (e.ctrlKey && e.keyCode === 84) {
+                e.preventDefault();
+                toggleTrackingMode();
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // FUNCIONES DE MONITOREO Y DEBUG
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        window.getSystemStatus = function() {
+            return {
+                version: '3.0.0-integrated',
+                user: currentUser,
+                role: currentRole,
+                dataLoaded: rawData.length > 0,
+                totalRecords: rawData.length,
+                filteredRecords: currentData.length,
+                seguimientoRecords: seguimientoData.length,
+                trackingMode: isTrackingMode,
+                currentFilters: state,
+                lastUpdate: new Date().toISOString()
+            };
+        };
+
+        window.debugInfo = function() {
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('🔍 INFORMACIÓN DE DEBUG');
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('👤 Usuario:', currentUser);
+            console.log('👥 Rol:', currentRole);
+            console.log('📦 Registros totales:', rawData.length);
+            console.log('🔍 Registros filtrados:', currentData.length);
+            console.log('📜 Registros seguimiento:', seguimientoData.length);
+            console.log('📋 Columnas:', allColsList.length);
+            console.log('🎯 Modo seguimiento:', isTrackingMode);
+            console.log('🔧 Estado de filtros:', state);
+            console.log('📊 Listas desplegables:', Object.keys(currentDropdowns).length);
+            console.log('═══════════════════════════════════════════════════════');
+        };
+
+       /**
+ * ═══════════════════════════════════════════════════════════
+ * MOTOR DE FILTROS Y AGRUPACIONES (PERSISTENTE EN BD)
+ * ═══════════════════════════════════════════════════════════
+ */
+
+let agrupacionesGlobal = [];
+
+function cargarFiltrosMatriz() {
+  google.script.run
+    .withSuccessHandler(response => {
+      agrupacionesGlobal = typeof response === 'string' ? JSON.parse(response) : response || [];
+      mostrarFiltrosMatriz(agrupacionesGlobal);
+      
+      // Actualizar info del filtro activo en pantalla (Persistente)
+      const filtro = window.filtroMatrizActivoGlobal;
+      if (filtro && filtro.id) {
+        document.getElementById('filtroActivoBox').style.display = 'flex';
+        document.getElementById('filtroActivoNombre').textContent = filtro.nombre;
+        document.getElementById('filtroActivoDesc').textContent = filtro.descripcion || '';
+        const proys = (filtro.proyectosIncluidos && filtro.proyectosIncluidos.length > 0) ? filtro.proyectosIncluidos.join(', ') : 'Todos (o excluidos)';
+        document.getElementById('filtroActivoProyectos').textContent = `Proyectos: ${proys}`;
+      } else {
+        document.getElementById('filtroActivoBox').style.display = 'none';
+      }
+      
+      // Renderizar las listas de checkboxes
+      renderProyectosCheckboxes();
+    })
+    .getFiltrosMatriz();
+}
+
+function mostrarFiltrosMatriz(filtros) {
+  const tbody = document.getElementById('filtrosMatrizBody');
+  // Ocultamos el filtro rápido de la tabla para que no ensucie la vista de "Agrupaciones"
+  const agrupacionesReales = filtros.filter(f => f.nombre !== 'FILTRO MANUAL VISTA RÁPIDA');
+  
+  if (!agrupacionesReales || agrupacionesReales.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="no-data"><i class="fas fa-inbox"></i><p>No hay agrupaciones creadas</p></td></tr>`;
+    return;
+  }
+  
+  tbody.innerHTML = agrupacionesReales.map(filtro => {
+    const count = filtro.proyectosIncluidos ? filtro.proyectosIncluidos.length : 0;
+    const esActivo = window.filtroMatrizActivoGlobal && window.filtroMatrizActivoGlobal.id === filtro.id;
+
+    return `
+      <tr>
+        <td><strong>${filtro.nombre || '-'}</strong></td>
+        <td>${filtro.descripcion || '-'}</td>
+        <td><span class="badge bg-info text-dark">${count} Proyectos</span></td>
+        <td>
+          ${esActivo ? 
+            '<span class="badge bg-success py-1"><i class="fas fa-check-circle"></i> ACTIVO</span>' : 
+            '<span class="badge bg-secondary py-1">Inactivo</span>'}
+        </td>
+        <td>
+          <div class="btn-group btn-group-sm">
+            ${!esActivo ? 
+              `<button class="btn btn-success fw-bold" onclick="activarAgrupacion('${filtro.id}')" title="Activar Agrupación">
+                <i class="fas fa-play"></i> Activar
+              </button>` : 
+              `<button class="btn btn-outline-secondary fw-bold" disabled>En uso</button>`}
+            <button class="btn btn-outline-primary" onclick="abrirEditarFiltroModal('${filtro.id}')" title="Editar"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-outline-danger" onclick="eliminarAgrupacion('${filtro.id}')" title="Eliminar"><i class="fas fa-trash"></i></button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ✅ RENDERIZAR CHECKBOXES
+function renderProyectosCheckboxes() {
+  const listaProyectos = window.proyectosListaUnicaGlobal || [];
+  const containerAdhoc = document.getElementById('proyectosAdhocContainer');
+  const containerNuevo = document.getElementById('proyectosNuevoContainer');
+  
+  if (!containerAdhoc || !containerNuevo) return;
+
+  if (listaProyectos.length === 0) {
+    containerAdhoc.innerHTML = '<p class="text-muted small">No hay proyectos en la base de datos.</p>';
+    containerNuevo.innerHTML = '<p class="text-muted small">No hay proyectos en la base de datos.</p>';
+    return;
+  }
+
+  // Saber qué marcar en el panel Ad-hoc (El filtro persistente)
+  let proyectosActivos = listaProyectos; // Por defecto marcamos todos
+  if (window.filtroMatrizActivoGlobal && window.filtroMatrizActivoGlobal.proyectosIncluidos && window.filtroMatrizActivoGlobal.proyectosIncluidos.length > 0) {
+      proyectosActivos = window.filtroMatrizActivoGlobal.proyectosIncluidos;
+  }
+
+  containerAdhoc.innerHTML = listaProyectos.map(p => `
+    <div class="form-check" style="background: white; padding: 6px 10px 6px 30px; border: 1px solid #eee; border-radius: 4px;">
+      <input class="form-check-input chk-adhoc" type="checkbox" id="ad_${p.replace(/\s+/g, '_')}" value="${p}" 
+             ${proyectosActivos.includes(p) ? 'checked' : ''}>
+      <label class="form-check-label w-100 cursor-pointer" for="ad_${p.replace(/\s+/g, '_')}" style="font-size:0.8rem; font-weight:600;">${p}</label>
+    </div>
+  `).join('');
+
+  containerNuevo.innerHTML = listaProyectos.map(p => `
+    <div class="form-check" style="background: white; padding: 6px 10px 6px 30px; border: 1px solid #eee; border-radius: 4px;">
+      <input class="form-check-input chk-nuevo" type="checkbox" id="nw_${p.replace(/\s+/g, '_')}" value="${p}">
+      <label class="form-check-label w-100 cursor-pointer" for="nw_${p.replace(/\s+/g, '_')}" style="font-size:0.8rem; font-weight:600;">${p}</label>
+    </div>
+  `).join('');
+}
+
+function marcarAdhoc(estado) { document.querySelectorAll('.chk-adhoc').forEach(c => c.checked = estado); }
+function marcarNuevo(estado) { document.querySelectorAll('.chk-nuevo').forEach(c => c.checked = estado); }
+
+// ✅ APLICAR FILTRO RÁPIDO (GUARDA EN BD PARA TODOS LOS USUARIOS)
+function aplicarFiltroAdhoc() {
+  const incluidos = Array.from(document.querySelectorAll('.chk-adhoc:checked')).map(cb => cb.value);
+  if (incluidos.length === 0) return showAlert('Debes seleccionar al menos un proyecto', 'warning');
+
+  showLoader('Guardando filtro para todos los usuarios...');
+  google.script.run
+    .withSuccessHandler(res => {
+      if (res.success) {
+        showAlert('Filtro Principal guardado y aplicado a la Base de Datos', 'success');
+        loadDashboardData(); // Refresca completamente todo desde el servidor
+      } else {
+        hideLoader();
+        showAlert('Error: ' + res.error, 'danger');
+      }
+    })
+    .withFailureHandler(err => { hideLoader(); showAlert('Error: '+err.message, 'danger'); })
+    .guardarYActivarFiltroManual(incluidos, currentUser);
+}
+
+// ✅ RESTABLECER Y MOSTRAR TODO (QUITA FILTRO EN BD PARA TODOS)
+function restablecerFiltroAdhoc() {
+  showLoader('Restableciendo vista global (Mostrando Todos)...');
+  google.script.run
+    .withSuccessHandler(res => {
+        showAlert('Filtro eliminado. Se han cargado todos los proyectos.', 'success');
+        loadDashboardData(); // Refresca y trae todos los registros
+    })
+    .withFailureHandler(err => { hideLoader(); showAlert('Error: '+err.message, 'danger'); })
+    .activarFiltroMatriz('', currentUser);
+}
+
+// ✅ CREAR NUEVA AGRUPACIÓN (SOLO LA GUARDA, NO LA ACTIVA)
+function guardarNuevaAgrupacion() {
+  const nombre = document.getElementById('filtroNombre').value.trim();
+  const desc = document.getElementById('filtroDescripcion').value.trim();
+  if (!nombre) return showAlert('El nombre es obligatorio', 'warning');
+
+  const incluidos = Array.from(document.querySelectorAll('.chk-nuevo:checked')).map(cb => cb.value);
+  if (incluidos.length === 0) return showAlert('Selecciona al menos un proyecto para la agrupación', 'warning');
+
+  showLoader('Guardando Agrupación...');
+  google.script.run
+    .withSuccessHandler(res => {
+      hideLoader();
+      let result = typeof res === 'string' ? JSON.parse(res) : res;
+      if (result.success) {
+        showAlert('Agrupación guardada exitosamente', 'success');
+        document.getElementById('filtroNombre').value = '';
+        document.getElementById('filtroDescripcion').value = '';
+        marcarNuevo(false);
+        cargarFiltrosMatriz();
+      } else {
+        showAlert('Error: ' + result.error, 'danger');
+      }
+    })
+    .withFailureHandler(err => { hideLoader(); showAlert('Error: '+err.message, 'danger'); })
+    .crearFiltroMatriz(nombre, desc, incluidos, [], currentUser);
+}
+
+// ✅ ACTIVAR AGRUPACIÓN DE LA TABLA (SE GUARDA PARA TODOS)
+function activarAgrupacion(id) {
+  showLoader('Aplicando agrupación a la Base de Datos...');
+  google.script.run
+    .withSuccessHandler(res => {
+      let result = typeof res === 'string' ? JSON.parse(res) : res;
+      if (result.success) {
+        showAlert(`Agrupación activada para todos los usuarios`, 'success');
+        loadDashboardData(); // Descarga todo de nuevo ya filtrado
+      }
+    })
+    .withFailureHandler(err => { hideLoader(); showAlert('Error: '+err.message, 'danger'); })
+    .activarFiltroMatriz(id, currentUser);
+}
+
+function desactivarFiltroMatriz() {
+    restablecerFiltroAdhoc(); // Reutiliza la función de limpiar
+}
+
+// ✅ ELIMINAR AGRUPACIÓN DE LA TABLA
+function eliminarAgrupacion(id) {
+  if (!confirm('¿Seguro que deseas eliminar esta agrupación de forma permanente?')) return;
+  
+  showLoader('Eliminando...');
+  google.script.run
+    .withSuccessHandler(res => {
+      let result = typeof res === 'string' ? JSON.parse(res) : res;
+      if (result.success) {
+        showAlert('Agrupación eliminada', 'success');
+        if (window.filtroMatrizActivoGlobal && window.filtroMatrizActivoGlobal.id === id) {
+            restablecerFiltroAdhoc(); // Si eliminó la que estaba activa, restablece a Todos
+        } else {
+            hideLoader();
+            cargarFiltrosMatriz();
+        }
+      }
+    })
+    .withFailureHandler(err => { hideLoader(); showAlert('Error: '+err.message, 'danger'); })
+    .eliminarFiltroMatriz(id, currentUser);
+}
+
+// Editar existente
+function abrirEditarFiltroModal(filtroId) {
+  const filtro = agrupacionesGlobal.find(f => f.id === filtroId);
+  if (!filtro) return;
+  
+  document.getElementById('editFiltroId').value = filtro.id;
+  document.getElementById('editFiltroNombre').value = filtro.nombre;
+  document.getElementById('editFiltroDescripcion').value = filtro.descripcion || '';
+  
+  const container = document.getElementById('editProyectosContainer');
+  const listaProyectos = window.proyectosListaUnicaGlobal || [];
+  
+  container.innerHTML = listaProyectos.map(p => `
+    <div class="form-check" style="background: white; padding: 6px 10px 6px 30px; border: 1px solid #eee; border-radius: 4px;">
+      <input class="form-check-input chk-edit-proyecto" type="checkbox" id="ed_${p.replace(/\s+/g, '_')}" value="${p}"
+             ${(filtro.proyectosIncluidos || []).includes(p) ? 'checked' : ''}>
+      <label class="form-check-label w-100 cursor-pointer" for="ed_${p.replace(/\s+/g, '_')}" style="font-size:0.8rem; font-weight:600;">${p}</label>
+    </div>
+  `).join('');
+  
+  new bootstrap.Modal(document.getElementById('editarFiltroModal')).show();
+}
+
+function guardarEditarFiltroMatriz() {
+  const id = document.getElementById('editFiltroId').value;
+  const nombre = document.getElementById('editFiltroNombre').value.trim();
+  const descripcion = document.getElementById('editFiltroDescripcion').value.trim();
+  if (!nombre) return showAlert('El nombre es requerido', 'warning');
+
+  const incluidos = Array.from(document.querySelectorAll('.chk-edit-proyecto:checked')).map(cb => cb.value);
+  if (incluidos.length === 0) return showAlert('Debes seleccionar al menos un proyecto', 'warning');
+
+  showLoader('Actualizando...');
+  google.script.run
+    .withSuccessHandler(res => {
+      let result = typeof res === 'string' ? JSON.parse(res) : res;
+      if (result.success) {
+        bootstrap.Modal.getInstance(document.getElementById('editarFiltroModal')).hide();
+        if (window.filtroMatrizActivoGlobal && window.filtroMatrizActivoGlobal.id === id) {
+            showAlert('Agrupación actualizada. Recargando datos...', 'success');
+            loadDashboardData();
+        } else {
+            hideLoader();
+            showAlert('Actualizado exitosamente', 'success');
+            cargarFiltrosMatriz();
+        }
+      }
+    })
+    .withFailureHandler(err => { hideLoader(); showAlert('Error: ' + err.message, 'danger'); })
+    .actualizarFiltroMatriz(id, nombre, descripcion, incluidos, [], currentUser);
+}
+
+function refreshFiltrosMatriz() {
+  cargarFiltrosMatriz();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+        // NAVEGACIÓN DEL SLIDER DE TRIMESTRES
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        function scrollTrimestres(amount) {
+            const container = document.getElementById('trim-wrapper');
+            if (container) {
+                container.scrollBy({
+                    left: amount,
+                    behavior: 'smooth'
+                });
+            }
+        }
+
+
+
+        // ═══════════════════════════════════════════════════════════════════════════════════
+        // LOG DE INICIALIZACIÓN COMPLETA
+        // ═══════════════════════════════════════════════════════════════════════════════════
+
+        console.log('%c═══════════════════════════════════════════════════════', 'color: #3498db; font-weight: bold;');
+        console.log('%c🚀 TABLERO ENTERPRISE v3.0 - INTEGRADO', 'color: #27ae60; font-weight: bold; font-size: 16px;');
+        console.log('%c═══════════════════════════════════════════════════════', 'color: #3498db; font-weight: bold;');
+
+        console.log('%c✅ CARACTERÍSTICAS INTEGRADAS:', 'color: #2c3e50; font-weight: bold;');
+        console.log('%c   ✓ Matriz de seguimiento con filtros avanzados', 'color: #34495e;');
+        console.log('%c   ✓ Cronograma trimestral automático clickeable', 'color: #34495e;');
+        console.log('%c   ✓ Modo de edición con validación de cambios', 'color: #34495e;');
+        console.log('%c   ✓ Historial completo por RT con timeline', 'color: #34495e;');
+        console.log('%c   ✓ Generación de PDF con detalles navegables', 'color: #34495e;');
+        console.log('%c   ✓ Parsing robusto de números y fechas', 'color: #34495e;');
+        console.log('%c   ✓ Sistema modular de permisos y auditoría', 'color: #34495e;');
+        console.log('%c   ✓ Exportación a Excel/CSV', 'color: #34495e;');
+        console.log('%c   ✓ Filtros en cadena Proyecto > Tramo > Estado', 'color: #34495e;');
+        console.log('%c   ✓ Detalles RT con campos configurables', 'color: #34495e;');
+        console.log('%c   ✓ Agregar nuevos valores en selectores', 'color: #34495e;');
+        console.log('%c   ✓ Navegación persistente entre modales', 'color: #34495e;');
+        console.log('%c   ✓ Limpieza automática de modales', 'color: #34495e;');
+
+        console.log('%c═══════════════════════════════════════════════════════', 'color: #3498db; font-weight: bold;');
+        console.log('%c⌨️  ATAJOS DE TECLADO DISPONIBLES:', 'color: #f39c12; font-weight: bold;');
+        console.log('%c   Ctrl + R : Recargar datos', 'color: #e67e22;');
+        console.log('%c   Ctrl + E : Exportar Excel', 'color: #e67e22;');
+        console.log('%c   Ctrl + P : Generar PDF', 'color: #e67e22;');
+        console.log('%c   Ctrl + T : Modo seguimiento', 'color: #e67e22;');
+
+        console.log('%c═══════════════════════════════════════════════════════', 'color: #3498db; font-weight: bold;');
+        console.log('%c🔧 FUNCIONES DE DEBUG DISPONIBLES:', 'color: #9b59b6; font-weight: bold;');
+        console.log('%c   window.getSystemStatus()  - Estado del sistema', 'color: #8e44ad;');
+        console.log('%c   window.debugInfo()        - Información detallada', 'color: #8e44ad;');
+
+        console.log('%c═══════════════════════════════════════════════════════', 'color: #3498db; font-weight: bold;');
+        console.log('%c📊 INFORMACIÓN DEL SISTEMA:', 'color: #16a085; font-weight: bold;');
+        console.log('%c   Versión: 3.0.0 Integrado', 'color: #1abc9c;');
+        console.log('%c   Fecha: ' + new Date().toLocaleString('es-CO'), 'color: #1abc9c;');
+        console.log('%c   Navegador: ' + navigator.userAgent.substring(0, 50) + '...', 'color: #1abc9c;');
+
+        console.log('%c═══════════════════════════════════════════════════════', 'color: #3498db; font-weight: bold;');
+        console.log('%c✨ SISTEMA LISTO PARA USAR', 'color: #27ae60; font-weight: bold; font-size: 14px;');
+        console.log('%c═══════════════════════════════════════════════════════', 'color: #3498db; font-weight: bold;');
+
+    </script>
