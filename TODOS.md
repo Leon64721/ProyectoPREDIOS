@@ -40,9 +40,11 @@ Backlog de deuda técnica identificada en la auditoría arquitectónica (`/plan-
 
 ---
 
-## 3. Desacoplar el monolito Index.html — [EN PROGRESO 2026-08-05: CSS y JS principal extraídos]
+## 3. Desacoplar el monolito Index.html — [COMPLETADO parcial 2026-08-05: extracción CSS/JS + QA en runtime real]
 
-**Avance:** `estilos.html` (1364 líneas, bloque `<style>` principal) y `app_js.html` (4281 líneas, bloque `<script>` principal, ~135 funciones) ya están extraídos de `Index.html` y enlazados vía `<?!= include('estilos') ?>` / `<?!= include('app_js') ?>`. `Index.html` bajó de 7340 a 1697 líneas. Sintaxis del JS extraído verificada con `node --check` — sin errores. **Pendiente:** el resto del "What" original — agrupar el JS por sección funcional (matriz, PAC, alertas, auditoría, permisos) en vez de un solo `app_js.html` monolítico — sigue sin hacerse; hoy es un solo archivo grande en vez de siete pequeños. Tampoco se ha hecho una prueba end-to-end en el editor de Apps Script / navegador real de que las ~135 funciones sigan resolviendo el scope global correctamente tras la división — solo se validó sintaxis, no comportamiento en runtime.
+**Completado:** `estilos.html` (1364 líneas, bloque `<style>` principal) y `app_js.html` (4281 líneas, bloque `<script>` principal, ~135 funciones) extraídos de `Index.html` y enlazados vía `<?!= include('estilos') ?>` / `<?!= include('app_js') ?>`. `Index.html` bajó de 7340 a 1697 líneas. `clasp push` al entorno de pruebas (confirmado NO-producción por el usuario) y QA manual en navegador real 2026-08-05: sin div de error de include() faltante, CSS cargado, sin `ReferenceError` en consola, onclick de la matriz responde, guardar seguimiento funciona, alertas cargan, módulo PAC funciona. El riesgo de scope global que preocupaba en la auditoría de Staff Engineer quedó descartado en la práctica, no solo en teoría.
+
+**Sigue pendiente (no confundir con completado):** el resto del "What" original — agrupar el JS por sección funcional (matriz, PAC, alertas, auditoría, permisos) en archivos separados en vez de un solo `app_js.html` monolítico de 4281 líneas — nunca se hizo. Hoy `Index.html` pasó de 1 archivo gigante a 3 (Index/estilos/app_js), no a los ~7 módulos funcionales que planteaba el "What". Dejar como ítem de seguimiento si se retoma este refactor.
 
 **What:** Dividir `Index.html` (7328 líneas, ~135 funciones JS inline, un solo `<style>` de 7000+ líneas de markup) en módulos más pequeños — al menos separar CSS a un archivo/`include()` propio y agrupar el JS por sección funcional (matriz, PAC, alertas, auditoría, permisos).
 
