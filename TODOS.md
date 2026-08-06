@@ -44,7 +44,9 @@ Backlog de deuda técnica identificada en la auditoría arquitectónica (`/plan-
 
 **Completado:** `estilos.html` (1364 líneas, bloque `<style>` principal) y `app_js.html` (4281 líneas, bloque `<script>` principal, ~135 funciones) extraídos de `Index.html` y enlazados vía `<?!= include('estilos') ?>` / `<?!= include('app_js') ?>`. `Index.html` bajó de 7340 a 1697 líneas. `clasp push` al entorno de pruebas (confirmado NO-producción por el usuario) y QA manual en navegador real 2026-08-05: sin div de error de include() faltante, CSS cargado, sin `ReferenceError` en consola, onclick de la matriz responde, guardar seguimiento funciona, alertas cargan, módulo PAC funciona. El riesgo de scope global que preocupaba en la auditoría de Staff Engineer quedó descartado en la práctica, no solo en teoría.
 
-**Sigue pendiente (no confundir con completado):** el resto del "What" original — agrupar el JS por sección funcional (matriz, PAC, alertas, auditoría, permisos) en archivos separados en vez de un solo `app_js.html` monolítico de 4281 líneas — nunca se hizo. Hoy `Index.html` pasó de 1 archivo gigante a 3 (Index/estilos/app_js), no a los ~7 módulos funcionales que planteaba el "What". Dejar como ítem de seguimiento si se retoma este refactor.
+**Sigue pendiente (no confundir con completado):** el resto del "What" original — agrupar el JS por sección funcional (matriz, PAC, alertas, auditoría, permisos) en archivos separados en vez de un solo `app_js.html` monolítico de 4281 líneas — nunca se hizo. Hoy `Index.html` pasó de 1 archivo gigante a 3 (Index/estilos/app_js), no a los ~7 módulos funcionales que planteaba el "What". Dejar como ítem de seguimiento si se retoma este refactor. **Planificación de este seguimiento completada el 2026-08-05: ver ítem 7.**
+
+**Corrección al conteo original (2026-08-05):** el "~135 funciones" citado abajo era una estimación. El conteo real por profundidad de llaves (no por `grep ^function`, que falla con indentación inconsistente) da **127 declaraciones top-level, 116 nombres únicos** (11 duplicados, no 4 como se documentó en la Sección 12.5 de `DOCUMENTACION_TECNICA_VIVA.md`). Ver ítem 7 para el detalle completo.
 
 **What:** Dividir `Index.html` (7328 líneas, ~135 funciones JS inline, un solo `<style>` de 7000+ líneas de markup) en módulos más pequeños — al menos separar CSS a un archivo/`include()` propio y agrupar el JS por sección funcional (matriz, PAC, alertas, auditoría, permisos).
 
@@ -109,3 +111,36 @@ Backlog de deuda técnica identificada en la auditoría arquitectónica (`/plan-
 **Context:** Verificado el 2026-08-05 (ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.6): el binario existe y su CLI responde correctamente (`--help`, `--version`), pero `pdf.exe setup` falla en el paso 2/5 ("Launching Chromium"). `./setup` completo de gstack no resolvió el problema.
 
 **Depends on / blocked by:** Ninguno — es independiente del resto del backlog técnico del código.
+
+---
+
+## 7. Subdivisión modular de `app_js.html` en 4 parciales funcionales — [PLANIFICADO 2026-08-05, no ejecutado]
+
+**Planificado:** Dictamen de arquitectura (`/plan-eng-review` sobre `app_js.html`) completado el 2026-08-05. Análisis por profundidad de llaves (no `grep ^function`, que falla con la indentación inconsistente del archivo) identificó **127 declaraciones de función top-level, 116 nombres únicos, 11 duplicados** (no 4 como decía la Sección 12.5) y **33 sitios `google.script.run`**. Clasificación real por uso de `rawData`/`currentData`/`currentUser`/`state` (conteo por función, no estimado):
+
+| Destino propuesto | Funciones | LOC reales | Contenido |
+|---|---|---|---|
+| `app_core_js.html` | 31 | ~861-999 (según si se reconcilian duplicados antes o después) | Declaraciones `let/const` globales (única vez), utilidades UI genéricas (loaders/toasts/modales/onError), bootstrap de datos (`loadDashboardData`, `onDataLoaded`), chrome de app |
+| `app_matriz_js.html` | 56 | 2390 | Filtros, paginación, KPIs, trimestres, render de tabla, `submitTracking` (→ `saveFollowupData`), `generatePdfReport` |
+| `app_alertas_js.html` | 16 | 508 | Editor visual de reglas, tarjetas de alertas, exportación de riesgos |
+| `app_permisos_js.html` | 24 | 364 | Usuarios, roles, reportes guardados, historial/auditoría, validación de integridad |
+
+Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/permisos — los 3 son hojas independientes que solo dependen de core. `state` (101 ocurrencias) resultó ser casi exclusivo de matriz, pero debe declararse en core igual, porque GAS no permite scope por partial — todo `include()` cae en el mismo `<script>` global y una redeclaración `let` duplicada entre archivos es un `SyntaxError` que rompe la carga completa de la página.
+
+**Orden de `include()` obligatorio en `Index.html` (línea 1595, reemplazando el `include('app_js')` actual):** `app_core_js` primero siempre, luego `app_matriz_js`/`app_alertas_js`/`app_permisos_js` en cualquier orden entre sí (no hay dependencia entre ellos). Detalle completo del razonamiento (incluyendo por qué el riesgo de `ReferenceError` por orden es bajo en la práctica actual pero el orden sigue siendo la práctica correcta) en `DOCUMENTACION_TECNICA_VIVA.md`.
+
+**Secuencia de extracción recomendada (4 PRs separados, no un solo corte):** 1) `app_core_js.html` (la base, cero dependencias de los otros 3), 2) `app_alertas_js.html` (módulo más chico, 0 dependencias cruzadas, sirve de canario de bajo riesgo), 3) `app_permisos_js.html` (mismo perfil de riesgo bajo), 4) `app_matriz_js.html` al final (el más grande y el único con lógica transaccional de guardado — dejarlo para cuando el patrón de 4 includes ya esté validado 3 veces).
+
+**Hallazgo colateral no relacionado con este ítem:** `openModal()` se invoca en `app_js.html:1936` (onclick de celdas de matriz) y `app_js.html:2585` (tras guardar seguimiento) pero **no existe definida en ningún archivo del repo** — bug de referencia rota preexistente (`ReferenceError` en consola al hacer clic en una celda con datos), distinto de `openEditModal(rowData)` que sí existe con otra firma. No bloquea esta planificación; requiere su propio ítem de TODO si se decide corregir.
+
+**What:** Ejecutar la extracción real (crear los 4 archivos, mover el código según la tabla de arriba, reconciliar las 11 funciones duplicadas eligiendo qué copia sobrevive antes de mover — no copiar ambas), actualizar el `include()` en `Index.html`, verificar `node --check` en los 4 archivos nuevos, y QA manual en navegador real repitiendo el checklist de la Sección 12.5 (sin `ReferenceError`, onclick de matriz responde, guardar seguimiento funciona, alertas cargan, módulo de permisos/reportes funciona).
+
+**Why:** Es el seguimiento directo del ítem 3 — la extracción de `estilos.html`/`app_js.html` (FE-01) resolvió el riesgo de merge del archivo de 7340 líneas original, pero dejó un solo `app_js.html` de 4281 líneas con 116 funciones de 4 dominios de negocio distintos mezcladas. Esta planificación cierra la brecha entre "extracción mecánica" (hecha) y "modularización por dominio" (pendiente desde el `What` original del ítem 3).
+
+**Pros:** Reduce aún más el blast radius de cambios de UI — tocar el editor de reglas ya no arriesga romper el guardado de seguimiento en el mismo archivo; facilita ubicar código por dominio funcional; el análisis de dependencias ya demostró que no hay acoplamiento oculto entre los 3 módulos hoja.
+
+**Cons:** 4 archivos nuevos más el `Index.html` modificado; requiere reconciliar 11 duplicados con cuidado (elegir la copia vigente, no asumir); esfuerzo no trivial de QA en navegador real por cada uno de los 4 pasos de la secuencia recomendada.
+
+**Context:** Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.8 (dictamen completo con grafo de dependencias ASCII y metodología). Corrige los números de la Sección 12.5 (FE-01).
+
+**Depends on / blocked by:** Depende del ítem 3 (FE-01, ya completado) — es su continuación directa. No depende del ítem 4 (unificación de capa de datos PAC).

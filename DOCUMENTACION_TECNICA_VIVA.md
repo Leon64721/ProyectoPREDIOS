@@ -797,6 +797,65 @@ Cifras verificadas con `git diff --numstat` contra `HEAD` (`+15/-4` lineas en am
 **Impacto en Produccion:**
 Un administrador que intenta guardar reglas mientras otro tiene el lock ahora ve un mensaje que describe correctamente la causa ("sistema ocupado, intente de nuevo") en vez de un mensaje de JSON invalido que lo llevaria a revisar sin sentido un JSON que ya era correcto. Cierra el item 5 de `TODOS.md` como `[COMPLETADO]`.
 
+### 12.8 [2026-08-05] [PLAN-FE-02] Dictamen de arquitectura — subdivisión modular de app_js.html
+
+**Archivo(s) Intervenido(s):**
+- Ninguno modificado en código. Análisis de lectura sobre `app_js.html` (4281 líneas completas) e `Index.html#L1595` (punto de `include()` actual).
+
+**Propósito del Archivo en el Sistema:**
+`app_js.html` es el partial extraído en FE-01 (12.5) que concentra toda la lógica JS de la interfaz (matriz, reglas/alertas, permisos/auditoría) en un único `<script>` de 4281 líneas.
+
+**Motivo de la Intervención:**
+Seguimiento planificado del ítem 3 de `TODOS.md` (FE-01): la extracción de `app_js.html` resolvió el riesgo de merge del `Index.html` original de 7340 líneas, pero dejó 116 funciones de 4 dominios de negocio distintos mezcladas en un solo archivo. El usuario solicitó, vía `/plan-eng-review`, un dictamen de arquitectura para subdividirlo en `app_core_js.html` / `app_matriz_js.html` / `app_alertas_js.html` / `app_permisos_js.html` antes de ejecutar el corte.
+
+**Metodología (por qué no se reutilizaron los números de la Sección 12.5):**
+Un `grep '^function'` ingenuo subcuenta las funciones top-level porque ~15 están indentadas por formato inconsistente aunque su profundidad de llaves real es 0. Se recorrió el archivo completo rastreando profundidad de `{`/`}` para ubicar con precisión cada declaración top-level, luego se midió el uso real de `rawData`/`currentData`/`currentUser`/`state` y `google.script.run` por función (no estimado), y se verificó por grep dirigido que no existan llamadas cruzadas entre los 3 módulos hoja propuestos.
+
+**Cambios Técnicos Realizados:**
+- Ninguno en código — este es un entregable de planificación. Ver `TODOS.md` ítem 7 para el detalle completo de la clasificación función-por-función y la secuencia de extracción recomendada.
+- Se corrigieron los números citados en la Sección 12.5 (ver tabla abajo).
+- Se identificó y documentó un bug preexistente no relacionado (`openModal()` invocado en `app_js.html:1936` y `:2585` pero nunca definido en el repo) como hallazgo colateral, sin corregirlo.
+
+**Números corregidos (12.5 → verificación real 2026-08-05):**
+
+| Métrica | Sección 12.5 (estimado) | Verificado hoy (por profundidad de llaves) |
+|---|---|---|
+| Funciones top-level | ~135 | 127 declaraciones, 116 nombres únicos |
+| Funciones duplicadas | 4 (`saveNavigationState`, `restoreNavigationState`, `setupModalCleanup`, `onTramoChange`) | 11 (+ `showToast`, `showNotification`, `showConfirmation`, `confirmAction`, `onError`, `populateDropdowns`, `onProyectoChange`) |
+| `google.script.run` | ~34 | 33 |
+
+**Clasificación por módulo (evidencia, no estimación):**
+
+| Destino | Funciones | LOC reales | `state` | `currentUser` | `rawData`/`currentData` |
+|---|---|---|---|---|---|
+| `app_core_js.html` | 31 | ~861-999* | 0 | uso transversal (declara + usa) | declara + `onDataLoaded`/`abrirNormalizacion` lo leen |
+| `app_matriz_js.html` | 56 | 2390 | 101 (~100% del total) | uso puntual | uso casi exclusivo |
+| `app_alertas_js.html` | 16 | 508 | 0 | uso puntual | 0 |
+| `app_permisos_js.html` | 24 | 364 | 0 | uso puntual | 0 |
+
+\* Rango según si las 11 duplicadas se reconcilian a una sola copia antes de mover el código (~861) o se copian ambas temporalmente (~999).
+
+**Grafo de dependencias (resumen; ver respuesta completa en la conversación para el ASCII detallado):** `app_core_js.html` es la única raíz — declara todas las variables `let/const` de nivel superior una sola vez (obligatorio: GAS no tiene scope por partial, todo `include()` cae en el mismo `<script>` global, y una redeclaración `let` duplicada entre archivos es un `SyntaxError` que rompe la carga completa de la página). Los 3 módulos hoja (`matriz`, `alertas`, `permisos`) solo leen/escriben esas variables y utilidades de core; **cero llamadas cruzadas entre ellos**, confirmado por grep dirigido en ambos sentidos.
+
+**Orden de `include()` recomendado (`Index.html#L1595`, reemplazando `<?!= include('app_js') ?>`):**
+```
+<?!= include('app_core_js') ?>
+<?!= include('app_matriz_js') ?>
+<?!= include('app_alertas_js') ?>
+<?!= include('app_permisos_js') ?>
+```
+`app_core_js` debe ir primero siempre. El orden entre los otros 3 no importa (sin dependencias entre ellos). El riesgo real de `ReferenceError` por orden incorrecto es bajo hoy porque todo el consumo de globals ocurre dentro de cuerpos de función o del único `$(document).ready` (línea 320, va en core, se dispara después de que los 4 `<script>` ya cargaron) — pero el orden sigue siendo la práctica correcta y defensiva ante código futuro que ejecute algo a nivel superior.
+
+**Secuencia de extracción recomendada:** `app_core_js.html` → `app_alertas_js.html` (módulo más chico, canario de bajo riesgo) → `app_permisos_js.html` → `app_matriz_js.html` al final (el más grande, 56% del archivo, y el único con lógica transaccional de guardado — `submitTracking` → `saveFollowupData`).
+
+**Validación y Pruebas Ejecutadas:**
+- [x] Análisis de código real (no memoria de sesión): profundidad de llaves, conteo de globals por función, grep dirigido de llamadas cruzadas entre módulos propuestos
+- [ ] Sintaxis validada con `node --check` (no aplica — no se generó código en esta intervención)
+- [ ] Pruebas en navegador con `/qa` (no aplica — planificación, no ejecución)
+
+**Impacto en Producción:**
+Ninguno todavía — es un plan, no una ejecución. Reduce el riesgo de la futura ejecución al reemplazar suposiciones ("~135 funciones", "4 duplicadas") por conteos verificados y un grafo de dependencias con evidencia de que los 3 módulos hoja son realmente independientes entre sí. Descubrió como efecto colateral un bug de referencia rota preexistente (`openModal` no definida) que queda registrado pero no corregido.
+
 ## 13. Inventario Exhaustivo del Repositorio
 
 Inventario factual archivo por archivo de los 23 archivos que componen el nucleo del backend, el frontend y los subproyectos auxiliares. Elaborado el 2026-08-05 leyendo directamente el codigo fuente (no inferido de nombres de archivo). Los archivos de los subproyectos `MatrizSeguimiento_script/` y `normalizacion_script/` se confirmaron 100% independientes del backend principal: cero referencias a `getConfig(`, `GestorDatos`, `GestorPermisos` o `GestorAuditoria` en ninguno de sus 11 archivos.
