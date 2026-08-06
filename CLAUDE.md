@@ -129,6 +129,12 @@ Notas de mantenimiento y asistencia:
 - Después de modificarlo, documentar funciones tocadas, impacto funcional, validaciones ejecutadas y referencias a líneas o bloques relevantes.
 - Cuando se requiera entregable formal, usar ese Markdown como fuente para generar PDF o DOCX.
 - Esta regla aplica también a cambios realizados desde otros agentes o flujos de trabajo, incluyendo sesiones paralelas o herramientas externas.
+- **Regeneración automática de entregables formales:** `Documento_Tecnico_Aplicacion_Predios.docx` y `.pdf` NO se actualizan solos — son una foto fija generada a partir de `DOCUMENTACION_TECNICA_VIVA.md`, no un espejo sincronizado. Cada vez que una sesión cierre con un commit tipo `docs(reflect)` / cierre de sesión que modifique `DOCUMENTACION_TECNICA_VIVA.md`, regenerar ambos entregables en el mismo paso, antes de cerrar la sesión, sin esperar a que el usuario lo pida:
+  ```bash
+  pdf.exe generate DOCUMENTACION_TECNICA_VIVA.md Documento_Tecnico_Aplicacion_Predios.docx --to docx
+  pdf.exe generate DOCUMENTACION_TECNICA_VIVA.md Documento_Tecnico_Aplicacion_Predios.pdf --to pdf --cover --toc
+  ```
+  (binario en `~/.claude/skills/gstack/make-pdf/dist/pdf.exe`). Incluir los dos archivos regenerados en el mismo commit que actualiza la documentación viva.
 
 Contacto/Soporte interno:
 - Autores originales y correos encontrados en plantillas y mensajes: `fabian.montanez@idu.gov.co`, `sistemasdtdp@idu.gov.co`.
