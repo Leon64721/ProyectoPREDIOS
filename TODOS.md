@@ -185,3 +185,35 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 **Context:** Descubierto durante la investigación de backend previa a la planificación de Fase 5 (ítem 8). No bloquea la Fase 5 — es un hallazgo colateral, registrado por separado a propósito.
 
 **Depends on / blocked by:** Ninguno — se puede resolver de forma aislada en cualquier momento.
+
+---
+
+## 10. Duplicación de `activarFiltro`/`eliminarFiltro` dentro de `GestorFiltroMatriz` (`datos.js`) — [PENDIENTE, hallado 2026-08-06]
+
+**What:** `GestorFiltroMatriz` (clase completa en `datos.js:248-842`) define `activarFiltro` dos veces (líneas 319 y 608) y `eliminarFiltro` dos veces (líneas 388 y 671), dentro del mismo cuerpo de clase. En JS, la segunda declaración de un método sobrescribe silenciosamente a la primera en el mismo scope de clase — las copias de las líneas 319 y 388 son código muerto inalcanzable; las de 608 y 671 son las que realmente ejecutan. Verificar esto en el editor real de Apps Script (mismo tipo de verificación pendiente que el ítem 9) y eliminar las dos copias muertas.
+
+**Why:** Hallado durante el `/review` de la Fase 5b (implementación de CacheService), al inyectar `invalidateDataCache()` en los 4 puntos de escritura de esta clase — se detectó la duplicación al confirmar los 4 `return { success: true, ... }` reales. A diferencia del ítem 9 (duplicación entre archivos distintos), esta es una duplicación **dentro del mismo archivo y la misma clase**, lo que la hace aún más fácil de introducir por error al copiar/pegar un método sin darse cuenta de que ya existía uno con el mismo nombre más arriba.
+
+**Pros:** Elimina 2 funciones muertas del inventario del proyecto; reduce el riesgo de que un futuro fix se aplique a la copia equivocada (la que nunca se ejecuta).
+
+**Cons:** Requiere confirmar en el editor real de Apps Script cuál copia es la activa antes de borrar — por las reglas de sobrescritura de JS debería ser la última declarada (línea 608/671), pero no se ha verificado en vivo, mismo caveat que el ítem 9.
+
+**Context:** Como medida de seguridad inmediata, la Fase 5b ya inyectó `invalidateDataCache()` en las 4 copias (319, 388, 608, 671) — así que independientemente de cuál copia resulte ser la muerta, ninguna quedó con invalidación de caché faltante. Ver `DOCUMENTACION_TECNICA_VIVA.md` sección de Fase 5b para el detalle completo del `/review`.
+
+**Depends on / blocked by:** Ninguno — igual que el ítem 9, se puede resolver de forma aislada. Conviene resolver ambos (9 y 10) en la misma sesión de limpieza ya que comparten el mismo tipo de verificación previa.
+
+---
+
+## 11. Render parcial del tablero desde caché local (LocalCache) — deshabilitado por riesgo de fuga entre usuarios — [PENDIENTE, hallado 2026-08-06]
+
+**What:** El diseño original de Fase 5c pedía pintar instantáneamente el último `getDashboardData()` cacheado en el cliente (vía `LocalCache`/`localStorage`, con opacidad reducida y badge "Actualizando…") mientras se espera la respuesta real del servidor. Se implementó y luego se **removió deliberadamente** de `app_core_js.html::loadDashboardData()` antes de hacer commit, tras una revisión adversarial: `LocalCache` (localStorage) no está aislado por usuario ni por sesión — solo por origen+perfil de navegador. En un equipo compartido de oficina (plausible en un contexto de agencia gubernamental), un segundo usuario que abra la app dentro de la ventana de TTL (1h) vería por un instante filas de predios y el email del primer usuario antes de que llegue la respuesta real autorizada para él.
+
+**Why (para resolverlo, no solo para descartarlo):** El aislamiento correcto requiere que el cliente conozca su propia identidad de forma SÍNCRONA, antes de la primera llamada `google.script.run` — hoy no existe ese mecanismo: `Session.getActiveUser().getEmail()` solo está disponible server-side, y el cliente solo la conoce después de una llamada RPC (`getUserRoles()`/`getDashboardData()`). La forma correcta de resolverlo es que `doGet()` (`Codigo.js`) inyecte el email del usuario autenticado directamente en el HTML servido (ej. `<script>const CURRENT_USER_EMAIL = '<?= Session.getActiveUser().getEmail() ?>';</script>` antes de cualquier otro script), permitiendo namespacing de la cache-key (`dashboardData:${CURRENT_USER_EMAIL}`) sin esperar ningún round-trip.
+
+**Pros:** Una vez resuelto el namespacing, se recupera la ganancia de percepción de velocidad completa (pintura instantánea de datos "probablemente correctos" en vez de solo el Skeleton Loader) sin el riesgo de fuga entre usuarios.
+
+**Cons:** Requiere tocar `Codigo.js::doGet()` e `Index.html` (fuera del alcance de los archivos de Fase 5c) — es un cambio de superficie de renderizado server-side, no solo de JS cliente.
+
+**Context:** El Skeleton Loader (placeholders CSS pulsantes) SÍ quedó implementado y es la mejora principal de esta fase — este ítem es solo sobre la capa adicional de "pintar datos viejos mientras confirma", que se decidió posponer via AskUserQuestion en vez de aceptar el riesgo. Ver `DOCUMENTACION_TECNICA_VIVA.md` sección de Fase 5c para el detalle completo del `/review` (incluye 2 hallazgos adicionales del subagente adversarial ya corregidos en el mismo commit: `refreshData()` seguía mostrando el overlay de página completa, y `pac_mostrarError()` destruía el DOM que el reintento necesitaba).
+
+**Depends on / blocked by:** Depende de una decisión de diseño sobre inyección de identidad server-side en `Index.html` — no depende de ningún otro ítem de este backlog.

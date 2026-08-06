@@ -1111,6 +1111,97 @@ sequenceDiagram
 **Impacto en Producción:**
 Ninguno — esta intervención es exclusivamente documental/de planificación. No se modificó ningún archivo de código (`.js`/`.html` de backend o frontend). El dictamen queda registrado como base para la Fase 5b (implementación), que se ejecutará en una sesión futura siguiendo la estrategia de worktrees documentada arriba.
 
+### 12.13 [2026-08-06] [CONC-P5b] Fase 5b — Construcción backend: CacheService, desacoplamiento de LOGS, invalidación centralizada
+
+**Archivo(s) Intervenido(s):**
+- `config.js` — nueva entrada `CONFIG.DATA_FILES.LOGS` (placeholder)
+- `auditoria.js` — `GestorAuditoria._obtenerGestorLogs()` (nuevo), `registrarAccion`, `obtenerLogsUsuario`, `_asegurarHojaLogs` (redirigidos a LOGS)
+- `cache_backend.gs` — `CACHE_KEY_DASHBOARD`, `CACHE_KEY_PAC_VERSION`, `invalidateDataCache()` (nuevos, aditivos)
+- `Codigo.js` — `getDashboardData`, `saveTrackingData`, `savePermission`, `deletePermission`, `promoverDato2aDato1`
+- `pac_api.js` — `getPACData`, `_pac_buildCacheKey()` (nuevo)
+- `pac_gestor.js` — `aprobarBorradorPAC`
+- `permisos.js` — `savePermission`, `deletePermission`
+- `datos.js` — `GestorFiltroMatriz.crearFiltro/actualizarFiltro/activarFiltro(x2)/eliminarFiltro(x2)`
+
+**Propósito del Archivo en el Sistema:**
+Primera fase de implementación del dictamen de arquitectura de Fase 5a (Sección 12.12): caché de lectura de 2 capas backend (CacheService) sobre `getDashboardData`/`getPACData`, y desacoplamiento del spreadsheet de LOGS del principal.
+
+**Motivo de la Intervención:**
+Ejecutar el pipeline Build & Review de Fase 5b: `/careful`, refactor de LOGS, CacheService en las dos funciones de lectura pesada, inyección de `invalidateDataCache()` en las escrituras transaccionales, y `/review`.
+
+**Correcciones de premisa frente al plan original (encontradas durante la construcción, no asumidas):**
+1. **`CONFIG.DATA_FILES_IDS` es un array, no un objeto con propiedades nombradas** — el plan pedía `CONFIG.DATA_FILES_IDS.LOGS`, pero `DATA_FILES_IDS: []` en `config.js:23` es una lista plana usada por `getDataFilesIds()`. Se usó `CONFIG.DATA_FILES.LOGS` en su lugar, siguiendo el patrón ya existente de `DATA_FILES.STAGING` (mismo objeto, mismo estilo de acceso vía `getConfig('DATA_FILES.LOGS')`).
+2. **`cache_backend.gs`'s `CacheQueue`/`CacheStore`/`processCacheQueue` NO son infraestructura muerta** — están conectadas al botón "Forzar Actualización" (Admin/PowerEditor, `Index.html:921-1034`, `gsForceCacheInvalidation`/`gsCheckCacheOperation`). El plan de Fase 5a asumía que se podían eliminar; se confirmó lo contrario por grep dirigido a `Index.html`. Decisión (vía AskUserQuestion): conservar toda esa infraestructura intacta; `invalidateDataCache()` se agregó como capa nueva e independiente basada en `CacheService`, sin tocar la cola en hojas.
+3. **`getPACData` ejecuta una escritura (`pac_actualizarEstadosDesdeMatrizBatch`) antes de calcular la respuesta** — sincroniza `ESTADO_PREDIAL_ACTUAL` en `PAC_Vigente` desde la matriz en cada llamada. Decisión (vía AskUserQuestion): esa escritura corre SIEMPRE, en cache-hit y cache-miss por igual; solo se cachea el cálculo de `calcularSemaforoPAC` + armado de respuesta. Consecuencia aceptada: la ganancia de rendimiento real de cachear PAC es menor que un caché "puro", porque la lectura+escritura más cara de Sheets sigue ejecutándose en cada request.
+
+**Cambios Técnicos Realizados:**
+- `CONFIG.DATA_FILES.LOGS` con valor placeholder `'ID_SPREADSHEET_LOGS_AQUI'` — **debe reemplazarse por un ID real antes de desplegar a producción**, o toda la auditoría (`registrarAccion`/`getUserLogs`) queda silenciosamente deshabilitada (degrada a `{success:false}`/`[]`, no lanza sin capturar). Se agregó un `console.error` explícito que detecta el placeholder y lo deja claro en los logs del servidor en vez de un error genérico de `SpreadsheetApp.openById()`.
+- `GestorAuditoria._obtenerGestorLogs()`: `GestorDatos` lazy y memoizado, separado de `this.gestor` (que sigue apuntando al principal, usado por `registrarCambio`/`obtenerHistorial` — la auditoría V2/historial NO se movió, solo el log V1). Firmas públicas de `registrarAccion(usuario, accion, detalles)` y `getUserLogs(usuario)` sin cambios — los 16 call sites existentes no requieren modificación.
+- `cache_backend.gs`: `CACHE_KEY_DASHBOARD` (clave fija) y `CACHE_KEY_PAC_VERSION` (token de versión, ya que `getPACData` tiene parámetros variables — invalidar es incrementar la versión, no enumerar cada combinación posible de filtros). `invalidateDataCache()` fail-open (try/catch, nunca tumba la operación que la llamó).
+- `getDashboardData`: cache-read después del check de mantenimiento (nunca antes); cache-write con try/catch para el límite de 100KB de `CacheService.put()`.
+- `getPACData`: cache-key vía `_pac_buildCacheKey()` (hash MD5 de `filtros`+`modoEjecucion` + versión vigente), mismo patrón de try/catch en el `put()`.
+- Invalidación inyectada en 10 puntos: `saveTrackingData`, `savePermission`/`deletePermission` (ambas copias, `Codigo.js` y `permisos.js`), `crearFiltro`/`actualizarFiltro`/`activarFiltro`(x2)/`eliminarFiltro`(x2) en `datos.js`, `aprobarBorradorPAC`, y `promoverDato2aDato1` (hallazgo propio del `/review`, no estaba en la lista original de ~8 funciones — sobrescribe `Datos`/`Seguimiento` del principal vía el menú de Sheets, `Codigo.js:1954`).
+
+**Hallazgos del `/review` (adaptado — sin rama base ni remoto configurados, se revisó `git diff HEAD`, el diff de trabajo sin commitear):**
+1. **[CRÍTICO, corregido]** `getDashboardData()` cacheaba el campo `user: Session.getActiveUser().getEmail()` dentro del blob compartido de `CacheService.getScriptCache()` (compartido entre TODAS las ejecuciones del script, no por-sesión). Un cache-hit servía el email del usuario que originalmente poblió el caché a cualquier otro usuario durante el TTL de 30 min. Verificado que `app_matriz_js.html:61,1523,2148` consume ese campo como `currentUser` — se usa como valor del campo `USUARIO` en el registro de auditoría de `saveTrackingData` y como parámetro `usuario` en `guardarYActivarFiltroManual`/`activarFiltroMatriz`/`crearFiltroMatriz`/`eliminarFiltroMatriz`/`actualizarFiltroMatriz`, varios de los cuales usan ese valor client-supplied para chequeos de rol de administrador (`GestorPermisos.obtenerRol(usuarioActual)`) — un patrón de confianza en identidad ya existente y fuera de este alcance, pero que la fuga de caché habría hecho explotable en la práctica. **Corregido:** `user` se excluye del objeto cacheado y se recalcula en vivo (`Session.getActiveUser().getEmail()`) en cada retorno, cache-hit o cache-miss.
+2. **[Confirmado, sin cambio de código — hallazgo propio]** `promoverDato2aDato1()` (`Codigo.js:1954`, disparado desde el menú de Sheets) sobrescribe `Datos`/`Seguimiento` del principal sin invalidar el caché — corregido durante la construcción, antes de que terminara el `/review` (ver arriba).
+3. **[Informativo]** El placeholder de `DATA_FILES.LOGS` deshabilita la auditoría silenciosamente hasta reemplazarse — comportamiento intencional (degradación grácil ya decidida en Fase 5a), reforzado con un log explícito (ver arriba). Bloqueante para desplegar a producción, no para continuar el desarrollo.
+4. **[Informativo]** El límite de 100KB de `CacheService.put()` podría hacer que el caché de `getDashboardData` nunca se active en la práctica si el dataset real de predios supera ese tamaño — el fallback fail-open ya está implementado; medir el tamaño real del payload tras desplegar es el siguiente paso, no una acción de código.
+5. **[Informativo, nuevo TODO]** `GestorFiltroMatriz` (`datos.js`) define `activarFiltro` y `eliminarFiltro` DOS VECES cada una dentro de la misma clase (líneas 319/608 y 388/671) — duplicación preexistente, no introducida en esta sesión. La segunda declaración sobrescribe silenciosamente a la primera (mismas reglas de JS que la Sección 12.5/13.1). Se inyectó `invalidateDataCache()` en las 4 copias por seguridad, independientemente de cuál esté realmente activa. Registrado como TODOS.md ítem 10.
+6. **[Informativo]** `invalidateDataCache()`'s incremento de versión (`cache.get` → `cache.put`) no es atómico — bajo invalidaciones concurrentes el contador puede sub-incrementar, pero es inofensivo: cualquier incremento sigue invalidando las claves viejas, la garantía de invalidación no depende de que el contador sea exacto.
+7. **[Informativo]** `pac_actualizarEstadosDesdeMatrizBatch` (escritura en `PAC_Vigente`) no tiene `LockService` propio (a diferencia de `aprobarBorradorPAC`, que sí bloquea la misma hoja) — gap de concurrencia preexistente, no introducido ni agravado por el caché nuevo (el caché no cambia la frecuencia de esta escritura, ver corrección de premisa #3 arriba).
+
+**Validación y Pruebas Ejecutadas:**
+- [x] `node --check` en los 8 archivos modificados (`cache_backend.gs` verificado vía copia temporal `.js`, ya que `node --check` no reconoce la extensión `.gs`)
+- [x] `/review` ejecutado: sin rama base ni remoto configurados en este repo (una sola rama local, `git remote -v` vacío) — adaptado a revisar `git diff HEAD` (el diff de trabajo sin commitear) en vez de diff contra una rama base
+- [x] Pase crítico propio (concurrencia, límites de CacheService, fuga de datos entre usuarios) + 1 subagente adversarial independiente (Agent tool, sin contexto previo de la conversación) — hallazgo crítico #1 confirmado y corregido
+- [x] Verificado explícitamente: el check de modo mantenimiento en `getDashboardData` sigue ejecutándose antes de cualquier lectura de caché (su resultado nunca se cachea). `getPACData` nunca tuvo check de mantenimiento propio — gap preexistente, no introducido por este cambio, no corregido en este alcance
+- [x] **Actualización post-cierre (sesión siguiente, 2026-08-06):** `CONFIG.DATA_FILES.LOGS` reemplazado por el ID real del spreadsheet operacional `***REMOVED***` (BD_OPERACIONAL_PREDIOS). `npx clasp push --force` ejecutado (40 archivos) al entorno de pruebas. Commit `c6cbeed` (`feat(backend): implement 2-layer caching and decouple audit logs DB [CONC-FE-02 Phase 5b]`). Ver Sección 12.14 para el detalle completo de esa sesión, incluida la Fase 5c (Skeleton Loaders).
+- [ ] QA manual en navegador: sigue pendiente
+
+**Impacto en Producción:**
+Backend desplegado al entorno de pruebas confirmado NO-producción (mismo script ID usado en todas las fases anteriores de este proyecto). `CONFIG.DATA_FILES.LOGS` ya apunta a un spreadsheet real — la auditoría (`registrarAccion`/`getUserLogs`) queda operativa una vez desplegado. QA manual en navegador real sigue siendo el único paso pendiente antes de considerar esto verificado end-to-end.
+
+### 12.14 [2026-08-06] [CONC-P5b/5c] Inyección de ID de LOGS, despliegue de Fase 5b y construcción de Fase 5c (Skeleton Loaders)
+
+**Archivo(s) Intervenido(s):**
+- `config.js` (ID real de LOGS)
+- `app_core_js.html`, `app_matriz_js.html`, `pac_seccion.html` (Skeleton Loaders)
+
+**Propósito del Archivo en el Sistema:**
+Cierra la implementación de Fase 5b (despliegue) e implementa Fase 5c (rediseño UI/UX — Skeleton Loaders) del dictamen de arquitectura de Fase 5a (Sección 12.12).
+
+**Motivo de la Intervención:**
+Pipeline integrado solicitado por el usuario: inyectar el ID real de LOGS, desplegar backend (`clasp push --force` + commit), construir los 3 Skeleton Loaders, auditar con `/review`, documentar y sincronizar.
+
+**Cambios Técnicos Realizados — Fase 5b (despliegue):**
+- `CONFIG.DATA_FILES.LOGS` → `***REMOVED***` (BD_OPERACIONAL_PREDIOS, spreadsheet real provisto por el usuario).
+- `npx clasp push --force`: 40 archivos al entorno de pruebas (mismo `scriptId` usado en Fases 1-4).
+- Commit `c6cbeed`: `feat(backend): implement 2-layer caching and decouple audit logs DB [CONC-FE-02 Phase 5b]` — solo los 8 archivos backend de Fase 5b, sin la documentación (que se commitea junto con Fase 5c más abajo).
+
+**Cambios Técnicos Realizados — Fase 5c (Skeleton Loaders):**
+- **`app_core_js.html`:** CSS de skeleton (`@keyframes skeletonPulse`, `.skeleton-bar`, `.skeleton-cell`, `.skeleton-row`) agregado al `<style>` inyectado por JS ya existente en el archivo (no se tocó `estilos.html`, fuera del alcance de esta fase). `showDashboardSkeleton()`/`hideDashboardSkeleton()` nuevas: la primera llena las 13 tarjetas KPI (`DASHBOARD_KPI_VALUE_IDS`) y `#matrix-wrapper` con placeholders pulsantes; la segunda solo se usa en la ruta de error. `loadDashboardData()` ya no llama a `showLoader('Cargando datos del tablero...')` (overlay de página completa `#loader`, z-index 9999) — llama a `showDashboardSkeleton()` en su lugar, dejando visible el shell de la app (sidebar, header) de inmediato. `.text()`/`.html()` de `applyFilters()`/`renderMatrix()` sobrescriben el skeleton naturalmente cuando llegan los datos reales — sin necesidad de limpieza manual en el camino feliz.
+- **`app_matriz_js.html`:** sin cambio funcional en la versión final — se evaluó y descartó un guard defensivo en `renderMatrix()` por ser código inalcanzable (`currentData` se inicializa a `[]` en `app_core_js.html` antes de que cualquier código pueda invocar `renderMatrix()`), documentado inline en vez de dejado implícito.
+- **`pac_seccion.html`:** `pac_showSkeleton()` nueva — `pac_mostrarLoader(true)` la invoca en vez de solo alternar visibilidad de `#pac-loader`/`#pac-contenido`. Muestra `#pac-contenido` de inmediato con los 6 valores KPI de semáforo en **gris neutro** (no verde/amarillo/naranja/rojo, para no sugerir un estado de riesgo falso) y una tabla-esqueleto en `#pac-tabla-head`/`#pac-tabla-body`. Reutiliza las clases `.skeleton-bar`/`.skeleton-cell` de `app_core_js.html` (mismo documento HTML final, mismo scope de CSS — sin duplicar estilos, verificado que `pac_seccion` se incluye en `Index.html` antes que `app_core_js` en el DOM pero eso no importa porque las clases CSS solo se resuelven en el momento en que las funciones interactivas se ejecutan, no en el orden de parseo de los `<script>`).
+
+**Hallazgos del `/review` (subagente adversarial independiente + verificación propia antes de aplicar cualquier fix):**
+1. **[Decisión de diseño, no bug — resuelta vía AskUserQuestion]** El diseño original de Fase 5c pedía pintar instantáneamente el último `getDashboardData()` desde `LocalCache` (localStorage) mientras se esperaba la respuesta real, con un badge "Actualizando…". El subagente confirmó que `LocalCache` no está aislado por usuario — en un equipo compartido, un segundo usuario vería por un instante los datos (incluido el email) del primero. **Decisión del usuario: deshabilitar esta capa por ahora** (recomendado), manteniendo el Skeleton Loader (la mejora principal) intacto. Registrado como TODOS.md ítem 11, con la solución correcta identificada (inyección server-side síncrona de la identidad del usuario en `Index.html`, fuera del alcance de esta fase).
+2. **[CORREGIDO]** `refreshData()` (`app_core_js.html`) seguía llamando a `$('#loader').fadeIn(300)` antes de `loadDashboardData()` — el overlay de página completa (z-index 9999) tapaba el nuevo Skeleton Loader por completo durante un refresh manual, anulando la mejora. Se quitó esa llamada.
+3. **[CORREGIDO]** `pac_mostrarError()` (`pac_seccion.html`) reemplazaba TODO `#pac-contenido.innerHTML` con el mensaje de error, destruyendo los elementos KPI/tabla que tanto `pac_showSkeleton()` como el render real necesitan — un reintento exitoso terminaba en un loop de error permanente (bug **preexistente**, no introducido en esta sesión, pero que el nuevo `pac_showSkeleton()` hacía más difícil de notar al fallar en silencio vía sus guards `if(el)`). Se corrigió insertando el error como un banner al inicio de `#pac-contenido` sin tocar sus hijos reales, con limpieza automática del banner al iniciar el siguiente intento en `pac_showSkeleton()`.
+4. **[Auto-detectado y corregido durante la implementación de la corrección #1]** Al remover la lectura de `LocalCache` y el parámetro `isPartial` de `onDataLoaded()`, quedó una referencia residual a `isPartial` dentro del cuerpo de la función (`if (!isPartial)`) que habría lanzado `ReferenceError: isPartial is not defined` en tiempo de ejecución — detectado antes de hacer commit, no llegó a desplegarse.
+5. **[Auto-detectado y corregido]** Un comentario JSDoc propio contenía la secuencia literal `*/` en medio de la prosa (`#pac-kpi-*/#pac-tabla-head`), cerrando el bloque de comentario antes de tiempo y convirtiendo el resto del texto en "código" inválido — detectado por `node --check`, no por inspección visual. Reescrito para evitar la secuencia.
+
+**Validación y Pruebas Ejecutadas:**
+- [x] `node --check` en los 3 partials modificados (extrayendo el contenido entre `<script>`/`</script>` a un archivo `.js` temporal, ya que `node --check` no reconoce `.html` como JS ni entiende el HTML circundante)
+- [x] 1 subagente adversarial independiente (Agent tool, sin contexto previo) + verificación propia línea por línea de cada hallazgo antes de aplicar cualquier fix (ninguno se aceptó a ciegas)
+- [x] Decisión de diseño consultada vía AskUserQuestion antes de actuar (hallazgo #1, riesgo de privacidad)
+- [x] `node --check` re-ejecutado tras cada fix, incluidos los dos bugs auto-detectados durante la implementación de las correcciones
+- [ ] QA manual en navegador real: pendiente — no ejecutado en esta sesión
+- [ ] `clasp push` de Fase 5c: pendiente — no ejecutado en esta sesión (solo Fase 5b fue desplegada)
+
+**Impacto en Producción:**
+Fase 5b: desplegada al entorno de pruebas (ver arriba). Fase 5c: implementada y verificada sintácticamente, **no desplegada todavía** (`clasp push` no ejecutado para estos 3 archivos en esta sesión) — pendiente de confirmación antes del siguiente `clasp push`.
+
 ## 13. Inventario Exhaustivo del Repositorio
 
 Inventario factual archivo por archivo de los 23 archivos que componen el nucleo del backend, el frontend y los subproyectos auxiliares. Elaborado el 2026-08-05 leyendo directamente el codigo fuente (no inferido de nombres de archivo). Los archivos de los subproyectos `MatrizSeguimiento_script/` y `normalizacion_script/` se confirmaron 100% independientes del backend principal: cero referencias a `getConfig(`, `GestorDatos`, `GestorPermisos` o `GestorAuditoria` en ninguno de sus 11 archivos.
