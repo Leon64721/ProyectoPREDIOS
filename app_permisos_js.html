@@ -1,0 +1,371 @@
+    <script>
+      // ═══════════════════════════════════════════════════════════════════════════════════
+// APP_PERMISOS_JS — USUARIOS, ROLES, REPORTES GUARDADOS Y AUDITORÍA
+// (CONC-FE-02 Fase 3: extraído de app_js.html. Depende de globals/utilidades de
+//  app_core_js.html — currentUser, pendingAction, showNotification/showConfirmation/onError)
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+function applyHistorialFilters() {
+    try {
+        const rt = $('#filterHistRT').val().toUpperCase();
+        console.log('🔍 Aplicando filtros al historial...');
+        showNotification('Info', 'Cargando historial...', 'info');
+        google.script.run
+            .withSuccessHandler(onHistorialLoaded)
+            .withFailureHandler(onError)
+            .getRtHistory(rt || 'ALL');
+    } catch (e) {
+        console.error('❌ Error aplicando filtros: ' + e.message);
+    }
+}
+
+function onHistorialLoaded(result) {
+    try {
+        const historial = JSON.parse(result);
+        const tbody = $('#historialBody');
+        tbody.empty();
+
+        if (!historial || historial.length === 0) {
+            tbody.html('<tr><td colspan="7" class="no-data"><i class="fas fa-inbox"></i><p>No hay cambios registrados</p></td></tr>');
+            return;
+        }
+
+        historial.forEach(cambio => {
+            const tr = $('<tr>');
+            tr.append('<td>' + (new Date(cambio.fecha).toLocaleString('es-CO')) + '</td>');
+            tr.append('<td>' + (cambio.rt || '-') + '</td>');
+            tr.append('<td>' + (cambio.usuario || '-') + '</td>');
+            tr.append('<td>' + (cambio.estado || '-') + '</td>');
+            tr.append('<td>' + (cambio.disponibilidad || '-') + '</td>');
+            tr.append('<td>' + (cambio.cambios || '-') + '</td>');
+            tr.append('<td><span class="badge-status badge-info">Modificado</span></td>');
+            tbody.append(tr);
+        });
+
+        console.log('✅ Historial cargado');
+    } catch (e) {
+        console.error('❌ Error procesando historial: ' + e.message);
+    }
+}
+
+function applyAuditoriaFilters() {
+    try {
+        const user = $('#filterAudUser').val();
+        console.log('🔍 Aplicando filtros a auditoría...');
+        showNotification('Info', 'Cargando auditoría...', 'info');
+        google.script.run
+            .withSuccessHandler(onAuditoriaLoaded)
+            .withFailureHandler(onError)
+            .getUserLogs(user || 'ALL');
+    } catch (e) {
+        console.error('❌ Error aplicando filtros: ' + e.message);
+    }
+}
+
+function onAuditoriaLoaded(result) {
+    try {
+        const logs = JSON.parse(result);
+        const tbody = $('#auditoriaBody');
+        tbody.empty();
+
+        if (!logs || logs.length === 0) {
+            tbody.html('<tr><td colspan="4" class="no-data"><i class="fas fa-inbox"></i><p>No hay registros de auditoría</p></td></tr>');
+            return;
+        }
+
+        logs.forEach(log => {
+            const tr = $('<tr>');
+            tr.append('<td>' + (new Date(log.fecha).toLocaleString('es-CO')) + '</td>');
+            tr.append('<td>' + (log.usuario || '-') + '</td>');
+            tr.append('<td><span class="badge-status badge-info">' + (log.accion || '-') + '</span></td>');
+            tr.append('<td>' + (log.detalles || '-') + '</td>');
+            tbody.append(tr);
+        });
+
+        console.log('✅ Auditoría cargada');
+    } catch (e) {
+        console.error('❌ Error procesando auditoría: ' + e.message);
+    }
+}
+
+function openPermissionModal() {
+    $('#permEmail').val('');
+    $('#permRole').val('');
+    new bootstrap.Modal(document.getElementById('permissionModal')).show();
+}
+
+function savePermission() {
+    try {
+        const email = $('#permEmail').val();
+        const rol = $('#permRole').val();
+
+        if (!email || !rol) {
+            showNotification('Error', 'Completa todos los campos', 'danger');
+            return;
+        }
+
+        console.log('💾 Guardando permiso...', { email, rol });
+
+        google.script.run
+            .withSuccessHandler(onPermissionSaved)
+            .withFailureHandler(onError)
+            .savePermission(email, rol, [], currentUser);
+
+    } catch (e) {
+        console.error('❌ Error guardando permiso: ' + e.message);
+        showNotification('Error', e.message, 'danger');
+    }
+}
+
+function onPermissionSaved(result) {
+    console.log('✅ Permiso guardado:', result);
+    if (result.success) {
+        showNotification('Éxito', 'Permiso guardado correctamente', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('permissionModal')).hide();
+        loadPermissions();
+    } else {
+        showNotification('Error', result.error || 'Error guardando permiso', 'danger');
+    }
+}
+
+function loadPermissions() {
+    try {
+        console.log('📋 Cargando permisos...');
+        google.script.run
+            .withSuccessHandler(onPermissionsLoaded)
+            .withFailureHandler(onError)
+            .getPermissionsData();
+    } catch (e) {
+        console.error('❌ Error cargando permisos: ' + e.message);
+    }
+}
+
+function onPermissionsLoaded(result) {
+    try {
+        const datos = JSON.parse(result);
+        const tbody = $('#permisosBody');
+        tbody.empty();
+
+        if (!datos.permissions || datos.permissions.length === 0) {
+            tbody.html('<tr><td colspan="6" class="no-data"><i class="fas fa-inbox"></i><p>No hay permisos registrados</p></td></tr>');
+            return;
+        }
+
+        datos.permissions.forEach(perm => {
+            const tr = $('<tr>');
+            tr.append('<td>' + (perm.email || perm.Email || '-') + '</td>');
+            tr.append('<td><span class="badge-status badge-info">' + (perm.rol || perm.Rol || '-') + '</span></td>');
+            tr.append('<td>' + ((perm.proyectos || perm.Proyectos || 'Todos')) + '</td>');
+            tr.append('<td><span class="badge-status badge-success">Activo</span></td>');
+            tr.append('<td>' + (perm.fecha || '-') + '</td>');
+            tr.append('<td><button class="btn btn-sm btn-outline-danger" onclick="deletePermission(\'' + (perm.email || perm.Email) + '\')"><i class="fas fa-trash"></i></button></td>');
+            tbody.append(tr);
+        });
+
+        console.log('✅ Permisos cargados');
+    } catch (e) {
+        console.error('❌ Error procesando permisos: ' + e.message);
+    }
+}
+
+function deletePermission(email) {
+    pendingAction = function() {
+        google.script.run
+            .withSuccessHandler(onPermissionDeleted)
+            .withFailureHandler(onError)
+            .deletePermission(email, currentUser);
+    };
+    showConfirmation('¿Eliminar permiso de ' + email + '?');
+}
+
+function onPermissionDeleted(result) {
+    if (result.success) {
+        showNotification('Éxito', 'Permiso eliminado', 'success');
+        loadPermissions();
+    } else {
+        showNotification('Error', result.error || 'Error eliminando permiso', 'danger');
+    }
+}
+
+function createNewReport() {
+    $('#reportName').val('');
+    $('#reportType').val('');
+    new bootstrap.Modal(document.getElementById('reportModal')).show();
+}
+
+function generateReport() {
+    try {
+        const nombre = $('#reportName').val();
+        const tipo = $('#reportType').val();
+
+        if (!nombre || !tipo) {
+            showNotification('Error', 'Completa los campos requeridos', 'danger');
+            return;
+        }
+
+        const config = { nombre, tipo };
+
+        console.log('📄 Generando reporte...', config);
+
+        google.script.run
+            .withSuccessHandler(onReportGenerated)
+            .withFailureHandler(onError)
+            .saveReport(nombre, config, {}, currentUser);
+
+    } catch (e) {
+        console.error('❌ Error generando reporte: ' + e.message);
+        showNotification('Error', e.message, 'danger');
+    }
+}
+
+function onReportGenerated(result) {
+    console.log('✅ Reporte generado:', result);
+    if (result.success) {
+        showNotification('Éxito', 'Reporte generado correctamente', 'success');
+        bootstrap.Modal.getInstance(document.getElementById('reportModal')).hide();
+        loadReports();
+    } else {
+        showNotification('Error', result.error || 'Error generando reporte', 'danger');
+    }
+}
+
+function loadReports() {
+    try {
+        console.log('📄 Cargando reportes...');
+        google.script.run
+            .withSuccessHandler(onReportsLoaded)
+            .withFailureHandler(onError)
+            .getSavedReports(currentUser);
+    } catch (e) {
+        console.error('❌ Error cargando reportes: ' + e.message);
+    }
+}
+
+function onReportsLoaded(result) {
+    try {
+        const reportes = JSON.parse(result);
+        const container = $('#reportesContainer');
+        container.empty();
+
+        if (!reportes || reportes.length === 0) {
+            container.html('<div class="no-data" style="grid-column: 1/-1;"><i class="fas fa-file-pdf"></i><p>No hay reportes guardados</p></div>');
+            return;
+        }
+
+        reportes.forEach(reporte => {
+            container.append(
+                '<div class="kpi-card" style="border-left-color: var(--info);">' +
+                '<div class="kpi-title"><span>' + (reporte.nombre || 'Reporte') + '</span><i class="fas fa-file-pdf" style="color: var(--danger);"></i></div>' +
+                '<div class="kpi-subtitle" style="margin-top: 10px;"><strong>Tipo:</strong> ' + (reporte.tipo || '-') + '<br><strong>Fecha:</strong> ' + (reporte.fecha || '-') + '</div>' +
+                '<div style="margin-top: 15px; display: flex; gap: 8px;">' +
+                '<button class="btn btn-sm btn-outline-primary" onclick="downloadReport(\'' + (reporte.id || reporte.nombre) + '\')"><i class="fas fa-download"></i> Descargar</button>' +
+                '<button class="btn btn-sm btn-outline-danger" onclick="deleteReport(\'' + (reporte.id || reporte.nombre) + '\')"><i class="fas fa-trash"></i></button>' +
+                '</div></div>'
+            );
+        });
+
+        console.log('✅ Reportes cargados');
+    } catch (e) {
+        console.error('❌ Error procesando reportes: ' + e.message);
+    }
+}
+
+function downloadReport(reportId) {
+    console.log('📥 Descargando reporte: ' + reportId);
+    showNotification('Info', 'Descargando reporte...', 'info');
+}
+
+function deleteReport(reportId) {
+    pendingAction = function() {
+        google.script.run
+            .withSuccessHandler(onReportDeleted)
+            .withFailureHandler(onError)
+            .deleteReport(reportId, currentUser);
+    };
+    showConfirmation('¿Eliminar este reporte?');
+}
+
+function onReportDeleted(result) {
+    if (result.success) {
+        showNotification('Éxito', 'Reporte eliminado', 'success');
+        loadReports();
+    } else {
+        showNotification('Error', result.error || 'Error eliminando reporte', 'danger');
+    }
+}
+
+function validateIntegrity() {
+    try {
+        console.log('🔍 Validando integridad del sistema...');
+        showNotification('Info', 'Validando...', 'info');
+        google.script.run
+            .withSuccessHandler(onIntegrityValidated)
+            .withFailureHandler(onError)
+            .validateDataIntegrity();
+    } catch (e) {
+        console.error('❌ Error validando: ' + e.message);
+    }
+}
+
+function onIntegrityValidated(result) {
+    try {
+        const datos = JSON.parse(result);
+        let html = '<div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Hoja</th><th>Estado</th><th>Detalles</th></tr></thead><tbody>';
+
+        for (const [hoja, info] of Object.entries(datos)) {
+            const badgeClass = info.status === 'OK' ? 'badge-success' : 'badge-danger';
+            html += '<tr><td><strong>' + hoja + '</strong></td><td><span class="badge-status ' + badgeClass + '">' + info.status + '</span></td><td>' + (info.headers || info.message || '-') + ' registros</td></tr>';
+        }
+
+        html += '</tbody></table></div>';
+
+        new bootstrap.Modal(document.getElementById('detailModal')).show();
+        $('#modalTitle').text('Validación de Integridad');
+        $('#detailTable').parent().html(html);
+
+        console.log('✅ Integridad validada');
+    } catch (e) {
+        console.error('❌ Error procesando validación: ' + e.message);
+    }
+}
+
+function clearCache() {
+    pendingAction = function() {
+        localStorage.clear();
+        sessionStorage.clear();
+        showNotification('Éxito', 'Caché limpiado', 'success');
+        console.log('✅ Caché limpiado');
+    };
+    showConfirmation('¿Limpiar el caché del navegador?');
+}
+
+function exportSystemInfo() {
+    try {
+        console.log('📥 Exportando información del sistema...');
+        google.script.run
+            .withSuccessHandler(onSystemInfoExported)
+            .withFailureHandler(onError)
+            .getSystemInfo();
+    } catch (e) {
+        console.error('❌ Error exportando: ' + e.message);
+    }
+}
+
+function onSystemInfoExported(result) {
+    try {
+        const datos = JSON.parse(result);
+        const json = JSON.stringify(datos, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'system-info-' + new Date().toISOString().split('T')[0] + '.json';
+        a.click();
+
+        showNotification('Éxito', 'Información exportada', 'success');
+        console.log('✅ Información exportada');
+    } catch (e) {
+        console.error('❌ Error descargando: ' + e.message);
+    }
+}
+    </script>
