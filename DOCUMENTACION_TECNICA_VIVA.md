@@ -943,6 +943,54 @@ Desglose Fase 3: `app_js.html` de 2952 a 2591 (-361 líneas).
 **Impacto en Producción:**
 `app_js.html` acumula una reducción de 1690 líneas (-39.5%) sobre el original de 4281, repartidas en 3 extracciones de bajo riesgo (core → alertas → permisos), todas con cero llamadas cruzadas entre los módulos hoja creados hasta ahora. Queda pendiente la Fase 4 (`app_matriz_js.html`, el módulo más grande, ~2390 LOC, y el único que exige reconciliar duplicados de matriz) y, transversalmente, la verificación en navegador real de las 3 fases ya desplegadas.
 
+### 12.11 [2026-08-06] [CONC-FE-02] Subdivisión modular de app_js.html — Fase 4 y FINAL: app_matriz_js.html
+
+**Archivo(s) Intervenido(s):**
+- `app_matriz_js.html` (archivo nuevo — sucesor directo de `app_js.html`)
+- `app_js.html` (retirado por completo, `git rm`)
+- `Index.html#L1595-L1598` (directiva `include()` final)
+
+**Propósito del Archivo en el Sistema:**
+Cierre de la subdivisión modular de la interfaz iniciada en 12.8. `app_matriz_js.html` concentra el último dominio funcional pendiente: filtros, paginación, KPIs, cronograma trimestral, render de tabla y el flujo transaccional de guardado de seguimiento (`submitTracking` → `saveFollowupData`).
+
+**Motivo de la Intervención:**
+Última fase del plan 12.8 / ítem 7 de `TODOS.md`. Con `app_matriz_js.html` desplegado, `app_js.html` deja de tener contenido propio que justifique su existencia como partial — se retira en vez de dejarlo como cascarón vacío.
+
+**Cambios Técnicos Realizados:**
+- El remanente completo de `app_js.html` (2591 líneas) se copió íntegro a `app_matriz_js.html` como base, para minimizar el riesgo de una reconstrucción manual de un archivo de ese tamaño.
+- Reconciliadas las 3 parejas de funciones duplicadas de matriz que quedaban en todo el sistema: `populateDropdowns`, `onProyectoChange`, `onTramoChange`. En los tres casos la copia declarada en segundo lugar (y por tanto la que ya estaba activa en producción, por las reglas de shadowing de JS) es también la versión más completa — integra el widget de select buscable (`refreshSelectSearch`, restauración de valor previamente seleccionado) que la copia descartada no tenía. A diferencia de la reconciliación de `setupModalCleanup` en la Fase 1, aquí "última declarada" y "más completa" coinciden — no hubo necesidad de confirmar con el usuario, decisión no ambigua.
+- `app_js.html` eliminado del repositorio (`git rm`) — ya no existe como partial.
+- `Index.html` actualizado: `<?!= include('app_js') ?>` → `<?!= include('app_matriz_js') ?>`, como última línea de la cadena de `include()`.
+
+**Orden final de `include()` en `Index.html` (líneas 1595-1598), definitivo:**
+```
+<?!= include('app_core_js') ?>
+<?!= include('app_alertas_js') ?>
+<?!= include('app_permisos_js') ?>
+<?!= include('app_matriz_js') ?>
+```
+
+**Métricas del Cambio (cierre del proyecto completo):**
+
+| Archivo | LOC | Funciones top-level únicas |
+|---|---|---|
+| `app_core_js.html` | 698 | 23 |
+| `app_alertas_js.html` | 502 | 16 |
+| `app_permisos_js.html` | 371 | 24 |
+| `app_matriz_js.html` | 2504 | 53 |
+| **Total sistema** | **4075** | **116** |
+
+**116 funciones únicas totales — coincide exactamente con el conteo del dictamen original (Sección 12.8)**, confirmando que la extracción de las 4 fases no perdió ni duplicó ninguna función respecto al inventario inicial. `app_js.html` (4281 LOC originales) queda completamente retirado; el total del sistema (4075 LOC) es menor al original porque se eliminaron las 11 funciones duplicadas identificadas en el dictamen (8 reconciliadas en core, 3 en matriz).
+
+**Validación y Pruebas Ejecutadas:**
+- [x] Sintaxis validada con `node --check` sobre los 4 partials finales (`app_core_js.html`, `app_alertas_js.html`, `app_permisos_js.html`, `app_matriz_js.html`)
+- [x] Auditoría de integridad global: **cero colisiones de nombres de función entre los 4 partials** (verificado con un solo barrido sobre los 4 archivos juntos — antes de esta fase la única colisión pendiente en todo el sistema era la de matriz, ahora resuelta). Las funciones críticas de la ruta transaccional (`submitTracking`, `openEditModal`, `generatePdfReport`, `renderMatrix`, `getBaseFilteredData`) confirmadas presentes en `app_matriz_js.html`. `google.script.run`: 14 sitios de llamada en `app_matriz_js.html`
+- [x] `clasp push` (40 archivos) al entorno de pruebas confirmado NO-producción — `app_js.html` ausente de la lista de archivos subidos (confirma retiro correcto), `app_matriz_js.html` presente
+- [ ] **QA manual en navegador real: sigue pendiente**, arrastrado desde las Fases 2 y 3. Con las 4 fases ya desplegadas en `@HEAD`, este es ahora el único paso que falta para cerrar completamente CONC-FE-02 — no debe asumirse funcionalmente cerrado hasta esa confirmación.
+
+**Impacto en Producción:**
+La subdivisión modular de la interfaz queda completa: el monolito original de `Index.html` (7340 líneas antes de FE-01) terminó dividido en `Index.html` (markup) + `estilos.html` (CSS) + 4 partials de JS por dominio funcional (`app_core_js.html`, `app_alertas_js.html`, `app_permisos_js.html`, `app_matriz_js.html`), sin ninguna función duplicada ni huérfana. `app_js.html`, que llegó a tener 4281 líneas mezclando 4 dominios de negocio, ya no existe. Pendiente transversal: la verificación en navegador real de las 4 fases, nunca confirmada explícitamente por el usuario en esta sesión.
+
 ## 13. Inventario Exhaustivo del Repositorio
 
 Inventario factual archivo por archivo de los 23 archivos que componen el nucleo del backend, el frontend y los subproyectos auxiliares. Elaborado el 2026-08-05 leyendo directamente el codigo fuente (no inferido de nombres de archivo). Los archivos de los subproyectos `MatrizSeguimiento_script/` y `normalizacion_script/` se confirmaron 100% independientes del backend principal: cero referencias a `getConfig(`, `GestorDatos`, `GestorPermisos` o `GestorAuditoria` en ninguno de sus 11 archivos.
