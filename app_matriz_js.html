@@ -1,8 +1,8 @@
     <script>
       // ═══════════════════════════════════════════════════════════════════════════════════
-// VARIABLES GLOBALES DE ESTE PARTIAL
-// (rawData, currentData, currentUser, currentRole, state, C, navigationState y demás
-//  globals compartidos ahora viven en app_core_js.html — CONC-FE-02 Fase 1)
+// APP_MATRIZ_JS — FILTROS, PAGINACIÓN, KPIS, TRIMESTRES, RENDER DE TABLA Y SEGUIMIENTO
+// (CONC-FE-02 Fase 4, final: sucesor directo de app_js.html, ahora retirado. Depende de
+//  globals/utilidades de app_core_js.html — rawData, currentData, state, C, currentUser, etc.)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 let allColsList = [];
@@ -105,98 +105,8 @@ $(document).ready(function() {
         }
 
         // parseDateRobust/parseMoneyRobust ahora en app_core_js.html
-
-        function populateDropdowns() {
-    try {
-        console.log('🔄 Poblando dropdowns...');
-        if (!rawData || rawData.length === 0) return;
-
-        // ✅ Usamos la base purgada
-        const baseDataForDropdowns = getBaseFilteredData();
-
-        const proyectos = [...new Set(baseDataForDropdowns.map(r => r[C.PROYECTO]))].filter(p => p).sort();
-        const tramos = [...new Set(baseDataForDropdowns.map(r => r[C.TRAMO]))].filter(t => t).sort();
-        const estados = [...new Set(baseDataForDropdowns.map(r => r[C.ESTADO]))].filter(e => e).sort();
-
-        $('#filterProyecto').find('option:not(:first)').remove();
-        proyectos.forEach(p => $('#filterProyecto').append('<option value="' + p + '">' + p + '</option>'));
-
-        $('#filterTramo').find('option:not(:first)').remove();
-        tramos.forEach(t => $('#filterTramo').append('<option value="' + t + '">' + t + '</option>'));
-
-        $('#filterEstado').find('option:not(:first)').remove();
-        estados.forEach(e => $('#filterEstado').append('<option value="' + e + '">' + e + '</option>'));
-
-        console.log('✅ Dropdowns poblados correctamente (con Filtro Matriz)');
-    } catch (e) {
-        console.error('❌ Error poblando dropdowns: ' + e.message);
-    }
-}
-
-        // ═══════════════════════════════════════════════════════════════════════════════════
-        // FILTROS EN CADENA - PROYECTO → TRAMO → ESTADO
-        // ═══════════════════════════════════════════════════════════════════════════════════
-
-        function onProyectoChange() {
-    const proySelected = $('#filterProyecto').val();
-    const baseData = getBaseFilteredData(); // ✅ Usamos base purgada
-    
-    let tramos = [];
-    if (proySelected === 'ALL') {
-        tramos = [...new Set(baseData.map(r => r[C.TRAMO]))].filter(t => t).sort();
-    } else {
-        tramos = [...new Set(
-            baseData.filter(r => r[C.PROYECTO] === proySelected).map(r => r[C.TRAMO])
-        )].filter(t => t).sort();
-    }
-    
-    const $tramoSelect = $('#filterTramo');
-    const currentTramoValue = $tramoSelect.val();
-    $tramoSelect.find('option:not(:first)').remove();
-    
-    tramos.forEach(t => {
-        $tramoSelect.append(`<option value="${t}">${t}</option>`);
-    });
-    
-    if (!tramos.includes(currentTramoValue)) {
-        $tramoSelect.val('ALL');
-    }
-    
-    $('#filterEstado').find('option:not(:first)').remove();
-    $('#filterEstado').append('<option value="ALL">Todos los Estados</option>');
-    
-    applyFilters();
-}
-
-function onTramoChange() {
-    const proySelected = $('#filterProyecto').val();
-    const tramoSelected = $('#filterTramo').val();
-    
-    let filteredData = getBaseFilteredData(); // ✅ Usamos base purgada
-    
-    if (proySelected !== 'ALL') {
-        filteredData = filteredData.filter(r => r[C.PROYECTO] === proySelected);
-    }
-    if (tramoSelected !== 'ALL') {
-        filteredData = filteredData.filter(r => r[C.TRAMO] === tramoSelected);
-    }
-    
-    const estados = [...new Set(filteredData.map(r => r[C.ESTADO]))].filter(e => e).sort();
-    
-    const $estadoSelect = $('#filterEstado');
-    const currentEstadoValue = $estadoSelect.val();
-    $estadoSelect.find('option:not(:first)').remove();
-    
-    estados.forEach(e => {
-        $estadoSelect.append(`<option value="${e}">${e}</option>`);
-    });
-    
-    if (!estados.includes(currentEstadoValue)) {
-        $estadoSelect.val('ALL');
-    }
-    
-    applyFilters();
-}
+        // populateDropdowns/onProyectoChange/onTramoChange: duplicados reconciliados en CONC-FE-02
+        // Fase 4 — ver las versiones vigentes más abajo (integradas con el widget de select buscable)
 
         // ✅ OBTENER ÚLTIMA OBSERVACIÓN DEL SEGUIMIENTO
         function getLatestObservation(rt) {
@@ -424,6 +334,9 @@ function refreshSelectSearch(selectId, searchInputId) {
     applySelectSearch(selectId, query);
 }
 
+// ✅ CONC-FE-02 Fase 4: versión vigente reconciliada (integra el widget de select
+// buscable — restaura selección previa y llama refreshSelectSearch tras repoblar,
+// a diferencia de la copia duplicada más simple que se removió más arriba)
 function populateDropdowns() {
     if (!rawData || rawData.length === 0) return;
 
