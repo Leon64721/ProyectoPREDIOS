@@ -1,60 +1,14 @@
     <script>
       // ═══════════════════════════════════════════════════════════════════════════════════
-// VARIABLES GLOBALES Y GESTIÓN DE ESTADO
+// VARIABLES GLOBALES DE ESTE PARTIAL
+// (rawData, currentData, currentUser, currentRole, state, C, navigationState y demás
+//  globals compartidos ahora viven en app_core_js.html — CONC-FE-02 Fase 1)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
-let rawData = [];
 let allColsList = [];
-let currentData = [];
 let tableInstance = null;
-let currentUser = '';
-let currentRole = '';
 let pendingAction = null;
 let isTrackingMode = false;
-let currentDropdowns = {};
-let originalData = {};
-let seguimientoData = [];
-let pdfDataStructure = null;
-
-// ✅ NUEVO: Estado de navegación persistente
-let navigationState = {
-    lastOpenedModal: null,
-    scrollPosition: 0,
-    activeFilters: {},
-    activeKpi: 'ALL',
-    activeTramo: 'ALL',
-    lastViewedRT: null
-};
-
-// Configuración de columnas
-const C = {
-    PROYECTO: 'PROYECTO',
-    RT: 'RT',
-    TRAMO: 'TRAMO',
-    ESTADO: 'ESTADO PREDIAL AJUSTADO',
-    FECHA: 'FECHA ESTIMADA DE ENTREGA',
-    DISP: 'PREDIOS DISPONIBLES (INCLUYE CESIONES)',
-    ID: 'CHIP',
-    DIR: 'DIRECCIÓN',
-    EST: 'ESTIMADO $',
-    PAG: 'VALOR PAGADO',
-    FECHA_ISO: 'FECHA_ISO',
-    OBS: 'OBSERVACIONES'
-};
-
-// Estado de filtros
-let state = {
-    dateLimit: null,
-    dateMode: 'ACUM',
-    kpiFilter: 'ALL',
-    kpiSubFilter: null,  // ✅ NUEVO: Para subfiltros CESION/ADQUIRIR
-    selProyecto: 'ALL',
-    selTramo: 'ALL',
-    tramoFromMatrix: 'ALL',
-    matrixTotal: 0, // ✅ NUEVO: Almacenar total actual de matriz
-    matrixPage: 1,
-    matrixPageSize: 100
-};
 
 function setMatrixPageSize(size) {
     const parsed = parseInt(size, 10);
@@ -74,8 +28,6 @@ function gotoMatrixPage(value) {
 // ═══════════════════════════════════════════════════════════════════════════════════
 // MOTOR DE REGLAS GRÁFICO (VISUAL BUILDER)
 // ═══════════════════════════════════════════════════════════════════════════════════
-
-let motorReglasData = null;
 
 function cargarJSONenPantalla() {
     showLoader('Cargando Motor de Reglas...');
@@ -268,53 +220,9 @@ $(document).on('click', '.menu-item', function() {
     }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════════
-// FUNCIONES DE GESTIÓN DE ESTADO
-// ═══════════════════════════════════════════════════════════════════════════════════
-
-function saveNavigationState() {
-    navigationState.scrollPosition = $(window).scrollTop();
-    navigationState.activeFilters = {
-        proyecto: $('#filterProyecto').val(),
-        tramo: $('#filterTramo').val(),
-        estado: $('#filterEstado').val(),
-        fecha: $('#dateFilter').val(),
-        modo: $('#dateMode').val()
-    };
-    navigationState.activeKpi = state.kpiFilter;
-    navigationState.activeTramo = state.tramoFromMatrix;
-    
-    console.log('💾 Estado guardado:', navigationState);
-}
-
-function restoreNavigationState() {
-    if (!navigationState.activeFilters) return;
-    
-    console.log('🔄 Restaurando estado:', navigationState);
-    
-    // Restaurar filtros
-    $('#filterProyecto').val(navigationState.activeFilters.proyecto || 'ALL');
-    $('#filterTramo').val(navigationState.activeFilters.tramo || 'ALL');
-    $('#filterEstado').val(navigationState.activeFilters.estado || 'ALL');
-    $('#dateFilter').val(navigationState.activeFilters.fecha || '');
-    $('#dateMode').val(navigationState.activeFilters.modo || 'ACUM');
-    
-    // Restaurar estado interno
-    state.kpiFilter = navigationState.activeKpi;
-    state.tramoFromMatrix = navigationState.activeTramo;
-    
-    // Aplicar filtros
-    applyFilters();
-    
-    // Restaurar scroll
-    setTimeout(() => {
-        $(window).scrollTop(navigationState.scrollPosition);
-    }, 300);
-}
-
-
       // ═══════════════════════════════════════════════════════════════════════════════════
 // INICIALIZACIÓN
+// (saveNavigationState/restoreNavigationState ahora en app_core_js.html)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 $(document).ready(function() {
@@ -371,119 +279,8 @@ $(document).ready(function() {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════
-// LIMPIEZA DE MODALES
-// ═══════════════════════════════════════════════════════════════════════════════════
-
-function setupModalCleanup() {
-    // Limpiar modal de tracking al cerrar
-    $('#trackingModal').on('hidden.bs.modal', function() {
-        $('#trackingForm')[0].reset();
-        $('#changeSummary').addClass('d-none');
-        $('#btnConfirmSave').addClass('d-none');
-        originalData = {};
-        console.log('🧹 Modal de tracking limpiado');
-    });
-    
-    // Limpiar modal de detalles al cerrar
-    $('#detailModal').on('hidden.bs.modal', function() {
-        if (tableInstance) {
-            try {
-                tableInstance.destroy();
-                tableInstance = null;
-            } catch(e) {
-                console.warn('⚠️ Error destruyendo tabla:', e.message);
-            }
-        }
-        $('#detailTable').empty();
-        console.log('🧹 Modal de detalles limpiado');
-    });
-    
-    // Limpiar modal de detalles RT al cerrar
-    $('#rtDetailModal').on('hidden.bs.modal', function() {
-        $('#rtDetailBody').empty();
-        $('#rtTimelineBody').empty();
-        console.log('🧹 Modal de detalles RT limpiado');
-    });
-    
-    console.log('✅ Sistema de limpieza de modales configurado');
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════════
-// FUNCIONES DE GESTIÓN DE ESTADO
-// ═══════════════════════════════════════════════════════════════════════════════════
-
-function saveNavigationState() {
-    navigationState.scrollPosition = $(window).scrollTop();
-    navigationState.activeFilters = {
-        proyecto: $('#filterProyecto').val(),
-        tramo: $('#filterTramo').val(),
-        estado: $('#filterEstado').val(),
-        fecha: $('#dateFilter').val(),
-        modo: $('#dateMode').val()
-    };
-    navigationState.activeKpi = state.kpiFilter;
-    navigationState.activeTramo = state.tramoFromMatrix;
-    
-    console.log('💾 Estado guardado:', navigationState);
-}
-
-function restoreNavigationState() {
-    if (!navigationState.activeFilters) {
-        console.log('⚠️ No hay estado previo para restaurar');
-        return;
-    }
-    
-    console.log('🔄 Restaurando estado:', navigationState);
-    
-    try {
-        // Restaurar filtros en los selectores
-        $('#filterProyecto').val(navigationState.activeFilters.proyecto || 'ALL');
-        
-        // Actualizar tramos disponibles según proyecto
-        onProyectoChange();
-        
-        // Restaurar tramo
-        $('#filterTramo').val(navigationState.activeFilters.tramo || 'ALL');
-        
-        // Actualizar estados disponibles según tramo
-        onTramoChange();
-        
-        // Restaurar estado
-        $('#filterEstado').val(navigationState.activeFilters.estado || 'ALL');
-        $('#dateFilter').val(navigationState.activeFilters.fecha || '');
-        $('#dateMode').val(navigationState.activeFilters.modo || 'ACUM');
-        
-        // Restaurar estado interno
-        state.selProyecto = navigationState.activeFilters.proyecto || 'ALL';
-        state.selTramo = navigationState.activeFilters.tramo || 'ALL';
-        state.dateLimit = navigationState.activeFilters.fecha || null;
-        state.dateMode = navigationState.activeFilters.modo || 'ACUM';
-        state.kpiFilter = navigationState.activeKpi;
-        state.tramoFromMatrix = navigationState.activeTramo;
-        
-        // Restaurar KPI activo visualmente
-        $('.kpi-card').removeClass('active');
-        if(state.kpiFilter === 'DISPONIBLE') $('#card-disp').addClass('active');
-        else if(state.kpiFilter === 'PENDIENTE') $('#card-pend').addClass('active');
-        else if(state.kpiFilter === 'ADQUIRIR') $('#card-adq').addClass('active');
-        else $('#card-total').addClass('active');
-        
-        // Aplicar filtros
-        applyFilters();
-        
-        // Restaurar scroll después de un pequeño delay
-        setTimeout(() => {
-            $(window).scrollTop(navigationState.scrollPosition);
-            console.log('✅ Estado restaurado completamente');
-        }, 300);
-        
-    } catch(e) {
-        console.error('❌ Error restaurando estado:', e.message);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════════
 // MÓDULO DE ALERTAS TEMPRANAS (BANDEJA DE ENTRADA)
+// (setupModalCleanup/saveNavigationState/restoreNavigationState ahora en app_core_js.html)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 // Botón para ejecutar el motor manualmente desde la pantalla
@@ -523,9 +320,6 @@ function cargarAlertasWeb() {
 // ═══════════════════════════════════════════════════════════════════════════════════
 // MÓDULO DE ALERTAS MEJORADO (Filtros, KPIs y Exportación)
 // ═══════════════════════════════════════════════════════════════════════════════════
-
-let alertasGlobales = [];
-let filtroNivelActivo = 'ALL';
 
 function renderizarAlertas(alertas) {
     alertasGlobales = alertas || [];
@@ -797,103 +591,9 @@ function programarReporte() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════
-// FUNCIONES DE NAVEGACIÓN
+// FUNCIONES DE DATOS
+// (showPage/loadDashboardData/onDataLoaded ahora en app_core_js.html)
 // ═══════════════════════════════════════════════════════════════════════════════════
-
-function showPage(pageId, element) {
-    // Guardar estado antes de cambiar de página
-    saveNavigationState();
-    
-    $('.page-section').removeClass('active');
-    $('.menu-item').removeClass('active');
-    $('#page-' + pageId).addClass('active');
-    if (element) $(element).addClass('active');
-    
-    console.log('📄 Navegando a: ' + pageId);
-    
-    // Si volvemos a la página de matriz, restaurar estado
-    if (pageId === 'matriz') {
-        setTimeout(() => {
-            restoreNavigationState();
-        }, 100);
-    }
-}
-
-
-        // ═══════════════════════════════════════════════════════════════════════════════════
-        // FUNCIONES DE DATOS
-        // ═══════════════════════════════════════════════════════════════════════════════════
-
-        function loadDashboardData() {
-  showLoader('Cargando datos del tablero (aplicando filtros del servidor)...');
-  
-  google.script.run.withSuccessHandler(response => {
-    hideLoader();
-    
-    if (!response.success) {
-      showAlert('Error: ' + response.message, 'warning');
-      return;
-    }
-    
-    try {
-      // ✅ Guardar filtro activo y lista COMPLETA de proyectos (para el admin)
-      window.filtroMatrizActivoGlobal = response.filtroMatrizActivo ? JSON.parse(response.filtroMatrizActivo) : null;
-      window.proyectosListaUnicaGlobal = response.allProyectos ? JSON.parse(response.allProyectos) : [];
-      
-      onDataLoaded(response);
-      
-      // Manejar visualmente el badge del Filtro Matriz
-      const filtroActivo = window.filtroMatrizActivoGlobal;
-      const filterBadge = document.getElementById('filterBadge');
-      if (filtroActivo && filtroActivo.id) {
-        if (filterBadge) filterBadge.innerHTML = `<span class="badge bg-info"><i class="fas fa-filter"></i> ${filtroActivo.nombre}</span>`;
-      } else {
-        if (filterBadge) filterBadge.innerHTML = ''; 
-      }
-      
-    } catch (e) {
-      console.error('Error parseando datos:', e);
-      showAlert('Error procesando datos: ' + e.message, 'danger');
-    }
-    
-  }).withFailureHandler(error => {
-    hideLoader();
-    showAlert('Error cargando datos: ' + error, 'danger');
-  }).getDashboardData();
-}
-
-function onDataLoaded(result) {
-    try {
-        console.log('✅ Datos cargados del servidor');
-
-        rawData = JSON.parse(result.records); // ✅ YA VIENEN FILTRADOS DESDE EL SERVIDOR
-        allColsList = JSON.parse(result.columns);
-        seguimientoData = JSON.parse(result.seguimiento || '[]');
-        currentData = rawData.slice();
-
-        rawData.forEach(row => { row['FECHA_ISO'] = parseDateRobust(row[C.FECHA]); });
-
-        populateDropdowns();
-        setDefaultDate();
-        
-        google.script.run.withSuccessHandler(function(lists) {
-            currentDropdowns = JSON.parse(lists);
-        }).getDropdownLists();
-
-        applyFilters();
-        
-        // ✅ Cargar agrupaciones y renderizar checkboxes de la pestaña "Filtro Matriz"
-        cargarFiltrosMatriz();
-        renderProyectosCheckboxes();
-
-        $('#loader').fadeOut(300);
-
-    } catch (e) {
-        console.error('❌ Error en onDataLoaded: ' + e.message);
-        showNotification('Error', 'Error al cargar datos: ' + e.message, 'danger');
-        $('#loader').fadeOut(300);
-    }
-}
 
         function setDefaultDate() {
             const today = new Date();
@@ -902,102 +602,7 @@ function onDataLoaded(result) {
             state.dateLimit = maxDate.toISOString().split('T')[0];
         }
 
-        function parseDateRobust(dateStr) {
-    if (!dateStr || String(dateStr).trim() === "") return '2099-12-31';
-
-    if (dateStr instanceof Date) {
-        // Manejar fechas nativas para que no se corran por zona horaria
-        const offset = dateStr.getTimezoneOffset() * 60000;
-        const localDate = new Date(dateStr.getTime() - offset);
-        return localDate.toISOString().split('T')[0];
-    }
-
-    let s = String(dateStr).toLowerCase().trim().replace(/\./g, '');
-
-    if (s.match(/^\d{4}-\d{2}-\d{2}$/)) return s;
-
-    let ddmmMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-    if (ddmmMatch) {
-        let d = ddmmMatch[1].padStart(2, '0');
-        let m = ddmmMatch[2].padStart(2, '0');
-        let y = ddmmMatch[3];
-        if (y.length === 2) y = "20" + y; 
-        return `${y}-${m}-${d}`;
-    }
-
-    let foundYear = null;
-    let yearMatch = s.match(/(20\d{2})/);
-    if (yearMatch) {
-        foundYear = yearMatch[1];
-    } else {
-        let shortMatch = s.match(/[-/\s](\d{2})$/);
-        if(shortMatch) foundYear = "20" + shortMatch[1];
-    }
-
-    if (!foundYear) return '2099-12-31';
-
-    // Super-atrapador de Trimestres (Atrapa T4, 4 trimestre, Trimestre 4)
-    let t = null;
-    let trimMatch1 = s.match(/(\d)\s*trimestre/);
-    let trimMatch2 = s.match(/trimestre\s*(\d)/);
-    let trimMatch3 = s.match(/t(\d)/);
-
-    if (trimMatch1) t = parseInt(trimMatch1[1]);
-    else if (trimMatch2) t = parseInt(trimMatch2[1]);
-    else if (trimMatch3) t = parseInt(trimMatch3[1]);
-
-    if (t !== null && t >= 1 && t <= 4) {
-        if (t === 1) return `${foundYear}-03-31`;
-        if (t === 2) return `${foundYear}-06-30`;
-        if (t === 3) return `${foundYear}-09-30`;
-        if (t === 4) return `${foundYear}-12-31`;
-    }
-
-    const meses = {
-        'ene': '01', 'feb': '02', 'mar': '03', 'abr': '04', 'may': '05', 'jun': '06',
-        'jul': '07', 'ago': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dic': '12'
-    };
-
-    let foundMonth = null;
-    for (const [key, val] of Object.entries(meses)) {
-        if (s.includes(key)) { 
-            foundMonth = val; 
-            break; 
-        }
-    }
-
-    if (foundMonth && foundYear) return `${foundYear}-${foundMonth}-28`;
-
-    return '2099-12-31';
-}
-
-        function parseMoneyRobust(cellValue) {
-            if (!cellValue) return 0;
-            
-            let str = String(cellValue).trim();
-            if (!isNaN(str) && str !== '') return parseFloat(str);
-            
-            str = str.replace(/[^\d.,]/g, '');
-            if (!str) return 0;
-            
-            const lastCommaPos = str.lastIndexOf(',');
-            const lastDotPos = str.lastIndexOf('.');
-            
-            let normalized = str;
-            
-            if (lastCommaPos > lastDotPos) {
-                normalized = str.replace(/\./g, '').replace(',', '.');
-            } else if (lastDotPos > lastCommaPos) {
-                normalized = str.replace(/,/g, '');
-            } else if (lastCommaPos === -1 && lastDotPos === -1) {
-                normalized = str;
-            } else if (lastCommaPos >= 0 && lastDotPos === -1) {
-                normalized = str.replace(/,/g, '');
-            }
-            
-            const result = parseFloat(normalized);
-            return isNaN(result) ? 0 : result;
-        }
+        // parseDateRobust/parseMoneyRobust ahora en app_core_js.html
 
         function populateDropdowns() {
     try {
@@ -1132,26 +737,7 @@ function onTramoChange() {
             return new Date(0);
         }
 
-        function cleanTextUpper(text) {
-            if (!text) return '';
-            return String(text)
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .trim();
-        }
-
-        // \u2705 SEC-P1: escapa HTML antes de interpolar texto libre de usuario (OBSERVACIONES,
-        // SITUACIONES ESPECIALES, etc.) en innerHTML/insertAdjacentHTML \u2014 previene XSS almacenado.
-        function escapeHtml(text) {
-            if (text === null || text === undefined) return '';
-            return String(text)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
+        // cleanTextUpper/escapeHtml ahora en app_core_js.html
 
         // ═══════════════════════════════════════════════════════════════════════════════════
         // FUNCIONES DE FILTROS
@@ -1244,18 +830,6 @@ function getBaseFilteredData() {
                 return dateOk && proyOk && tramoOk && estadoOk && kpiOk;
             });
         }
-
-const searchableSelectState = {
-    filterProyecto: [],
-    filterTramo: [],
-    filterEstado: []
-};
-
-const searchableSelectConfig = {
-    filterProyecto: { inputId: 'filterProyectoSearch', metaId: 'filterProyectoSearchMeta', onCommit: onProyectoChange },
-    filterTramo: { inputId: 'filterTramoSearch', metaId: 'filterTramoSearchMeta', onCommit: onTramoChange },
-    filterEstado: { inputId: 'filterEstadoSearch', metaId: 'filterEstadoSearchMeta', onCommit: applyFilters }
-};
 
 function updateSearchMeta(selectId, totalOptions, matchedOptions, query) {
     const cfg = searchableSelectConfig[selectId];
@@ -1745,22 +1319,7 @@ function toggleKpiFilter(filterType, filterName) {
     }, 100);
 }
 
-        function showToast(message, type) {
-            const bgColor = type === 'success' ? '#27ae60' : type === 'danger' ? '#c0392b' : '#3498db';
-            const toast = $(`
-                <div style="position: fixed; top: 80px; right: 20px; z-index: 9999; background: ${bgColor}; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-weight: 600; animation: slideIn 0.3s ease;">
-                    ${message}
-                </div>
-            `);
-            
-            $('body').append(toast);
-            
-            setTimeout(() => {
-                toast.fadeOut(300, function() {
-                    $(this).remove();
-                });
-            }, 3000);
-        }
+        // showToast ahora en app_core_js.html
 
         // ═══════════════════════════════════════════════════════════════════════════════════
         // KPIs
@@ -2806,274 +2365,9 @@ function updateKPIs() {
                 showToast('❌ Error: ' + e.message, 'danger');
             }
         }
-        // ═══════════════════════════════════════════════════════════════════════════════════
-// LIMPIEZA DE MODALES
-// ═══════════════════════════════════════════════════════════════════════════════════
-
-function setupModalCleanup() {
-    // Limpiar modal de tracking al cerrar
-    $('#trackingModal').on('hidden.bs.modal', function() {
-        $('#trackingForm')[0].reset();
-        $('#changeSummary').addClass('d-none');
-        $('#btnConfirmSave').addClass('d-none');
-        console.log('🧹 Modal de tracking limpiado');
-    });
-    
-    // Limpiar modal de detalles al cerrar
-    $('#detailModal').on('hidden.bs.modal', function() {
-        if (tableInstance) {
-            try {
-                tableInstance.destroy();
-                tableInstance = null;
-            } catch(e) {
-                console.warn('⚠️ Error destruyendo tabla:', e.message);
-            }
-        }
-        $('#detailTable').empty();
-        console.log('🧹 Modal de detalles limpiado');
-    });
-}
-// ═══════════════════════════════════════════════════════════════════════════════════
-// FUNCIONES AUXILIARES - LOADER, ALERTS Y NOTIFICACIONES
-// ═══════════════════════════════════════════════════════════════════════════════════
-
-/**
- * ✅ Muestra el loader
- */
-function showLoader(message = 'Cargando...', subtext = 'Por favor espera') {
-    try {
-        const loader = document.getElementById('loader');
-        if (loader) {
-            loader.style.display = 'flex';
-            const loaderText = loader.querySelector('.loader-text');
-            const loaderSubtext = loader.querySelector('.loader-subtext');
-            
-            if (loaderText) loaderText.textContent = message;
-            if (loaderSubtext) loaderSubtext.textContent = subtext;
-            
-            console.log('⏳ Loader mostrado:', message);
-        }
-    } catch (e) {
-        console.error('❌ Error mostrando loader:', e.message);
-    }
-}
-
-/**
- * ✅ Oculta el loader
- */
-function hideLoader() {
-    try {
-        const loader = document.getElementById('loader');
-        if (loader) {
-            loader.style.display = 'none';
-            console.log('✅ Loader ocultado');
-        }
-    } catch (e) {
-        console.error('❌ Error ocultando loader:', e.message);
-    }
-}
-
-/**
- * ✅ Muestra alerta
- */
-function showAlert(message, type = 'info') {
-    try {
-        type = type || 'info';
-        const alertClass = `alert-${type}`;
-        
-        const alertHtml = `
-            <div class="alert alert-custom ${alertClass}" style="position: fixed; top: 100px; right: 20px; z-index: 9999; min-width: 300px; animation: slideIn 0.3s ease;">
-                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'danger' ? 'exclamation-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'}"></i>
-                <div>
-                    <strong>${type.toUpperCase()}</strong>
-                    <p style="margin: 5px 0 0 0; font-size: 0.9rem;">${message}</p>
-                </div>
-            </div>
-        `;
-        
-        const alertContainer = document.createElement('div');
-        alertContainer.innerHTML = alertHtml;
-        document.body.appendChild(alertContainer.firstElementChild);
-        
-        setTimeout(() => {
-            const alert = document.body.lastElementChild;
-            if (alert && alert.classList.contains('alert-custom')) {
-                alert.style.opacity = '0';
-                alert.style.transition = 'opacity 0.3s ease';
-                setTimeout(() => alert.remove(), 300);
-            }
-        }, 3000);
-        
-        console.log(`[${type.toUpperCase()}] ${message}`);
-    } catch (e) {
-        console.error('❌ Error mostrando alerta:', e.message);
-    }
-}
-
-/**
- * ✅ Muestra notificación (alternativa a showAlert)
- */
-function showNotification(title, message, type = 'info') {
-    try {
-        const bgColor = type === 'success' ? '#27ae60' : 
-                       type === 'danger' ? '#c0392b' : 
-                       type === 'warning' ? '#f39c12' : '#3498db';
-        
-        const notifHtml = `
-            <div style="position: fixed; top: 80px; right: 20px; z-index: 9999; 
-                        background: ${bgColor}; color: white; padding: 15px 20px; 
-                        border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); 
-                        font-weight: 600; animation: slideIn 0.3s ease; min-width: 300px;">
-                <strong>${title}</strong>
-                <p style="margin: 5px 0 0 0; font-size: 0.9rem;">${message}</p>
-            </div>
-        `;
-        
-        const notifContainer = document.createElement('div');
-        notifContainer.innerHTML = notifHtml;
-        document.body.appendChild(notifContainer.firstElementChild);
-        
-        setTimeout(() => {
-            const notif = document.body.lastElementChild;
-            if (notif && notif.style.background) {
-                notif.style.opacity = '0';
-                notif.style.transition = 'opacity 0.3s ease';
-                setTimeout(() => notif.remove(), 300);
-            }
-        }, 3000);
-        
-        console.log(`[${type.toUpperCase()}] ${title}: ${message}`);
-    } catch (e) {
-        console.error('❌ Error mostrando notificación:', e.message);
-    }
-}
-
-/**
- * ✅ Muestra toast (notificación pequeña)
- */
-function showToast(message, type = 'info') {
-    try {
-        const bgColor = type === 'success' ? '#27ae60' : 
-                       type === 'danger' ? '#c0392b' : 
-                       type === 'warning' ? '#f39c12' : '#3498db';
-        
-        const toast = document.createElement('div');
-        toast.style.cssText = `
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 9999;
-            background: ${bgColor};
-            color: white;
-            padding: 12px 20px;
-            border-radius: 6px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            font-weight: 600;
-            animation: slideUp 0.3s ease;
-            max-width: 300px;
-        `;
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            toast.style.transition = 'opacity 0.3s ease';
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
-        
-        console.log(`[${type.toUpperCase()}] ${message}`);
-    } catch (e) {
-        console.error('❌ Error mostrando toast:', e.message);
-    }
-}
-
-/**
- * ✅ Muestra confirmación
- */
-function showConfirmation(message) {
-    try {
-        const confirmMessage = document.getElementById('confirmMessage');
-        if (confirmMessage) {
-            confirmMessage.textContent = message;
-            const modal = new bootstrap.Modal(document.getElementById('confirmModal'));
-            modal.show();
-            console.log('❓ Confirmación mostrada:', message);
-        }
-    } catch (e) {
-        console.error('❌ Error mostrando confirmación:', e.message);
-    }
-}
-
-/**
- * ✅ Confirma acción
- */
-function confirmAction() {
-    try {
-        if (pendingAction) {
-            pendingAction();
-            pendingAction = null;
-        }
-        const modal = bootstrap.Modal.getInstance(document.getElementById('confirmModal'));
-        if (modal) modal.hide();
-        console.log('✅ Acción confirmada');
-    } catch (e) {
-        console.error('❌ Error confirmando acción:', e.message);
-    }
-}
-
-/**
- * ✅ Manejo de errores del servidor
- */
-function onError(error) {
-    try {
-        console.error('❌ Error del servidor:', error);
-        const message = error.message || error.toString() || 'Error desconocido';
-        showNotification('Error', message, 'danger');
-    } catch (e) {
-        console.error('❌ Error en onError:', e.message);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════════
-// ESTILOS PARA ANIMACIONES
-// ═══════════════════════════════════════════════════════════════════════════════════
-
-const styleSheet = document.createElement('style');
-styleSheet.textContent = `
-    @keyframes slideIn {
-        from {
-            opacity: 0;
-            transform: translateX(100px);
-        }
-        to {
-            opacity: 1;
-            transform: translateX(0);
-        }
-    }
-    
-    @keyframes slideUp {
-        from {
-            opacity: 0;
-            transform: translateY(100px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    @keyframes fadeIn {
-        from {
-            opacity: 0;
-        }
-        to {
-            opacity: 1;
-        }
-    }
-`;
-document.head.appendChild(styleSheet);
-
-console.log('✅ Funciones auxiliares de notificaciones cargadas');
+        // setupModalCleanup/showLoader/hideLoader/showAlert/showNotification/showToast/
+        // showConfirmation/confirmAction/onError y las animaciones CSS que usan ahora
+        // viven en app_core_js.html
 
 
 
@@ -3280,20 +2574,7 @@ console.log('✅ Funciones auxiliares de notificaciones cargadas');
             }
         }
 
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => {
-                showToast('✅ Enlace copiado al portapapeles', 'success');
-            }).catch(err => {
-                console.error('Error copiando:', err);
-                const textarea = document.createElement('textarea');
-                textarea.value = text;
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textarea);
-                showToast('✅ Enlace copiado', 'success');
-            });
-        }
+        // copyToClipboard ahora en app_core_js.html
 
         // ═══════════════════════════════════════════════════════════════════════════════════
         // FUNCIONES AUXILIARES Y UTILIDADES
@@ -3745,120 +3026,8 @@ console.log('✅ Funciones auxiliares de notificaciones cargadas');
             }
         }
 
-        function refreshData() {
-            console.log('🔄 Recargando datos...');
-            $('#loader').fadeIn(300);
-            loadDashboardData();
-        }
-
-        function showNotification(title, message, type) {
-            type = type || 'info';
-            $('#notifTitle').text(title);
-            $('#notifMessage').text(message);
-            
-            const modal = new bootstrap.Modal(document.getElementById('notificationModal'));
-            modal.show();
-            
-            console.log('[' + type.toUpperCase() + '] ' + title + ': ' + message);
-            
-            setTimeout(() => {
-                modal.hide();
-            }, 3000);
-        }
-
-        function showConfirmation(message) {
-            $('#confirmMessage').text(message);
-            new bootstrap.Modal(document.getElementById('confirmModal')).show();
-        }
-
-        function confirmAction() {
-            if (pendingAction) {
-                pendingAction();
-                pendingAction = null;
-            }
-            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
-        }
-
-        function onError(error) {
-            console.error('❌ Error:', error);
-            showNotification('Error', error.message || 'Error en el servidor', 'danger');
-        }
-
-        function showAbout() {
-            const html = `
-                <div style="text-align: center; padding: 20px;">
-                    <h4 style="color: var(--accent); margin-bottom: 15px;">
-                        <i class="fas fa-building-columns"></i> Sistema de Gestión Predial Enterprise
-                    </h4>
-                    <p><strong>Versión:</strong> 3.0.0 - Integrado</p>
-                    <p><strong>Fecha de Compilación:</strong> ${new Date().toLocaleDateString('es-CO')}</p>
-                    <p><strong>Desarrollado por:</strong> Equipo Técnico</p>
-                    <hr>
-                    <p style="font-size: 0.9rem; color: var(--text-muted);">
-                        Sistema integral para la gestión de predios, seguimiento de adquisiciones, 
-                        control de disponibilidad, auditoría de cambios y generación de reportes PDF.
-                    </p>
-                    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-                        <h6 style="font-weight: 700; margin-bottom: 10px;">Características Principales:</h6>
-                        <ul style="text-align: left; font-size: 0.85rem; list-style-position: inside;">
-                            <li>✅ Matriz de seguimiento interactiva</li>
-                            <li>✅ Cronograma trimestral automático con filtros clickeables</li>
-                            <li>✅ Modo de edición con validación de cambios</li>
-                            <li>✅ Historial completo de modificaciones con timeline</li>
-                            <li>✅ Generación de reportes PDF en servidor con preview</li>
-                            <li>✅ Parsing robusto de números y fechas</li>
-                            <li>✅ Control de acceso por roles</li>
-                            <li>✅ Auditoría completa de acciones</li>
-                            <li>✅ Exportación a Excel/CSV</li>
-                            <li>✅ Integración con múltiples bases de datos</li>
-                            <li>✅ Filtros en cadena Proyecto → Tramo → Estado</li>
-                            <li>✅ Detalles RT con campos configurables</li>
-                        </ul>
-                    </div>
-                    <p style="font-size: 0.8rem; color: #999; margin-top: 20px;">
-                        © 2024-2026 - Todos los derechos reservados
-                    </p>
-                </div>
-            `;
-            
-            new bootstrap.Modal(document.getElementById('detailModal')).show();
-            $('#modalTitle').text('Acerca de');
-            $('#detailTable').parent().html(html);
-        }
-
-        function logout() {
-            pendingAction = function() {
-                google.script.run.logAction(currentUser, 'Cierre de Sesión', 'Usuario desconectado');
-                window.location.href = 'https://accounts.google.com/logout';
-            };
-            showConfirmation('¿Cerrar sesión?');
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════════════════
-        // FUNCIONES DE NAVEGACIÓN EXTERNA - HERRAMIENTAS
-        // ═══════════════════════════════════════════════════════════════════════════════════
-
-        function abrirNormalizacion() {
-            const URL_NORMALIZACION = 'https://docs.google.com/spreadsheets/d/1pB8sXqsrddUIQY6sE1Sllpqye2V75lGjwgDwoUH3_90/edit?pli=1&gid=2100236556#gid=2100236556';
-            
-            console.log('🔧 Abriendo herramienta de Normalización...');
-            window.open(URL_NORMALIZACION, '_blank');
-            
-            try {
-                google.script.run
-                    .withSuccessHandler(function() {
-                        console.log('✅ Acceso a Normalización registrado');
-                    })
-                    .withFailureHandler(function(error) {
-                        console.warn('⚠️ No se pudo registrar el acceso:', error.message);
-                    })
-                    .logAction(currentUser, 'Acceso a Normalización', 'Abrió CONSOLIDADO Script');
-            } catch (e) {
-                console.warn('⚠️ Error registrando acceso:', e.message);
-            }
-            
-            showToast('📂 Abriendo Base de Datos para Normalización...', 'info');
-        }
+        // refreshData/showNotification/showConfirmation/confirmAction/onError/showAbout/
+        // logout/abrirNormalizacion ahora en app_core_js.html
 
         // ═══════════════════════════════════════════════════════════════════════════════════
         // INICIALIZACIÓN AUTOMÁTICA DE MÓDULOS AL CAMBIAR DE PÁGINA
