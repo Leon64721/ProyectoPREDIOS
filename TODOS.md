@@ -114,15 +114,16 @@ Backlog de deuda técnica identificada en la auditoría arquitectónica (`/plan-
 
 ---
 
-## 7. Subdivisión modular de `app_js.html` en 4 parciales funcionales — [EN PROGRESO 2026-08-05: Fases 1 y 2 completadas]
+## 7. Subdivisión modular de `app_js.html` en 4 parciales funcionales — [EN PROGRESO 2026-08-06: Fases 1, 2 y 3 completadas]
 
-**Progreso (2026-08-05):**
+**Progreso (actualizado 2026-08-06):**
 - **Fase 1 — `app_core_js.html` — [COMPLETADO]** — commit `9415350`. 698 LOC: 16 globals, 23 funciones (utilidades, bootstrap, navegación), 8 parejas de duplicados reconciliadas. Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.9 para el detalle de la decisión de reconciliación de `setupModalCleanup` (cambio de comportamiento confirmado con el usuario, no solo refactor).
 - **Fase 2 — `app_alertas_js.html` — [COMPLETADO]** — commit `29e204d`. 502 LOC, 16 funciones del dominio de reglas/alertas.
-- `clasp push` ejecutado (39 archivos) al entorno de pruebas confirmado NO-producción, para que `@HEAD` sirva el código de ambas fases.
-- **QA manual en navegador: PENDIENTE.** Se solicitó al usuario el checklist (consola sin `ReferenceError`, módulo de reglas carga, tarjetas de alertas renderizan) al cierre de esta sesión, sin confirmación de resultado recibida. **No asumir Fase 1/2 cerradas hasta esa confirmación explícita en la próxima sesión.**
-- **PENDIENTE INMEDIATO — Fase 3:** `app_permisos_js.html` (24 funciones, ~364 LOC: `applyHistorialFilters`, `onHistorialLoaded`, `applyAuditoriaFilters`, `onAuditoriaLoaded`, `openPermissionModal`, `savePermission`, `onPermissionSaved`, `loadPermissions`, `onPermissionsLoaded`, `deletePermission`, `onPermissionDeleted`, `createNewReport`, `generateReport`, `onReportGenerated`, `loadReports`, `onReportsLoaded`, `downloadReport`, `deleteReport`, `onReportDeleted`, `validateIntegrity`, `onIntegrityValidated`, `clearCache`, `exportSystemInfo`, `onSystemInfoExported`). Sin dependencias cruzadas con matriz/alertas (confirmado en el dictamen 12.8). Include a inyectar en `Index.html` inmediatamente después de `app_alertas_js`.
-- **PENDIENTE POSTERIOR — Fase 4:** `app_matriz_js.html` (56 funciones, ~2390 LOC, el módulo más grande y el único con lógica transaccional de guardado — `submitTracking` → `saveFollowupData`). Requiere reconciliar los duplicados de matriz (`onTramoChange`, `onProyectoChange`, `populateDropdowns`) que quedaron fuera del alcance de las Fases 1-3.
+- **Fase 3 — `app_permisos_js.html` — [COMPLETADO]** — commit `70c22bb`. 371 LOC, 24 funciones del dominio de permisos/reportes/auditoría. Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.10.
+- `clasp push` ejecutado dos veces (39 y luego 40 archivos) al entorno de pruebas confirmado NO-producción, para que `@HEAD` sirva el código acumulado de las 3 fases.
+- **Reducción acumulada en `app_js.html`: 4281 → 2591 LOC (-1690, -39.5%).**
+- **QA manual en navegador: SIGUE PENDIENTE.** Se solicitó dos veces (cierre de Fase 2 y cierre de Fase 3) y aún no se recibió confirmación de resultado del usuario. **No asumir Fases 1-3 cerradas funcionalmente hasta esa confirmación explícita.** Recomendado: un solo QA que cubra las 3 fases juntas antes de iniciar la Fase 4.
+- **PENDIENTE INMEDIATO — Fase 4:** `app_matriz_js.html` (56 funciones, ~2390 LOC, el módulo más grande y el único con lógica transaccional de guardado — `submitTracking` → `saveFollowupData`). Requiere reconciliar los duplicados de matriz (`onTramoChange`, `onProyectoChange`, `populateDropdowns`) que quedaron fuera del alcance de las Fases 1-3 — es la única colisión de nombres que queda en el repo. Sin dependencias cruzadas con alertas/permisos (confirmado en el dictamen 12.8 y re-verificado en cada fase). Es la última fase de esta subdivisión — al completarla, `app_js.html` deja de existir como partial monolítico.
 
 **Planificado (contexto original):** Dictamen de arquitectura (`/plan-eng-review` sobre `app_js.html`) completado el 2026-08-05. Análisis por profundidad de llaves (no `grep ^function`, que falla con la indentación inconsistente del archivo) identificó **127 declaraciones de función top-level, 116 nombres únicos, 11 duplicados** (no 4 como decía la Sección 12.5) y **33 sitios `google.script.run`**. Clasificación real por uso de `rawData`/`currentData`/`currentUser`/`state` (conteo por función, no estimado):
 

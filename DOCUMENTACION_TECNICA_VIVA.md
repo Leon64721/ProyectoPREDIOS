@@ -908,6 +908,41 @@ Desglose por fase: Fase 1 redujo `app_js.html` de 4281 a 3450 (-831 líneas, inc
 **Impacto en Producción:**
 `app_js.html` pasó de 4281 a 2952 líneas (-31%) en dos pasos de bajo riesgo. `app_core_js.html` y `app_alertas_js.html` están desplegados en el entorno de pruebas pero **su verificación funcional en navegador real está pendiente** — no debe asumirse que Fase 1/2 están completamente cerradas hasta esa confirmación.
 
+### 12.10 [2026-08-06] [CONC-FE-02] Subdivisión modular de app_js.html — Fase 3 (Build) — cierre acumulado Fases 1-3
+
+**Archivo(s) Intervenido(s):**
+- `app_permisos_js.html` (archivo nuevo)
+- `app_js.html#L2140-L2502` (bloque removido)
+- `Index.html#L1595-L1598` (directiva `include()` añadida)
+
+**Propósito del Archivo en el Sistema:**
+Continuación directa de 12.9 (Fases 1-2). `app_permisos_js.html` concentra el dominio de gestión de usuarios, roles, reportes guardados, historial y auditoría — antes mezclado en `app_js.html` junto con matriz.
+
+**Cambios Técnicos Realizados:**
+- Extraídas las 24 funciones del dominio de permisos/reportes/auditoría: `applyHistorialFilters`, `onHistorialLoaded`, `applyAuditoriaFilters`, `onAuditoriaLoaded`, `openPermissionModal`, `savePermission`, `onPermissionSaved`, `loadPermissions`, `onPermissionsLoaded`, `deletePermission`, `onPermissionDeleted`, `createNewReport`, `generateReport`, `onReportGenerated`, `loadReports`, `onReportsLoaded`, `downloadReport`, `deleteReport`, `onReportDeleted`, `validateIntegrity`, `onIntegrityValidated`, `clearCache`, `exportSystemInfo`, `onSystemInfoExported`.
+- Bloque contiguo sin código intercalado de otros dominios (a diferencia de Fase 2, aquí no hubo que preservar ningún handler de evento en medio).
+- Orden de `include()` en `Index.html` (líneas 1595-1598): `app_core_js` → `app_alertas_js` → `app_permisos_js` → `app_js`.
+
+**Métricas del Cambio (acumulado Fases 1-3):**
+
+| Archivo | LOC | Nota |
+|---|---|---|
+| `app_js.html` | 4281 → 3450 → 2952 → **2591** | **-1690 LOC (-39.5%)** acumulado sobre el original |
+| `app_core_js.html` | 698 | Fase 1 |
+| `app_alertas_js.html` | 502 | Fase 2 |
+| `app_permisos_js.html` | **371** | Fase 3 (nuevo) |
+
+Desglose Fase 3: `app_js.html` de 2952 a 2591 (-361 líneas).
+
+**Validación y Pruebas Ejecutadas:**
+- [x] Sintaxis validada con `node --check` sobre los 4 partials activos (`app_core_js.html`, `app_alertas_js.html`, `app_permisos_js.html`, `app_js.html`)
+- [x] Auditoría de integridad: las 24 funciones de permisos verificadas presentes exactamente una vez, solo en `app_permisos_js.html`; cero referencias a globals de `alertas` (`motorReglasData`/`alertasGlobales`/`filtroNivelActivo`) ni llamadas a funciones de `matriz`; los 7 IDs del DOM que usa (`permissionModal`, `reportModal`, `historialBody`, `auditoriaBody`, `permisosBody`, `reportesContainer`, `detailModal`) confirmados presentes en `Index.html`. Única colisión de nombre en el repo: `onTramoChange`, preexistente, contenida enteramente en `app_js.html`, pendiente de la Fase 4
+- [x] `clasp push` (40 archivos) al entorno de pruebas confirmado NO-producción, para que `@HEAD` sirva el código de las Fases 1-3
+- [ ] **QA manual en navegador real: sigue pendiente.** Se pidió dos veces (cierre de Fase 2 y cierre de Fase 3) y aún no se recibió confirmación de resultado del usuario. No se marca como verificado — las Fases 1-3 están desplegadas en `@HEAD` pero su comportamiento en navegador real no ha sido confirmado en esta sesión.
+
+**Impacto en Producción:**
+`app_js.html` acumula una reducción de 1690 líneas (-39.5%) sobre el original de 4281, repartidas en 3 extracciones de bajo riesgo (core → alertas → permisos), todas con cero llamadas cruzadas entre los módulos hoja creados hasta ahora. Queda pendiente la Fase 4 (`app_matriz_js.html`, el módulo más grande, ~2390 LOC, y el único que exige reconciliar duplicados de matriz) y, transversalmente, la verificación en navegador real de las 3 fases ya desplegadas.
+
 ## 13. Inventario Exhaustivo del Repositorio
 
 Inventario factual archivo por archivo de los 23 archivos que componen el nucleo del backend, el frontend y los subproyectos auxiliares. Elaborado el 2026-08-05 leyendo directamente el codigo fuente (no inferido de nombres de archivo). Los archivos de los subproyectos `MatrizSeguimiento_script/` y `normalizacion_script/` se confirmaron 100% independientes del backend principal: cero referencias a `getConfig(`, `GestorDatos`, `GestorPermisos` o `GestorAuditoria` en ninguno de sus 11 archivos.
