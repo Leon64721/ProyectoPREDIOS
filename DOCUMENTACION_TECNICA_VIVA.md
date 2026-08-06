@@ -856,6 +856,58 @@ Un `grep '^function'` ingenuo subcuenta las funciones top-level porque ~15 está
 **Impacto en Producción:**
 Ninguno todavía — es un plan, no una ejecución. Reduce el riesgo de la futura ejecución al reemplazar suposiciones ("~135 funciones", "4 duplicadas") por conteos verificados y un grafo de dependencias con evidencia de que los 3 módulos hoja son realmente independientes entre sí. Descubrió como efecto colateral un bug de referencia rota preexistente (`openModal` no definida) que queda registrado pero no corregido.
 
+### 12.9 [2026-08-05] [CONC-FE-02] Subdivisión modular de app_js.html — Fases 1 y 2 (Build)
+
+**Archivo(s) Intervenido(s):**
+- `app_core_js.html` (archivo nuevo)
+- `app_alertas_js.html` (archivo nuevo)
+- `app_js.html#L1-L4281` (reducido progresivamente)
+- `Index.html#L1595-L1597` (directivas `include()`)
+
+**Propósito del Archivo en el Sistema:**
+Ejecución del plan documentado en 12.8: dividir `app_js.html` (el partial monolítico de 4281 líneas surgido de FE-01) en módulos por dominio funcional, manteniendo el mismo modelo de despliegue basado en `include()`.
+
+**Motivo de la Intervención:**
+Seguimiento directo de la planificación 12.8 / ítem 7 de `TODOS.md`. El usuario autorizó la ejecución en dos fases secuenciales de bajo riesgo, empezando por la base (`core`) y el módulo más pequeño y aislado (`alertas`), antes de tocar los módulos más grandes (`permisos`, `matriz`).
+
+**Cambios Técnicos Realizados — Fase 1 (`app_core_js.html`):**
+- Extraídas las 16 declaraciones `let/const` globales listadas en el plan (`rawData`, `currentData`, `currentUser`, `currentRole`, `state`, `C`, `navigationState`, `motorReglasData`, `alertasGlobales`, `filtroNivelActivo`, `seguimientoData`, `originalData`, `currentDropdowns`, `pdfDataStructure`, `searchableSelectState`, `searchableSelectConfig`) — cada una declarada una única vez, ahora solo en este archivo.
+- Extraídas 23 funciones (utilidades UI, parseo, bootstrap de datos, navegación).
+- Reconciliadas las 8 parejas de funciones duplicadas que le correspondían a este dominio (`setupModalCleanup`, `saveNavigationState`, `restoreNavigationState`, `showToast`, `showNotification`, `showConfirmation`, `confirmAction`, `onError`).
+- `searchableSelectConfig.onCommit` reescrito con wrappers de función flecha (`(...args) => onProyectoChange(...args)`) en vez de referencias directas, para evitar un `ReferenceError` por referencia adelantada (`onProyectoChange`/`onTramoChange`/`applyFilters` viven en `app_js.html`, que carga *después* de `app_core_js.html`).
+
+**Decisión de reconciliación no trivial — `setupModalCleanup`:** la copia que estaba activa en producción (la última declarada, por las reglas de shadowing de JS) era una versión *menos completa* que la copia descartada: omitía la limpieza de `#rtDetailModal` y el reset de `originalData` al cerrar el modal de tracking. Se confirmó explícitamente con el usuario (AskUserQuestion) antes de conservar la versión más completa en vez de la "última declarada" — es un cambio de comportamiento real (restaura limpieza que hoy no ocurre), no solo un refactor de ubicación.
+
+**Cambios Técnicos Realizados — Fase 2 (`app_alertas_js.html`):**
+- Extraídas las 16 funciones del dominio de reglas de negocio y alertas tempranas: `cargarJSONenPantalla`, `renderizarTarjetasReglas`, `renderizarFuentesDeDatos`, `abrirEditorVisual`, `guardarEdicionReglaVisual`, `guardarJSONdesdePantalla`, `formatearJSON`, `ejecutarMotorManual`, `cargarAlertasWeb`, `renderizarAlertas`, `popularDropdownsAlertas`, `filtrarAlertasPorNivel`, `limpiarFiltrosAlertas`, `aplicarFiltrosAlertas`, `exportarAlertasExcel`, `programarReporte`.
+- El handler de evento `$(document).on('click', '.menu-item', ...)` y el bloque `$(document).ready(...)` de inicialización, aunque están físicamente entre las funciones movidas, se dejaron intencionalmente en `app_js.html` — no forman parte de la lista explícita de 16 funciones y no requieren moverse (el nuevo orden de `include()` los deja seguros de todas formas).
+
+**Orden de `include()` en `Index.html` (líneas 1595-1597):**
+```
+<?!= include('app_core_js') ?>
+<?!= include('app_alertas_js') ?>
+<?!= include('app_js') ?>
+```
+
+**Métricas del Cambio:**
+
+| Archivo | LOC iniciales | LOC finales | Delta absoluto |
+|---|---|---|---|
+| `app_js.html` | 4281 (antes de Fase 1) | 2952 (después de Fase 2) | **-1329 (-31.0%)** |
+| `app_core_js.html` | 0 (no existía) | 698 | +698 (archivo nuevo) |
+| `app_alertas_js.html` | 0 (no existía) | 502 | +502 (archivo nuevo) |
+
+Desglose por fase: Fase 1 redujo `app_js.html` de 4281 a 3450 (-831 líneas, incluye la eliminación neta de las 8 duplicadas reconciliadas). Fase 2 redujo de 3450 a 2952 (-498 líneas).
+
+**Validación y Pruebas Ejecutadas:**
+- [x] Sintaxis validada con `node --check` sobre el JS interno de cada partial (`app_core_js.html`, `app_alertas_js.html`, `app_js.html`), en cada fase
+- [x] Auditoría de integridad: cero funciones duplicadas nuevas entre los 3 archivos (la única colisión detectada, `onTramoChange`, es preexistente y está contenida enteramente dentro de `app_js.html`, pendiente para la Fase 4); las 16+23 funciones movidas verificadas como presentes exactamente una vez, solo en su archivo de destino
+- [x] `clasp push` (39 archivos) al entorno de pruebas ya confirmado como NO-producción, ejecutado para que la URL `@HEAD` sirva el código de las Fases 1 y 2
+- [ ] **QA manual en navegador real: solicitado al usuario (checklist de consola/ReferenceError + módulo de reglas + tarjetas de alertas), sin confirmación de resultado recibida al momento de este cierre de sesión.** No se marca como verificado hasta recibir esa confirmación explícita.
+
+**Impacto en Producción:**
+`app_js.html` pasó de 4281 a 2952 líneas (-31%) en dos pasos de bajo riesgo. `app_core_js.html` y `app_alertas_js.html` están desplegados en el entorno de pruebas pero **su verificación funcional en navegador real está pendiente** — no debe asumirse que Fase 1/2 están completamente cerradas hasta esa confirmación.
+
 ## 13. Inventario Exhaustivo del Repositorio
 
 Inventario factual archivo por archivo de los 23 archivos que componen el nucleo del backend, el frontend y los subproyectos auxiliares. Elaborado el 2026-08-05 leyendo directamente el codigo fuente (no inferido de nombres de archivo). Los archivos de los subproyectos `MatrizSeguimiento_script/` y `normalizacion_script/` se confirmaron 100% independientes del backend principal: cero referencias a `getConfig(`, `GestorDatos`, `GestorPermisos` o `GestorAuditoria` en ninguno de sus 11 archivos.

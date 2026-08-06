@@ -114,9 +114,17 @@ Backlog de deuda técnica identificada en la auditoría arquitectónica (`/plan-
 
 ---
 
-## 7. Subdivisión modular de `app_js.html` en 4 parciales funcionales — [PLANIFICADO 2026-08-05, no ejecutado]
+## 7. Subdivisión modular de `app_js.html` en 4 parciales funcionales — [EN PROGRESO 2026-08-05: Fases 1 y 2 completadas]
 
-**Planificado:** Dictamen de arquitectura (`/plan-eng-review` sobre `app_js.html`) completado el 2026-08-05. Análisis por profundidad de llaves (no `grep ^function`, que falla con la indentación inconsistente del archivo) identificó **127 declaraciones de función top-level, 116 nombres únicos, 11 duplicados** (no 4 como decía la Sección 12.5) y **33 sitios `google.script.run`**. Clasificación real por uso de `rawData`/`currentData`/`currentUser`/`state` (conteo por función, no estimado):
+**Progreso (2026-08-05):**
+- **Fase 1 — `app_core_js.html` — [COMPLETADO]** — commit `9415350`. 698 LOC: 16 globals, 23 funciones (utilidades, bootstrap, navegación), 8 parejas de duplicados reconciliadas. Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.9 para el detalle de la decisión de reconciliación de `setupModalCleanup` (cambio de comportamiento confirmado con el usuario, no solo refactor).
+- **Fase 2 — `app_alertas_js.html` — [COMPLETADO]** — commit `29e204d`. 502 LOC, 16 funciones del dominio de reglas/alertas.
+- `clasp push` ejecutado (39 archivos) al entorno de pruebas confirmado NO-producción, para que `@HEAD` sirva el código de ambas fases.
+- **QA manual en navegador: PENDIENTE.** Se solicitó al usuario el checklist (consola sin `ReferenceError`, módulo de reglas carga, tarjetas de alertas renderizan) al cierre de esta sesión, sin confirmación de resultado recibida. **No asumir Fase 1/2 cerradas hasta esa confirmación explícita en la próxima sesión.**
+- **PENDIENTE INMEDIATO — Fase 3:** `app_permisos_js.html` (24 funciones, ~364 LOC: `applyHistorialFilters`, `onHistorialLoaded`, `applyAuditoriaFilters`, `onAuditoriaLoaded`, `openPermissionModal`, `savePermission`, `onPermissionSaved`, `loadPermissions`, `onPermissionsLoaded`, `deletePermission`, `onPermissionDeleted`, `createNewReport`, `generateReport`, `onReportGenerated`, `loadReports`, `onReportsLoaded`, `downloadReport`, `deleteReport`, `onReportDeleted`, `validateIntegrity`, `onIntegrityValidated`, `clearCache`, `exportSystemInfo`, `onSystemInfoExported`). Sin dependencias cruzadas con matriz/alertas (confirmado en el dictamen 12.8). Include a inyectar en `Index.html` inmediatamente después de `app_alertas_js`.
+- **PENDIENTE POSTERIOR — Fase 4:** `app_matriz_js.html` (56 funciones, ~2390 LOC, el módulo más grande y el único con lógica transaccional de guardado — `submitTracking` → `saveFollowupData`). Requiere reconciliar los duplicados de matriz (`onTramoChange`, `onProyectoChange`, `populateDropdowns`) que quedaron fuera del alcance de las Fases 1-3.
+
+**Planificado (contexto original):** Dictamen de arquitectura (`/plan-eng-review` sobre `app_js.html`) completado el 2026-08-05. Análisis por profundidad de llaves (no `grep ^function`, que falla con la indentación inconsistente del archivo) identificó **127 declaraciones de función top-level, 116 nombres únicos, 11 duplicados** (no 4 como decía la Sección 12.5) y **33 sitios `google.script.run`**. Clasificación real por uso de `rawData`/`currentData`/`currentUser`/`state` (conteo por función, no estimado):
 
 | Destino propuesto | Funciones | LOC reales | Contenido |
 |---|---|---|---|
