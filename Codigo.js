@@ -329,6 +329,30 @@ function getDashboardData() {
       console.log('⛔ Petición bloqueada: Sistema en mantenimiento');
       return { success: false, mantenimiento: true, message: "Sistema en mantenimiento" };
     }
+
+    // ✅ FASE 5b: CacheService — el check de mantenimiento de arriba SIEMPRE corre
+    // antes de esta lectura, y su resultado nunca se cachea. `user` es un dato
+    // POR-SESIÓN (Session.getActiveUser()) — CacheService.getScriptCache() es
+    // COMPARTIDO entre todas las ejecuciones del script para todos los usuarios,
+    // así que `user` NUNCA se guarda en el blob cacheado: se recalcula en vivo
+    // en cada retorno (cache-hit o cache-miss). Guardarlo cacheado filtraría el
+    // email de quien pobló el caché a cualquier otro usuario que golpee el hit
+    // durante el TTL — y el frontend usa ese valor como `currentUser` para el
+    // campo USUARIO de auditoría y como parámetro `usuario` en varias llamadas
+    // de permisos/filtro (app_matriz_js.html), así que la filtración no es solo
+    // cosmética.
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get(CACHE_KEY_DASHBOARD);
+    if (cached) {
+      try {
+        const cachedResponse = JSON.parse(cached);
+        cachedResponse.user = Session.getActiveUser().getEmail();
+        return cachedResponse;
+      } catch (e) {
+        console.warn('⚠️ Caché de dashboard corrupto, recalculando: ' + e.message);
+      }
+    }
+
     const allRecords = [];
     const allProyectosSet = new Set(); // Guardará TODOS los proyectos reales
     let headers = [];
@@ -424,16 +448,29 @@ function getDashboardData() {
       } catch (e) { console.error(`❌ Error archivo ${id}:`, e.message); }
     });
     
-    return {
+    // ✅ FASE 5b: `user` queda FUERA del objeto cacheable a propósito (ver comentario
+    // arriba) — se agrega al final, en vivo, después del cache.put().
+    const cacheableResponse = {
       success: true,
       records: JSON.stringify(allRecords),
       columns: JSON.stringify(headers),
       seguimiento: JSON.stringify(seguimientoRecords),
       allProyectos: JSON.stringify(Array.from(allProyectosSet).sort()), // ✅ ENVIAMOS LA LISTA COMPLETA AL ADMIN
-      user: Session.getActiveUser().getEmail(),
       filtroMatrizActivo: JSON.stringify(filtroActivo || {})
     };
-    
+
+    // ✅ FASE 5b: CacheService.put() lanza síncronamente si el payload supera 100KB —
+    // fallback a no-cachear (fail-open), la respuesta en vivo ya se calculó y se
+    // retorna igual.
+    try {
+      cache.put(CACHE_KEY_DASHBOARD, JSON.stringify(cacheableResponse), 1800); // 30 min TTL
+    } catch (e) {
+      console.warn('⚠️ No se pudo cachear getDashboardData (posible overflow 100KB de CacheService): ' + e.message);
+    }
+
+    cacheableResponse.user = Session.getActiveUser().getEmail();
+    return cacheableResponse;
+
   } catch (e) {
     return { success: false, message: e.message, records: '[]', columns: '[]', seguimiento: '[]', allProyectos: '[]' };
   }
@@ -735,6 +772,9 @@ function saveTrackingData(formObject, userEmail) {
       console.warn('⚠️ Error registrando auditoría: ' + audError.message);
     }
 
+    // ✅ FASE 5b: invalida el caché de dashboard — este RT cambió Seguimiento y/o Datos
+    invalidateDataCache();
+
     return {
       status: 'success',
       message: `✅ Seguimiento guardado en matriz principal para RT: ${formObject.rt}`,
@@ -875,7 +915,9 @@ function getPermissionsData() {
 function savePermission(email, rol, proyectos, usuario) {
   try {
     const gestor = new GestorPermisos();
-    return gestor.guardarPermiso(email, rol, proyectos, usuario);
+    const resultado = gestor.guardarPermiso(email, rol, proyectos, usuario);
+    if (resultado && resultado.success) invalidateDataCache(); // ✅ FASE 5b
+    return resultado;
   } catch (e) {
     console.error(`Error en savePermission: ${e.message}`);
     return {
@@ -888,7 +930,9 @@ function savePermission(email, rol, proyectos, usuario) {
 function deletePermission(email, usuario) {
   try {
     const gestor = new GestorPermisos();
-    return gestor.eliminarPermiso(email, usuario);
+    const resultado = gestor.eliminarPermiso(email, usuario);
+    if (resultado && resultado.success) invalidateDataCache(); // ✅ FASE 5b
+    return resultado;
   } catch (e) {
     console.error(`Error en deletePermission: ${e.message}`);
     return {
@@ -1949,6 +1993,8 @@ function promoverDato2aDato1() {
     sheetNames.forEach(function(name) {
       copiarHojaDeStaging(ssStaging, ssPrincipal, name);
     });
+
+    invalidateDataCache(); // ✅ FASE 5b: promoción sobrescribe Datos/Seguimiento en el principal
 
     ui.alert('Promoción Staging', 'Promoción completada correctamente. Revisa el archivo principal para verificar los datos.', ui.ButtonSet.OK);
   } catch (e) {

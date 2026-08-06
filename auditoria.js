@@ -9,24 +9,49 @@
       constructor(fileId = null) {
         this.gestor = new GestorDatos(fileId);
         this.timestamp = new Date();
+        this._gestorLogs = null; // ✅ FASE 5b: lazy, spreadsheet de LOGS es distinto al principal
       }
-      
+
+      /**
+       * ✅ FASE 5b: GestorDatos apuntando al spreadsheet de LOGS (separado del principal
+       * para evitar contención de escritura a nivel de archivo). Lazy + memoizado: si
+       * CONFIG.DATA_FILES.LOGS no está configurado o es inaccesible, el error se propaga
+       * al try/catch del método llamante (registrarAccion/_asegurarHojaLogs/obtenerLogsUsuario),
+       * que ya degrada a { success: false } / [] en vez de lanzar sin capturar.
+       */
+      _obtenerGestorLogs() {
+        if (!this._gestorLogs) {
+          const logsId = getConfig('DATA_FILES.LOGS');
+          // ✅ FASE 5b: sin esto, un ID de placeholder sin reemplazar falla dentro de
+          // SpreadsheetApp.openById() con un mensaje genérico de Apps Script — este log
+          // hace explícito EN LOS LOGS DEL SERVIDOR que la causa es un placeholder sin
+          // configurar, no un problema de permisos o de red. El registro sigue
+          // degradando a { success: false } / [] como antes; esto solo mejora el
+          // diagnóstico.
+          if (logsId === 'ID_SPREADSHEET_LOGS_AQUI') {
+            console.error('❌ CONFIG.DATA_FILES.LOGS sigue en el valor de placeholder — la auditoría (registrarAccion/getUserLogs) está deshabilitada hasta que se configure un ID de spreadsheet real en config.js.');
+          }
+          this._gestorLogs = new GestorDatos(logsId);
+        }
+        return this._gestorLogs;
+      }
+
       /**
        * Registra acción (V1 - logAction)
        */
       registrarAccion(usuario, accion, detalles) {
         try {
           this._asegurarHojaLogs();
-          
+
           const fila = [
             this.timestamp,
             usuario,
             accion,
             detalles || ''
           ];
-          
-          this.gestor.agregarFila(getConfig('SHEETS.LOGS'), fila);
-          
+
+          this._obtenerGestorLogs().agregarFila(getConfig('SHEETS.LOGS'), fila);
+
           return { success: true };
         } catch (e) {
           console.error(`Error registrando acción: ${e.message}`);
@@ -94,7 +119,7 @@
        */
       obtenerLogsUsuario(usuario, dias = 7) {
         try {
-          const { rows, headers } = this.gestor.leerDatos(getConfig('SHEETS.LOGS'));
+          const { rows, headers } = this._obtenerGestorLogs().leerDatos(getConfig('SHEETS.LOGS'));
           
           const usuarioIndex = findColumnIndex(headers, 'USER');
           const fechaIndex = 0;
@@ -123,10 +148,11 @@
        * Asegura que exista hoja de logs (V1)
        */
       _asegurarHojaLogs() {
+        const gestorLogs = this._obtenerGestorLogs();
         try {
-          this.gestor.getSheet(getConfig('SHEETS.LOGS'));
+          gestorLogs.getSheet(getConfig('SHEETS.LOGS'));
         } catch (e) {
-          const sheet = this.gestor.ss.insertSheet(getConfig('SHEETS.LOGS'));
+          const sheet = gestorLogs.ss.insertSheet(getConfig('SHEETS.LOGS'));
           sheet.appendRow(['TIMESTAMP', 'USUARIO', 'ACCION', 'DETALLES']);
           sheet.setTabColor('yellow');
         }

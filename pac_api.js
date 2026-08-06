@@ -18,7 +18,15 @@ function getPACData(filtros, modoEjecucion) {
     }
 
     var matrizData = pac_leerMatrizPredial();
+    // ✅ FASE 5b: esta sincronización es una ESCRITURA (actualiza ESTADO_PREDIAL_ACTUAL
+    // en PAC_Vigente desde la matriz) — corre SIEMPRE, en cache-hit y cache-miss por
+    // igual. Solo se cachea el cálculo de abajo (lectura pura), nunca este paso.
     pac_actualizarEstadosDesdeMatrizBatch(ss, hVig, matrizData);
+
+    var cache = CacheService.getScriptCache();
+    var cacheKey = _pac_buildCacheKey(filtros, modoEjecucion);
+    var cached = cache.get(cacheKey);
+    if (cached) return cached; // ya es el JSON.stringify final, se retorna tal cual
 
     var resultado = calcularSemaforoPAC(filtros, modoEjecucion, matrizData);
     if (!resultado.success) return JSON.stringify(resultado);
@@ -47,7 +55,7 @@ function getPACData(filtros, modoEjecucion) {
     articuladores.sort();
     gestores.sort();
 
-    return JSON.stringify({
+    var payload = JSON.stringify({
       success: true,
       necesitaInstalacion: false,
       registros: resultado.registros,
@@ -66,10 +74,33 @@ function getPACData(filtros, modoEjecucion) {
       reglasMotor: pac_cargarReglasReemplazo(),
       timestamp: new Date().toISOString()
     });
+
+    // ✅ FASE 5b: put() lanza síncronamente si supera 100KB — fallback a no-cachear
+    // (fail-open), el payload ya calculado se retorna igual.
+    try {
+      cache.put(cacheKey, payload, 900); // 15 min TTL — PAC cambia más seguido que el dashboard
+    } catch (e) {
+      pac_log('No se pudo cachear getPACData (posible overflow 100KB de CacheService): ' + e.message, 'ADVERTENCIA');
+    }
+
+    return payload;
   } catch(e) {
     pac_log('Error getPACData: ' + e.message, 'ERROR');
     return JSON.stringify({ success:false, error:e.message });
   }
+}
+
+/**
+ * ✅ FASE 5b: construye la cache-key de getPACData a partir de filtros+modoEjecucion.
+ * Incluye CACHE_KEY_PAC_VERSION (cache_backend.gs) para que invalidateDataCache()
+ * invalide todas las combinaciones de filtros a la vez sin tener que enumerarlas.
+ */
+function _pac_buildCacheKey(filtros, modoEjecucion) {
+  var version = CacheService.getScriptCache().get(CACHE_KEY_PAC_VERSION) || '0';
+  var serializado = JSON.stringify(filtros || {}) + '|' + String(modoEjecucion || '');
+  var digestBytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, serializado);
+  var hash = digestBytes.map(function(b) { return (b + 256).toString(16).slice(-2); }).join('');
+  return 'pac_v' + version + '_' + hash;
 }
 
 function pac_actualizarEstadosDesdeMatrizBatch(ss, hVig, matrizData) {

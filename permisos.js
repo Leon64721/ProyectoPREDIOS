@@ -265,7 +265,9 @@ function getPermissionsData() {
 function savePermission(email, rol, proyectos, usuario) {
   try {
     const gestor = new GestorPermisos();
-    return gestor.guardarPermiso(email, rol, proyectos, usuario);
+    const resultado = gestor.guardarPermiso(email, rol, proyectos, usuario);
+    if (resultado && resultado.success) invalidateDataCache(); // ✅ FASE 5b
+    return resultado;
   } catch (e) {
     console.error(`Error en savePermission: ${e.message}`);
     return { success: false, error: e.message };
@@ -275,7 +277,9 @@ function savePermission(email, rol, proyectos, usuario) {
 function deletePermission(email, usuario) {
   try {
     const gestor = new GestorPermisos();
-    return gestor.eliminarPermiso(email, usuario);
+    const resultado = gestor.eliminarPermiso(email, usuario);
+    if (resultado && resultado.success) invalidateDataCache(); // ✅ FASE 5b
+    return resultado;
   } catch (e) {
     console.error(`Error en deletePermission: ${e.message}`);
     return { success: false, error: e.message };

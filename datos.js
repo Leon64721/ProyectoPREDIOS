@@ -371,6 +371,7 @@ activarFiltro(id, usuario) {
 
     this.auditoria.registrarAccion(usuario, 'ACTIVAR_FILTRO_MATRIZ', `ID: ${id}`);
     console.log(`✅ Filtro activado: ${id}`);
+    invalidateDataCache(); // ✅ FASE 5b
 
     return { success: true, message: 'Filtro activado correctamente' };
   } catch (e) {
@@ -417,6 +418,7 @@ eliminarFiltro(id, usuario) {
 
     this.auditoria.registrarAccion(usuario, 'ELIMINAR_FILTRO_MATRIZ', `ID: ${id}`);
     console.log(`✅ Filtro eliminado: ${id}`);
+    invalidateDataCache(); // ✅ FASE 5b
 
     return { success: true, message: 'Filtro eliminado correctamente' };
   } catch (e) {
@@ -509,6 +511,7 @@ eliminarFiltro(id, usuario) {
       );
 
       console.log(`✅ Filtro creado: ${nombre} (${id})`);
+      invalidateDataCache(); // ✅ FASE 5b
 
       return {
         success: true,
@@ -584,6 +587,7 @@ eliminarFiltro(id, usuario) {
       );
 
       console.log(`✅ Filtro actualizado: ${nombre}`);
+      invalidateDataCache(); // ✅ FASE 5b
 
       return {
         success: true,
@@ -644,6 +648,7 @@ eliminarFiltro(id, usuario) {
       );
 
       console.log(`✅ Filtro activado: ${id}`);
+      invalidateDataCache(); // ✅ FASE 5b
 
       return {
         success: true,
@@ -702,6 +707,7 @@ eliminarFiltro(id, usuario) {
         );
 
         console.log(`✅ Filtro eliminado: ${id}`);
+        invalidateDataCache(); // ✅ FASE 5b
 
         return {
           success: true,

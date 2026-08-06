@@ -16,7 +16,8 @@ const CONFIG = {
   DATA_FILES: {
     PRINCIPAL: '', // Usar el Spreadsheet activo si no se especifica otro ID
     SECUNDARIOS: [],
-    STAGING: '' // ID de Dato 2 / Staging para validaciones y promoción manual
+    STAGING: '', // ID de Dato 2 / Staging para validaciones y promoción manual
+    LOGS: '***REMOVED***' // ✅ FASE 5b: spreadsheet separado (BD_OPERACIONAL_PREDIOS) para logs de auditoría (registrarAccion/getUserLogs)
   },
   
   // ✅ NUEVO: Compatibilidad con código que usa DATA_FILES_IDS

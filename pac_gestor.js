@@ -902,6 +902,7 @@ function aprobarBorradorPAC(motivo) {
     if (typeof _PAC_RUNTIME_CACHE !== 'undefined') {
       _PAC_RUNTIME_CACHE.vigente = null;
     }
+    invalidateDataCache(); // ✅ FASE 5b: invalida también el CacheService de getPACData
 
     pac_log('aprobarBorradorPAC: vigente actualizado con ' +
             (datosBorrador.length - 1) + ' registros');
