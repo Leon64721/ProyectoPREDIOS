@@ -229,6 +229,37 @@ styleSheet.textContent = `
             opacity: 1;
         }
     }
+
+    /* ✅ FASE 5c: Skeleton Loader — placeholders pulsantes en vez del spinner de
+       página completa. Reemplazan el contenido real mientras carga; .text()/.html()
+       los sobrescriben naturalmente cuando llegan los datos reales, sin limpieza manual. */
+    @keyframes skeletonPulse {
+        0%   { opacity: 0.55; }
+        50%  { opacity: 1; }
+        100% { opacity: 0.55; }
+    }
+
+    .skeleton-bar {
+        display: inline-block;
+        height: 1em;
+        min-width: 3em;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #e0e0e0, #eeeeee, #e0e0e0);
+        animation: skeletonPulse 1.4s ease-in-out infinite;
+        vertical-align: middle;
+    }
+
+    .skeleton-row td {
+        padding: 10px 8px !important;
+    }
+
+    .skeleton-cell {
+        display: block;
+        height: 14px;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #e0e0e0, #eeeeee, #e0e0e0);
+        animation: skeletonPulse 1.4s ease-in-out infinite;
+    }
 `;
 document.head.appendChild(styleSheet);
 
@@ -545,13 +576,80 @@ function showPage(pageId, element) {
     }
 }
 
+// ✅ FASE 5c: ids de los valores KPI del tablero — se reemplazan por barras
+// pulsantes en showDashboardSkeleton() y .text() los sobrescribe naturalmente
+// cuando llegan los datos reales (ver updateKPIs en app_matriz_js.html).
+const DASHBOARD_KPI_VALUE_IDS = [
+  'val-total', 'val-total-cesion', 'val-total-adquirir',
+  'val-disp', 'val-disp-cesion', 'val-disp-adquirir',
+  'val-pend', 'val-pend-cesion', 'val-pend-adquirir',
+  'fin-est', 'fin-pag', 'fin-sal', 'fin-ejec'
+];
+
+/**
+ * ✅ FASE 5c: Skeleton Loader del tablero — placeholders pulsantes en las
+ * tarjetas KPI y una tabla-esqueleto en #matrix-wrapper, en vez del overlay
+ * de página completa con spinner + texto "Cargando datos del tablero...".
+ * El shell de la app (sidebar, header) queda visible de inmediato.
+ */
+function showDashboardSkeleton() {
+  try {
+    DASHBOARD_KPI_VALUE_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '<span class="skeleton-bar" style="width:2.5em;"></span>';
+    });
+
+    let skeletonRows = '';
+    for (let i = 0; i < 6; i++) {
+      skeletonRows += `<tr class="skeleton-row">
+        <td><span class="skeleton-cell" style="width:90px;"></span></td>
+        <td><span class="skeleton-cell" style="width:40px;"></span></td>
+        <td><span class="skeleton-cell" style="width:40px;"></span></td>
+        <td><span class="skeleton-cell" style="width:40px;"></span></td>
+        <td><span class="skeleton-cell" style="width:60px;"></span></td>
+        <td><span class="skeleton-cell" style="width:70px;"></span></td>
+      </tr>`;
+    }
+    const wrapper = document.getElementById('matrix-wrapper');
+    if (wrapper) {
+      wrapper.innerHTML = `<table class="table-matrix"><tbody>${skeletonRows}</tbody></table>`;
+    }
+  } catch (e) {
+    console.error('❌ Error mostrando skeleton del tablero:', e.message);
+  }
+}
+
+/**
+ * ✅ FASE 5c: solo se usa en la ruta de ERROR — en el camino feliz, .text()/.html()
+ * de applyFilters()/renderMatrix() ya sobrescriben el skeleton con datos reales.
+ */
+function hideDashboardSkeleton() {
+  try {
+    DASHBOARD_KPI_VALUE_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '-';
+    });
+    const wrapper = document.getElementById('matrix-wrapper');
+    if (wrapper) wrapper.innerHTML = '<div class="text-center p-3 text-muted">No se pudieron cargar los datos.</div>';
+  } catch (e) {
+    console.error('❌ Error limpiando skeleton del tablero:', e.message);
+  }
+}
+
 function loadDashboardData() {
-  showLoader('Cargando datos del tablero (aplicando filtros del servidor)...');
+  // ✅ FASE 5c: Skeleton Loader (placeholders pulsantes) en vez del overlay de
+  // página completa. NO se pinta un render parcial desde LocalCache: la
+  // respuesta completa de getDashboardData() incluye filas de predios y el
+  // email del usuario, y LocalCache (localStorage) no está aislado por
+  // usuario/sesión — en un equipo compartido, un segundo usuario podría ver
+  // por un instante los datos cacheados del primero. Aislar correctamente
+  // requeriría que el servidor inyecte la identidad del usuario de forma
+  // síncrona en el HTML (fuera del alcance de este archivo) — ver TODOS.md.
+  showDashboardSkeleton();
 
   google.script.run.withSuccessHandler(response => {
-    hideLoader();
-
     if (!response.success) {
+      hideDashboardSkeleton();
       showAlert('Error: ' + response.message, 'warning');
       return;
     }
@@ -578,7 +676,7 @@ function loadDashboardData() {
     }
 
   }).withFailureHandler(error => {
-    hideLoader();
+    hideDashboardSkeleton();
     showAlert('Error cargando datos: ' + error, 'danger');
   }).getDashboardData();
 }
@@ -618,7 +716,9 @@ function onDataLoaded(result) {
 
 function refreshData() {
     console.log('🔄 Recargando datos...');
-    $('#loader').fadeIn(300);
+    // ✅ FASE 5c: loadDashboardData() ya muestra su propio Skeleton Loader — el
+    // overlay de página completa (#loader) aquí lo taparía por completo (z-index
+    // 9999) hasta que termine, anulando la mejora de percepción de velocidad.
     loadDashboardData();
 }
 

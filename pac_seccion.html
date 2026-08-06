@@ -1505,20 +1505,95 @@ function pac_toast(msg, tipo) {
   }
 }
 
-function pac_mostrarLoader(mostrar) {
-  document.getElementById('pac-loader').style.display = mostrar ? 'block' : 'none';
-  document.getElementById('pac-contenido').style.display = mostrar ? 'none' : 'block';
+/**
+ * ✅ FASE 5c: Skeleton Loader del módulo PAC — reemplaza el bloque de spinner +
+ * "Cargando módulo PAC..." (#pac-loader, que ocultaba TODO #pac-contenido) por
+ * placeholders pulsantes con la forma real de los KPI de semáforo y de la tabla
+ * de calendario. #pac-loader se mantiene en el HTML como fallback pero ya no se
+ * usa en el camino feliz — solo #pac-contenido con contenido-skeleton.
+ * Reutiliza las clases .skeleton-bar/.skeleton-cell definidas en app_core_js.html
+ * (mismo documento, mismo scope global de CSS — no se duplican estilos).
+ */
+function pac_showSkeleton() {
+  document.getElementById('pac-loader').style.display = 'none';
+  document.getElementById('pac-contenido').style.display = 'block';
+
+  // ✅ Limpia el banner de error de un intento anterior, si existe (ver pac_mostrarError).
+  var errorBanner = document.getElementById('pac-error-banner');
+  if (errorBanner) errorBanner.remove();
+
+  // KPIs de semáforo en estado NEUTRO gris — no se debe sugerir un color de
+  // riesgo (verde/amarillo/naranja/rojo) hasta tener el dato real.
+  ['pac-kpi-verde', 'pac-kpi-amarillo', 'pac-kpi-naranja', 'pac-kpi-rojo', 'pac-kpi-pct', 'pac-kpi-prog'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) {
+      el.style.color = '#bbbbbb';
+      el.innerHTML = '<span class="skeleton-bar" style="width:2.2em;"></span>';
+    }
+  });
+
+  var head = document.getElementById('pac-tabla-head');
+  if (head) {
+    head.innerHTML = '<tr><th><span class="skeleton-cell" style="width:80px;"></span></th>' +
+      '<th><span class="skeleton-cell" style="width:60px;"></span></th>' +
+      '<th><span class="skeleton-cell" style="width:60px;"></span></th>' +
+      '<th><span class="skeleton-cell" style="width:60px;"></span></th>' +
+      '<th><span class="skeleton-cell" style="width:50px;"></span></th></tr>';
+  }
+
+  var body = document.getElementById('pac-tabla-body');
+  if (body) {
+    var rows = '';
+    for (var i = 0; i < 6; i++) {
+      rows += '<tr class="skeleton-row">' +
+        '<td><span class="skeleton-cell" style="width:70px;"></span></td>' +
+        '<td><span class="skeleton-cell" style="width:45px;"></span></td>' +
+        '<td><span class="skeleton-cell" style="width:45px;"></span></td>' +
+        '<td><span class="skeleton-cell" style="width:45px;"></span></td>' +
+        '<td><span class="skeleton-cell" style="width:35px;"></span></td>' +
+        '</tr>';
+    }
+    body.innerHTML = rows;
+  }
 }
 
+function pac_mostrarLoader(mostrar) {
+  if (mostrar) {
+    pac_showSkeleton();
+  } else {
+    document.getElementById('pac-loader').style.display = 'none';
+    document.getElementById('pac-contenido').style.display = 'block';
+  }
+}
+
+/**
+ * ✅ FASE 5c: corrige un bug preexistente — antes reemplazaba TODO
+ * #pac-contenido.innerHTML, destruyendo los elementos KPI y la tabla
+ * (pac-kpi-verde, pac-tabla-head, pac-tabla-body, etc). Un
+ * reintento exitoso (botón "Reintentar" → pac_cargarDatos() → pac_renderTodo())
+ * hacía getElementById(...).textContent sobre elementos que ya no existían,
+ * lanzaba, caía otra vez en pac_mostrarError() — un loop de error permanente
+ * que solo se resolvía recargando la página. Ahora el error se inserta como un
+ * banner AL PRINCIPIO de #pac-contenido, sin tocar sus hijos reales; el banner
+ * se limpia en pac_showSkeleton() al iniciar el siguiente intento de carga.
+ */
 function pac_mostrarError(msg) {
-  pac_mostrarLoader(false);
-  document.getElementById('pac-contenido').style.display = 'block';
-  document.getElementById('pac-contenido').innerHTML =
-    '<div style="background:#fce8e6;border-left:4px solid #c0392b;padding:20px;border-radius:8px;margin:20px 0;">' +
+  document.getElementById('pac-loader').style.display = 'none';
+  var contenido = document.getElementById('pac-contenido');
+  contenido.style.display = 'block';
+
+  var banner = document.getElementById('pac-error-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'pac-error-banner';
+    contenido.insertBefore(banner, contenido.firstChild);
+  }
+  banner.style.cssText = 'background:#fce8e6;border-left:4px solid #c0392b;padding:20px;border-radius:8px;margin:0 0 20px 0;';
+  banner.innerHTML =
     '<h5 style="color:#c0392b;margin:0 0 8px 0;"><i class="fas fa-exclamation-circle"></i> Error cargando módulo PAC</h5>' +
     '<p style="margin:0;color:#555;">' + msg + '</p>' +
     '<button class="btn btn-sm btn-danger fw-bold mt-3" onclick="pacState.cargado=false;pac_cargarDatos()">' +
-    '<i class="fas fa-rotate"></i> Reintentar</button></div>';
+    '<i class="fas fa-rotate"></i> Reintentar</button>';
 }
 
 (function() {

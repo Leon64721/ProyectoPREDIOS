@@ -852,6 +852,13 @@ function updateKPIs() {
 
         function renderMatrix() {
             try {
+                // ✅ FASE 5c: el Skeleton Loader del renderizado inicial vive en
+                // showDashboardSkeleton() (app_core_js.html), que pinta #matrix-wrapper
+                // ANTES de que loadDashboardData() dispare la carga real — renderMatrix()
+                // solo se invoca (vía applyFilters()) una vez currentData ya existe
+                // (`let currentData = []` en app_core_js.html se inicializa al cargar la
+                // página, antes de que cualquier código pueda llamar a renderMatrix()), así
+                // que un guard "sin datos todavía" aquí sería inalcanzable — no se agrega.
                 const matrixData = currentData.filter(d => {
                     if (state.kpiFilter === 'ALL') return true;
                     const s = String(d[C.DISP] || '').toUpperCase();
