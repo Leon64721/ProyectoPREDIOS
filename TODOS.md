@@ -153,3 +153,35 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 **Context:** Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.8 (dictamen completo con grafo de dependencias ASCII y metodología). Corrige los números de la Sección 12.5 (FE-01).
 
 **Depends on / blocked by:** Depende del ítem 3 (FE-01, ya completado) — es su continuación directa. No depende del ítem 4 (unificación de capa de datos PAC).
+
+---
+
+## 8. Fase 5 — Optimización de rendimiento, desacoplamiento de base de datos y rediseño UI/UX — [PLANIFICADO 2026-08-06]
+
+**What:** (a) Envolver `getDashboardData` (`Codigo.js` ~323-440) y `getPACData` (`pac_api.js:5`) con `CacheService.getScriptCache()` (backend) y un caché de cliente en IndexedDB (frontend), con invalidación centralizada vía un helper `invalidateDataCache()` en cada punto de escritura conocido. (b) Mover el log de auditoría (`GestorAuditoria.registrarAccion` → `GestorDatos.agregarFila`) de la hoja `LOGS` dentro del spreadsheet principal a un spreadsheet nuevo y separado (`CONFIG.DATA_FILES_IDS.LOGS`), sin cambiar la firma pública de `logAction`/`getUserLogs` ni ninguno de sus 16 call sites. (c) Reemplazar los loaders de texto del Tablero de Seguimiento y del módulo PAC por Skeleton Loaders (placeholders con la forma real de filas/tarjetas), con un estado visual "datos parciales" cuando IndexedDB tiene un valor cacheado pero la respuesta real aún no llegó. (d) Extraer la lógica de lectura viva de `cache_backend.gs::getSearchHints()` (línea 251) y eliminar el resto del archivo (cola `CacheQueue`/`CacheStore`, triggers de procesamiento), que está muerto.
+
+**Why:** `getDashboardData` abre el spreadsheet y lee `Datos`+`Seguimiento` completos por `getDisplayValues()` en cada carga, sin ningún caché — confirmado por lectura directa del código, causa raíz medida del tiempo de carga >5s reportado por el usuario. `GestorDatos.agregarFila` no tiene `LockService` propio y depende de que el llamador ya sostenga uno; el riesgo real no es el locking de la app sino la serialización interna de Google Sheets a nivel de **archivo completo**, no de pestaña — corrección hecha durante el Architecture Review tras framing inicial impreciso del usuario ("bloqueos por concurrencia" sugería `LockService`, pero `logAction` no tiene ninguno). Por eso una hoja LOGS separada en el MISMO archivo no resuelve nada; se requiere un spreadsheet **distinto**. Decisión tomada en modo HOLD SCOPE tras `/plan-ceo-review` (Mega Plan Review): Firestore/BD externa descartada por ROI negativo frente al costo/riesgo de reescritura dado el tamaño actual del sistema; arquitectura de 2 capas de caché (CacheService + IndexedDB) sobre el mismo origen Sheets es la opción de mejor retorno.
+
+**Pros:** Ataca la causa raíz medida (lecturas síncronas sin caché) sin migrar la fuente de verdad; separa físicamente el log de auditoría del archivo transaccional, eliminando contención de escritura entre ambos; Skeleton Loaders mejoran la percepción de velocidad incluso antes de que el caché backend esté completamente afinado; reutiliza infraestructura ya presente en el proyecto (`CacheService`, `getConfig()`) en vez de introducir un servicio externo nuevo.
+
+**Cons:** Requiere localizar y cubrir con `invalidateDataCache()` **todos** los puntos de escritura de `Datos`/`Seguimiento`/PAC (lista de call sites se completa en la implementación, Fase 5b — no es trivial dejarla incompleta sin romper consistencia de caché); `CacheService.put()` tiene un límite duro de 100KB/valor que puede excederse con el dataset actual (requiere try/catch con fallback a no-cachear, no un happy path simple); IndexedDB en el sandbox de `HtmlService` (origen `googleusercontent.com`) no tiene Service Worker disponible, así que solo sirve como caché de cliente plano, nunca como PWA con interceptación de `fetch` — verificado por WebSearch, no asumido; la migración de LOGS requiere copiar el historial existente al spreadsheet nuevo antes del corte, un paso operacional manual único.
+
+**Context:** Ver diagramas Mermaid (arquitectura de componentes + secuencia de lectura acelerada) y el registro completo de modos de falla en `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.12. Revisión cruzada (Outside Voice, subagente independiente) encontró 8 huecos en el spec inicial — 6 incorporados como requisitos obligatorios de Fase 5a (lista de invalidación completa, nombre de función correcto, `cache_backend.gs` no está 100% muerto, manejo de overflow de 100KB, cache-key parametrizada para PAC, orden del check de mantenimiento antes de cualquier lectura de caché). Coordina con el ítem 4 (unificación de capa de datos PAC) sin bloquearlo ni ser bloqueado por él — son refactors complementarios sobre el mismo módulo.
+
+**Depends on / blocked by:** Ninguno para la planificación (este ítem). La implementación (Fase 5b) puede paralelizarse en 2 worktrees independientes: backend/caché (`Codigo.js`, `cache_backend.gs`, `pac_api.js`, `CONFIG`) y frontend/Skeleton Loaders (`app_core_js.html`, `app_matriz_js.html`, `pac_seccion.html`) — sin conflicto de archivos entre ambos.
+
+---
+
+## 9. Duplicación de funciones de permisos entre `Codigo.js` y `permisos.js` — [PENDIENTE, hallado 2026-08-06]
+
+**What:** Determinar cuál copia de `deletePermission`, `getAllowedProjects`, `getPermissionsData`, `getUserRole` y `savePermission` es la que realmente ejecuta el editor de Apps Script (la última declarada en el orden de concatenación de archivos, que por convención de comunidad suele ser alfabético — `permisos.js` antes que dependa de dónde caiga `Codigo.js`, sin verificar en vivo todavía), y eliminar la copia muerta.
+
+**Why:** Grep dirigido (`comm -12` sobre los nombres de función de ambos archivos) confirmó 5 nombres duplicados verbatim (solo difiere el espaciado) entre `Codigo.js` (líneas 875, 888, 901, y las de `getPermissionsData`/`getAllowedProjects`) y `permisos.js` (líneas 265, 275, y otras). Hallado como efecto colateral de la investigación de backend para la Fase 5, no relacionado con el rendimiento. Hoy es inofensivo porque ambas copias son funcionalmente idénticas, pero es una mina de futuro-edit: si alguien corrige un bug en una copia sin saber que existe la otra, el fix puede no aplicarse a la copia realmente activa.
+
+**Pros:** Elimina la ambigüedad de "¿cuál copia edito?"; reduce 5 funciones duplicadas del inventario de duplicados del proyecto (relevante para el conteo de la Sección 12.8/ítem 7).
+
+**Cons:** Requiere verificar en el editor real de Apps Script (no solo razonar por convención de orden alfabético) cuál copia gana antes de borrar nada, para no eliminar por accidente la que sí está activa.
+
+**Context:** Descubierto durante la investigación de backend previa a la planificación de Fase 5 (ítem 8). No bloquea la Fase 5 — es un hallazgo colateral, registrado por separado a propósito.
+
+**Depends on / blocked by:** Ninguno — se puede resolver de forma aislada en cualquier momento.

@@ -991,6 +991,126 @@ Cierre de la subdivisión modular de la interfaz iniciada en 12.8. `app_matriz_j
 **Impacto en Producción:**
 La subdivisión modular de la interfaz queda completa: el monolito original de `Index.html` (7340 líneas antes de FE-01) terminó dividido en `Index.html` (markup) + `estilos.html` (CSS) + 4 partials de JS por dominio funcional (`app_core_js.html`, `app_alertas_js.html`, `app_permisos_js.html`, `app_matriz_js.html`), sin ninguna función duplicada ni huérfana. `app_js.html`, que llegó a tener 4281 líneas mezclando 4 dominios de negocio, ya no existe. Pendiente transversal: la verificación en navegador real de las 4 fases, nunca confirmada explícitamente por el usuario en esta sesión.
 
+### 12.12 [2026-08-06] [CONC-P5] Fase 5 — Dictamen de arquitectura: optimización de rendimiento, desacoplamiento de base de datos y rediseño UI/UX (planificación)
+
+**Archivo(s) Intervenido(s):**
+- `TODOS.md` (ítems 8 y 9 nuevos)
+- `DOCUMENTACION_TECNICA_VIVA.md` (esta sección)
+- Ningún archivo de código tocado — sesión puramente de planificación, sin implementación.
+
+**Propósito del Archivo en el Sistema:**
+Cierra la Fase 5 de planificación iniciada tras la modularización completa del frontend (Fases 1-4, Sección 12.11). Diagnostica la causa raíz del tiempo de carga >5s reportado por el usuario y fija el dictamen de arquitectura para atacarlo sin migrar la fuente de verdad (Google Sheets) a un sistema externo.
+
+**Motivo de la Intervención:**
+Solicitud explícita del usuario para iniciar "Fase 5: Optimización de Rendimiento, Desacoplamiento de Base de Datos y Rediseño UI/UX", con un pipeline de 5 pasos: `/careful` → `/office-hours` (adaptado) → `/plan-ceo-review` (modo HOLD SCOPE) → `/plan-eng-review` → documentación y commit de planificación.
+
+**Diagnóstico (causa raíz, verificado por lectura directa del código):**
+`getDashboardData` (`Codigo.js` ~323-440) abre el spreadsheet vía `SpreadsheetApp.openById()` y lee las hojas `Datos` y `Seguimiento` completas por `getDataRange().getDisplayValues()` en cada llamada, sin ningún caché — esta es la causa raíz medida del tiempo de carga, no una sospecha. `getPACData` (`pac_api.js:5`) tiene el mismo patrón, mitigado parcialmente por `_PAC_RUNTIME_CACHE` (memoización in-memory, solo dentro del mismo request — no cruza ejecuciones).
+
+**Corrección de premisa (hecha durante el Architecture Review):** el framing inicial del usuario sobre "bloqueos por concurrencia (sheet contention)" en las escrituras de auditoría sugería un problema de `LockService`. Verificado por lectura de `GestorAuditoria.registrarAccion` (`auditoria.js` ~17-35) → `GestorDatos.agregarFila` (`datos.js:146-160`): **no existe ningún `LockService` propio** en esta ruta — depende enteramente de que el llamador ya sostenga un lock. El riesgo real es la serialización interna de Google Sheets a nivel de **archivo completo, no de pestaña** (confirmado por WebSearch) — un hallazgo más grave que la premisa original porque es invisible/no controlable desde el código de la aplicación. Consecuencia directa: mover el log de auditoría a una **pestaña** separada dentro del mismo archivo no resuelve nada; se requiere un **spreadsheet físicamente distinto**.
+
+**Decisión de scope (`/plan-ceo-review`, Mega Plan Review, modo HOLD SCOPE):** Firestore u otra base de datos externa como reemplazo de Sheets, descartada por ROI negativo frente al costo/riesgo de reescritura dado el tamaño actual del sistema. Arquitectura aprobada: 2 capas de caché (`CacheService` en backend + IndexedDB en cliente) sobre el mismo origen Sheets, más separación física del spreadsheet de LOGS. En modo HOLD SCOPE el documento de plan CEO completo se omite (regla propia del skill) — el output formal es el dictamen de `/plan-eng-review` que sigue.
+
+**Arquitectura de componentes (Mermaid):**
+```mermaid
+graph LR
+    subgraph Cliente
+        UI[SPA / HtmlService] --> IDB[(IndexedDB<br/>caché de cliente,<br/>best-effort, sin Service Worker)]
+    end
+    subgraph Backend[GAS Backend]
+        GDD[getDashboardData]
+        GPD[getPACData]
+        INV[invalidateDataCache]
+        CS[(CacheService<br/>100KB/valor, 1000 keys, 6h TTL)]
+        MC{Check modo<br/>mantenimiento}
+    end
+    subgraph Origen[Spreadsheets]
+        SD[(Sheets: Datos + Seguimiento)]
+        SP[(Sheets: PAC)]
+        SL[(Sheets: LOGS<br/>archivo NUEVO y separado)]
+    end
+    UI -->|google.script.run| MC
+    MC -->|OK| GDD
+    MC -->|OK| GPD
+    GDD <--> CS
+    GPD <--> CS
+    GDD -.lee.-> SD
+    GPD -.lee.-> SP
+    GDD -->|escritura| INV
+    INV -->|invalida| CS
+    Auditoria[GestorAuditoria.registrarAccion] -->|escribe, sin LockService propio| SL
+    UI <-.actualiza tras respuesta.-> IDB
+```
+
+**Secuencia de lectura acelerada (Mermaid):**
+```mermaid
+sequenceDiagram
+    participant U as Usuario
+    participant UI as SPA (Skeleton Loader)
+    participant IDB as IndexedDB
+    participant GS as google.script.run
+    participant BE as Backend GAS
+    participant CS as CacheService
+    participant SH as Sheets
+
+    U->>UI: abre Tablero/PAC
+    UI->>UI: pinta Skeleton inmediato
+    UI->>IDB: ¿hay caché local?
+    alt caché local existe
+        IDB-->>UI: datos parciales (marcados como posiblemente desactualizados)
+    end
+    UI->>GS: getDashboardData()/getPACData()
+    GS->>BE: invoca función
+    BE->>BE: check modo mantenimiento (NUNCA cacheado)
+    alt mantenimiento activo
+        BE-->>UI: bloqueo, sin leer caché
+    else operación normal
+        BE->>CS: get(cacheKey)
+        alt hit
+            CS-->>BE: datos cacheados
+        else miss
+            BE->>SH: lectura completa (getDisplayValues)
+            SH-->>BE: filas
+            BE->>CS: put(cacheKey, datos) [try/catch, overflow 100KB → skip cache]
+        end
+        BE-->>UI: respuesta
+    end
+    UI->>IDB: actualiza caché local
+    UI->>UI: reemplaza Skeleton por datos reales, sin parpadeo
+```
+
+**Esquema de migración `getUserLogs`/`logAction`:** ver detalle completo en la respuesta de esta sesión — resumen: `CONFIG.DATA_FILES_IDS.LOGS` nuevo, `GestorDatos.agregarFila`/`GestorAuditoria.registrarAccion` resuelven el spreadsheet de destino vía ese ID cuando el destino es LOGS, **cero cambios de firma pública** en los 16 call sites existentes (`Codigo.js:181,729`, `datos.js:372,418,505,580,640,698`, `evaluador_alertas.js:76`, `motor_reglas.js:76`, `reportes.js:105,224`, `permisos.js:147,210`). Migración de datos históricos y rollback (revertir el ID de configuración) documentados como pasos operacionales, no de código.
+
+**Diseño de Skeleton Loaders:** placeholders con la forma real de filas/tarjetas para Tablero de Seguimiento y módulo PAC, badge de semáforo en estado neutro hasta tener dato real, estado visual "posiblemente desactualizado" para datos servidos desde IndexedDB mientras se espera la respuesta real — tarea CSS/HTML pura, paralelizable con el trabajo de caché backend.
+
+**Registro de modos de falla (obligatorio, incorporado tras revisión Outside Voice):**
+| Escenario | Mitigación |
+|---|---|
+| `CacheService.put()` excede 100KB | try/catch, fallback a no-cachear esa entrada (fail-open) |
+| Modo mantenimiento + caché vigente | check de mantenimiento SIEMPRE antes de leer caché; su resultado nunca se cachea |
+| Escritura sin invalidar caché | helper centralizado `invalidateDataCache()` en cada punto de escritura conocido |
+| Spreadsheet LOGS inaccesible | degrada a log de error, nunca lanza excepción no capturada que tumbe la acción de negocio |
+| IndexedDB no disponible | fallback directo a `google.script.run` sin caché de cliente |
+| Colisión de cache-key en PAC (`getPACData(filtros, modoEjecucion)`) | key parametrizada por hash de filtros+modo, no key fija |
+
+**Revisión cruzada (Outside Voice):** subagente Claude independiente, sin contexto previo de la conversación, encontró 8 huecos en el spec inicial (lista de invalidación incompleta, nombre de función incorrecto referenciado, `cache_backend.gs` no estaba 100% muerto — `getSearchHints` es lógica viva, sin manejo de overflow de 100KB, sin estrategia de cache-key parametrizada para PAC, orden del check de mantenimiento no abordado, uso de IndexedDB en el sandbox sin verificar, y descubrimiento colateral de la duplicación `savePermission`/`deletePermission`/etc.). Los 8 fueron aceptados sin objeción; 6 incorporados como requisitos obligatorios de Fase 5a (tabla de modos de falla arriba), 2 quedaron fuera de scope explícito (ver TODOS.md ítem 9 para el hallazgo de duplicación).
+
+**NOT in scope (Fase 5a):** migración de `_PAC_RUNTIME_CACHE` a `GestorDatos` (TODOS.md ítem 4), corrección de la duplicación de funciones de permisos (TODOS.md ítem 9 nuevo), reescritura del motor de reglas, migración a Firestore/BD externa, Service Worker/PWA (inviable en el sandbox `HtmlService`, verificado por WebSearch).
+
+**What already exists (aprovechado):** `CacheService`, `getConfig()`/`CONFIG.DATA_FILES_IDS`, `cache_backend.gs::getSearchHints()` (lógica de lectura viva se extrae, el resto del archivo — cola `CacheQueue`/`CacheStore` — se elimina por muerto), `_PAC_RUNTIME_CACHE` (se mantiene, es complementario).
+
+**Estrategia de paralelización (worktrees, para Fase 5b):** 2 worktrees sin conflicto de archivos — (1) backend/caché: `Codigo.js`, `cache_backend.gs`, `pac_api.js`, `CONFIG`; (2) frontend/Skeleton Loaders: `app_core_js.html`, `app_matriz_js.html`, `pac_seccion.html`.
+
+**Validación y Pruebas Ejecutadas:**
+- [x] Investigación de backend vía agente Explore antes de diagnosticar (no se asumió causa raíz sin leer código)
+- [x] WebSearches reales: límites de `CacheService`, límites de rendimiento de Sheets, Firestore free tier, IndexedDB en sandbox de `HtmlService`
+- [x] Revisión Outside Voice (subagente independiente) ejecutada y sus hallazgos incorporados con aprobación explícita del usuario vía AskUserQuestion
+- [x] `TODOS.md` actualizado (ítems 8 y 9) con confirmación explícita del usuario vía AskUserQuestion
+- [ ] Implementación (Fase 5b): no ejecutada en esta sesión — es planificación pura
+
+**Impacto en Producción:**
+Ninguno — esta intervención es exclusivamente documental/de planificación. No se modificó ningún archivo de código (`.js`/`.html` de backend o frontend). El dictamen queda registrado como base para la Fase 5b (implementación), que se ejecutará en una sesión futura siguiendo la estrategia de worktrees documentada arriba.
+
 ## 13. Inventario Exhaustivo del Repositorio
 
 Inventario factual archivo por archivo de los 23 archivos que componen el nucleo del backend, el frontend y los subproyectos auxiliares. Elaborado el 2026-08-05 leyendo directamente el codigo fuente (no inferido de nombres de archivo). Los archivos de los subproyectos `MatrizSeguimiento_script/` y `normalizacion_script/` se confirmaron 100% independientes del backend principal: cero referencias a `getConfig(`, `GestorDatos`, `GestorPermisos` o `GestorAuditoria` en ninguno de sus 11 archivos.
