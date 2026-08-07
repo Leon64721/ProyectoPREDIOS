@@ -116,6 +116,13 @@ Checklist de verificación antes de un deploy a producción:
 - [ ] Hoja `Permisos` poblada con roles correctos.
 - [ ] Contactos admin definidos en `CONFIG.MANTENIMIENTO.CORREOS_CONTACTO`.
 
+Checklist de verificación UI/UX + Performance (cierre Sprint 1 y siguientes):
+- [ ] Ejecutar checklist runtime de `QA_SPRINT1_UIUX.md` en la WebApp publicada (desktop y mobile).
+- [ ] Confirmar que el arranque no se bloquee por llamadas secundarias (identidad/metadata) antes de `loadDashboardData()`.
+- [ ] Validar que filtros principales y de alertas con listas largas sean buscables y no desborden contenedores.
+- [ ] Registrar en `DOCUMENTACION_TECNICA_VIVA.md` tiempos observados de arranque en frío y con caché.
+- [ ] No cerrar sprint funcional si no existe evidencia de validación visual en runtime.
+
 Notas de mantenimiento y asistencia:
 - Función crítica de inclusión de HTML: `include(filename)` en `Codigo.js` (no eliminar).
 - Punto de entrada web: `doGet(e)` en `Codigo.js` — contiene control de mantenimiento, validación de config y carga de plantilla.
@@ -135,6 +142,7 @@ Notas de mantenimiento y asistencia:
   pdf.exe generate DOCUMENTACION_TECNICA_VIVA.md Documento_Tecnico_Aplicacion_Predios.pdf --to pdf --cover --toc
   ```
   (binario en `~/.claude/skills/gstack/make-pdf/dist/pdf.exe`). Incluir los dos archivos regenerados en el mismo commit que actualiza la documentación viva.
+ - Artefactos de control recomendados para sprint de frontend: `DESIGN.md`, `QA_SPRINT1_UIUX.md`, `ACTA_CIERRE_SPRINT1.md`.
 
 Contacto/Soporte interno:
 - Autores originales y correos encontrados en plantillas y mensajes: `fabian.montanez@idu.gov.co`, `sistemasdtdp@idu.gov.co`.
@@ -164,15 +172,27 @@ Available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-desig
 <!-- gstack-gbrain-search-guidance:start -->
 
 GBrain is set up locally on this machine (CLI only, no MCP tools registered — `claude` was not
-found on PATH during setup). Re-verified 2026-08-05: the memory/transcript capability round-trip
-(`gbrain put` + `gbrain search`) works correctly, and `gbrain import` for project memory succeeds.
-**Code-source registration still fails** on every `/sync-gbrain` run with
+found on PATH during setup). Re-verified 2026-08-06 (third confirmation, identical result to 2026-08-05): the memory/transcript
+capability round-trip (`gbrain put` + `gbrain search`) works correctly, and `gbrain import` for
+project memory succeeds. **Code-source registration still fails** on every `/sync-gbrain` run with
 `Unknown flag: CODE/CREACIÓN` — the gbrain CLI mis-parses this repo's Windows path because it
 contains spaces and an accented character (`Aplicación de Predios`). This blocks `gbrain sources
 add`, `code-def`, `code-refs`, and semantic code search entirely; it is an environment/path issue,
-not a missing embedding key. Until the repo can be indexed from a path without spaces/accents (or
-the upstream CLI fixes path quoting), use Grep for ALL code lookups in this repo. `gbrain
-search`/`gbrain query` remain usable for project memory and past-session context (not code).
+not a missing embedding key. `gstack-brain-sync` also fails on this machine (`no se reconoce como
+un comando interno o externo` — the bin script isn't invocable directly on Windows without a bash
+shim) and `git remote -v` reports no `origin`, so the brain-sync push stage is a no-op here too.
+Until the repo can be indexed from a path without spaces/accents (or the upstream CLI fixes path
+quoting), use Grep for ALL code lookups in this repo. `gbrain search`/`gbrain query` remain usable
+for project memory and past-session context (not code).
 
 <!-- gstack-gbrain-search-guidance:end -->
 
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

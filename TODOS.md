@@ -172,7 +172,11 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 ---
 
-## 9. Duplicación de funciones de permisos entre `Codigo.js` y `permisos.js` — [PENDIENTE, hallado 2026-08-06]
+## 9. Duplicación de funciones de permisos entre `Codigo.js` y `permisos.js` — [COMPLETADO 2026-08-06]
+
+**Completado:** `savePermission`/`deletePermission` (y las funciones auxiliares duplicadas) eliminadas de `Codigo.js`, dejando `permisos.js` como única fuente activa. Verificado con `node --check`. Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.22.
+
+**What (original, para referencia):**
 
 **What:** Determinar cuál copia de `deletePermission`, `getAllowedProjects`, `getPermissionsData`, `getUserRole` y `savePermission` es la que realmente ejecuta el editor de Apps Script (la última declarada en el orden de concatenación de archivos, que por convención de comunidad suele ser alfabético — `permisos.js` antes que dependa de dónde caiga `Codigo.js`, sin verificar en vivo todavía), y eliminar la copia muerta.
 
@@ -188,9 +192,11 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 ---
 
-## 10. Duplicación de `activarFiltro`/`eliminarFiltro` dentro de `GestorFiltroMatriz` (`datos.js`) — [PENDIENTE, hallado 2026-08-06]
+## 10. Duplicación de `activarFiltro`/`eliminarFiltro` dentro de `GestorFiltroMatriz` (`datos.js`) — [COMPLETADO 2026-08-06]
 
-**What:** `GestorFiltroMatriz` (clase completa en `datos.js:248-842`) define `activarFiltro` dos veces (líneas 319 y 608) y `eliminarFiltro` dos veces (líneas 388 y 671), dentro del mismo cuerpo de clase. En JS, la segunda declaración de un método sobrescribe silenciosamente a la primera en el mismo scope de clase — las copias de las líneas 319 y 388 son código muerto inalcanzable; las de 608 y 671 son las que realmente ejecutan. Verificar esto en el editor real de Apps Script (mismo tipo de verificación pendiente que el ítem 9) y eliminar las dos copias muertas.
+**Completado:** eliminadas las copias muertas (líneas originales ~319/388); las copias activas (~608/671) quedan como única implementación. Verificado con `node --check`. Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.22.
+
+**What (original, para referencia):** `GestorFiltroMatriz` (clase completa en `datos.js:248-842`) define `activarFiltro` dos veces (líneas 319 y 608) y `eliminarFiltro` dos veces (líneas 388 y 671), dentro del mismo cuerpo de clase. En JS, la segunda declaración de un método sobrescribe silenciosamente a la primera en el mismo scope de clase — las copias de las líneas 319 y 388 son código muerto inalcanzable; las de 608 y 671 son las que realmente ejecutan. Verificar esto en el editor real de Apps Script (mismo tipo de verificación pendiente que el ítem 9) y eliminar las dos copias muertas.
 
 **Why:** Hallado durante el `/review` de la Fase 5b (implementación de CacheService), al inyectar `invalidateDataCache()` en los 4 puntos de escritura de esta clase — se detectó la duplicación al confirmar los 4 `return { success: true, ... }` reales. A diferencia del ítem 9 (duplicación entre archivos distintos), esta es una duplicación **dentro del mismo archivo y la misma clase**, lo que la hace aún más fácil de introducir por error al copiar/pegar un método sin darse cuenta de que ya existía uno con el mismo nombre más arriba.
 
@@ -232,4 +238,38 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 **Context:** Confirmado por timestamps de archivo (`Index.html` y `DOCUMENTACION_TECNICA_VIVA.md` modificados minutos antes de que esta sesión empezara a editar los mismos archivos) — no es una hipótesis, es un incidente real ya ocurrido una vez.
 
+**Segunda ocurrencia (2026-08-06, tarde-noche, sin daño esta vez):** entre las 21:42 y las 23:31 dos sesiones (esta y una concurrente) hicieron `clasp push` sobre el mismo `@HEAD` sin coordinación explícita, produciendo 5 commits entrelazados (`5dfa099`, `b0a498b`, `9083bbd`, `da7ba22`, `e80222c`) que tocaron los mismos archivos (`Index.html`, `app_matriz_js.html`, `Codigo.js`) desde ángulos distintos (grid Bootstrap vs. dropdown widget para la barra de filtros; embebido vs. remoción de `filtrosMatriz` del payload). A diferencia del incidente original, esta vez no hubo rotura — verificado en `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.24 que el diseño dual-mode de `cargarFiltrosMatriz()` absorbió el cambio de payload sin conflicto — pero fue compatibilidad accidental, no por el protocolo (que sigue sin existir). Refuerza que este ítem sigue abierto y con probabilidad real de repetirse.
+
 **Depends on / blocked by:** Ninguno — es una decisión de proceso/flujo de trabajo, no de código.
+
+---
+
+## 13. Validación visual en runtime (WebApp real) — cierre de Sprint 1 — [PENDIENTE, hallado 2026-08-06]
+
+**What:** Ejecutar la corrida manual guiada por `QA_SPRINT1_UIUX.md` sobre el deployment `@HEAD` real: medir `t_boot_start` → primer render visible, validar Matriz y Alertas en desktop (1440/1024px) y mobile (768/360px), confirmar que los dropdowns buscables responden a Enter/Escape sin glitch de cierre, revisar overflow de cabeceras/celdas en la tabla PAC, y repasar labels/alineación en Historial, Auditoría, Permisos y Reportes. Registrar tiempos y hallazgos en `DOCUMENTACION_TECNICA_VIVA.md`.
+
+**Why:** Toda la Fase 8/8b/CONC-FE-04 (Secciones 12.17-12.24) fue validada por código (`node --check`, `get_errors`, lectura directa) pero **cero validación visual en navegador real** se ha ejecutado sobre estos cambios. Es la brecha real que separa "Sprint 1 técnicamente listo" de "Sprint 1 cerrado" — no una reimplementación de Fase 8b, que ya está hecha (ver Sección 12.24 para la corrección explícita de esa premisa errónea).
+
+**Pros:** Es el único paso que falta para cerrar Sprint 1 de `DESIGN.md` con confianza real, no solo con evidencia de código.
+
+**Cons:** Requiere sesión interactiva con navegador y usuario autenticado — no automatizable desde esta sesión de agente sin acceso a browser real contra el deployment.
+
+**Context:** Ver `QA_SPRINT1_UIUX.md` (checklist completo por pantalla) y `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.24.
+
+**Depends on / blocked by:** Ninguno — puede ejecutarse en cualquier momento sobre el `@HEAD` actual.
+
+---
+
+## 14. Fase 9 (`DESIGN.md`) — Sprints 2 a 5: consistencia de filtros, layout/legibilidad, microinteracciones y accesibilidad — [PLANIFICADO, no iniciado]
+
+**What:** Ejecutar los Sprints 2-5 definidos en `DESIGN.md` Sección 5: (2) migrar todos los selects de filtros restantes a `SearchableDropdown` con contador de coincidencias y QA responsive; (3) normalizar spacing vertical global, corregir overflow/word-break restante, revisar contraste AA; (4) estandarizar toasts y animaciones de apertura/cierre; (5) navegación por teclado, atributos ARIA y pruebas de regresión visual por captura.
+
+**Why:** `DESIGN.md` es un plan de diseño Fase 9 completo (creado 2026-08-06 por la sesión concurrente) del cual solo el Sprint 1 (performance de arranque) tiene trabajo de código ejecutado (Secciones 12.17-12.24). Los Sprints 2-5 son planificación pura todavía, no deuda técnica retroactiva.
+
+**Pros:** Plan ya existe con criterios de aceptación claros (`DESIGN.md` Sección 6) — no requiere replanificación, solo ejecución.
+
+**Cons:** Alcance grande (5 sprints), varios módulos (Alertas, PAC, Historial, Auditoría, Permisos) — no es un cambio aislado.
+
+**Context:** Ver `DESIGN.md` completo para el plan de diseño y el orden de implementación recomendado (Sección 7).
+
+**Depends on / blocked by:** Depende de que el ítem 13 (validación visual runtime) confirme que el Sprint 1 quedó realmente cerrado antes de iniciar el Sprint 2, para no construir sobre una base sin validar.

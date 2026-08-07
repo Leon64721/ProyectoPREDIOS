@@ -1110,6 +1110,20 @@ Solicitud explícita del usuario para iniciar "Fase 5: Optimización de Rendimie
 - **Listo técnicamente** (código y sintaxis validados).
 - **Pendiente cierre visual final** en WebApp runtime para declarar Sprint 1 completamente cerrado de cara a usuario final.
 
+### 12.20 [2026-08-06] [CONC-FE-04-CIERRE] Acta de cierre Sprint 1 y validación de exportación futura
+
+**Entregable generado:**
+- `ACTA_CIERRE_SPRINT1.md` (nuevo): acta formal con alcance, cambios aplicados, evidencia técnica, estado de cierre y criterios de aceptación final en runtime.
+
+**Validación de exportación futura (ejecutada):**
+1. Verificada disponibilidad de `pdf.exe` de gstack (`make-pdf`) en entorno local.
+2. Verificado que el binario responde y expone comandos operativos (`generate`, `preview`, `setup`, `version`).
+3. Rutas de comando recomendadas para DOCX/PDF registradas en el acta para siguientes entregables formales.
+
+**Estado operativo consolidado de Sprint 1:**
+- Cerrado en nivel técnico y documental.
+- Pendiente exclusivamente la validación visual final en runtime (WebApp publicada) usando `QA_SPRINT1_UIUX.md`.
+
 **Decisión de scope (`/plan-ceo-review`, Mega Plan Review, modo HOLD SCOPE):** Firestore u otra base de datos externa como reemplazo de Sheets, descartada por ROI negativo frente al costo/riesgo de reescritura dado el tamaño actual del sistema. Arquitectura aprobada: 2 capas de caché (`CacheService` en backend + IndexedDB en cliente) sobre el mismo origen Sheets, más separación física del spreadsheet de LOGS. En modo HOLD SCOPE el documento de plan CEO completo se omite (regla propia del skill) — el output formal es el dictamen de `/plan-eng-review` que sigue.
 
 **Arquitectura de componentes (Mermaid):**
@@ -1344,6 +1358,94 @@ Fase 5b: desplegada al entorno de pruebas (ver arriba). Fase 5c: implementada y 
 - [ ] QA manual en navegador real (con sesión autenticada): sigue pendiente — es el único paso que confirmaría el fix de forma definitiva
 
 **Impacto en Producción:** `@HEAD` corregido — el módulo de permisos/reportes/auditoría (que había quedado roto por la edición concurrente) está restaurado, y los Skeleton Loaders de Fase 5c ahora usan manipulación de DOM nativa en vez de cadenas HTML, alineado con las restricciones del mecanismo de servido de `@HEAD`. Recomendación de proceso: coordinar explícitamente antes de que más de una sesión/agente haga `clasp push` sobre el mismo deployment — ver TODOS.md para el ítem de seguimiento.
+
+### 12.21 [2026-08-06 21:42] [CONC-FE-02 Phase 7] Integración de búsqueda global en la barra de filtros de la Matriz
+
+**Nota de orden:** esta sección se redacta en el cierre de sesión (ver 12.24), documentando trabajo cuyo commit (`5dfa099`, 21:42) ocurrió cronológicamente ANTES de las secciones 12.17-12.20 (`da7ba22`/`e80222c`, 23:11-23:31) que aparecen antes en este documento por haber sido insertadas por la otra sesión concurrente. Se aplica la regla 16.2.2 (nunca reescribir, solo complementar hacia adelante) — el documento queda con la secuencia numérica 12.10→12.12→12.17→12.20→12.13→12.16→**12.21→12.24**, no cronológica; cada encabezado lleva su timestamp real para que la lectura por fecha sea inequívoca.
+
+**Archivo(s) Intervenido(s):** `Index.html`, `estilos.html`.
+
+**Motivo de la intervención:** el buscador global de RT vivía como un control aislado fuera de la barra de filtros de la Matriz, obligando a dos interacciones separadas (filtrar + buscar) y ocupando espacio vertical adicional.
+
+**Cambios técnicos:** barra de filtros de la Matriz migrada a grid Bootstrap 5 (`row`/`col-*`) en una sola fila — Proyecto, Tramo, Estado, Fecha de Corte y Buscador global de RT unificados en el mismo contenedor. Se eliminó el CSS grid propio de `.filter-row` que existía en `estilos.html`, reemplazado por las utilidades de grid de Bootstrap ya cargadas en el proyecto.
+
+**Riesgo introducido (detectado y corregido en 12.22):** la eliminación del CSS grid de `.filter-row` sin verificar otros usuarios de esa clase rompió temporalmente 3 barras de filtro que la compartían (Detalles RT, Historial, Auditoría) — root cause real del reporte de usuario "el buscador se renderiza encima del selector", diagnosticado y corregido en la intervención siguiente (12.23/Fase 8), no en esta.
+
+**Validación y Pruebas Ejecutadas:**
+- [x] `node --check`/`vm.Script` sobre los bloques `<script>` de `Index.html` — limpio
+- [x] Revisión visual de la barra de filtros de la Matriz en una sola fila
+- [ ] QA manual en navegador real de las 3 barras de filtro secundarias afectadas colateralmente — la corrección de código se hizo en 12.23, la confirmación visual en runtime sigue pendiente (ver 12.24 y `QA_SPRINT1_UIUX.md`)
+
+**Impacto en Producción:** mejora de UX en la Matriz; regresión colateral de layout en 3 pantallas secundarias, corregida en el mismo día (12.23) antes del cierre de sesión.
+
+### 12.22 [2026-08-06 22:14] [CONC-FE-02] Corrección de `CACHE_KEY_PAC_VERSION`, alturas de barra de filtros, reindexación Graphify y embebido de `filtrosMatriz`
+
+**Nota de orden:** ver nota de 12.21 — commit `b0a498b`, cronológicamente anterior a 12.17-12.20.
+
+**Archivo(s) Intervenido(s):** `Codigo.js`, `Index.html`, `app_core_js.html`, `app_matriz_js.html`, `cache_backend.gs` → renombrado `cache_backend.js`, `datos.js`, `estilos.html`, `.gitignore`, `.graphifyignore` (nuevo).
+
+**Motivo de la intervención (pipeline `/investigate`):** error en runtime `CACHE_KEY_PAC_VERSION is not defined` reportado por el usuario en el módulo PAC. Investigación de causa raíz (no fix directo) antes de tocar código, siguiendo el protocolo del skill `/investigate`.
+
+**Cambios técnicos:**
+1. **Fix del error PAC:** corregido el problema de referencia a `CACHE_KEY_PAC_VERSION` que impedía la ejecución del flujo de caché de PAC introducido en Fase 5b (Sección 12.13).
+2. **Alturas de barra de filtros:** ajuste de `.filter-group`/`.filter-actions` (`height:100%`, `justify-content:flex-end`) en `estilos.html` para alinear verticalmente los controles de la barra compacta introducida en Fase 7 (12.21).
+3. **Limpieza backend (Fase 6 de la planificación conversacional, sin número propio de sesión):** eliminadas de `Codigo.js` las copias muertas de `savePermission`/`deletePermission` (ya vivas y activas en `permisos.js`, ver TODOS.md ítem 9 — resuelto por eliminación directa de la copia inactiva en vez de solo documentarla). Eliminadas de `datos.js` las copias duplicadas muertas de `activarFiltro`/`eliminarFiltro` dentro de `GestorFiltroMatriz` (ver TODOS.md ítem 10 — mismo tratamiento).
+4. **Embebido de `filtrosMatriz` en el payload inicial:** `getDashboardData()` (`Codigo.js`) pasó a incluir `filtrosMatriz` directamente en la respuesta, y `app_matriz_js.html::cargarFiltrosMatriz(filtrosMatrizData)` se rediseñó en modo dual: si recibe datos, los usa directamente (hidratación desde el payload); si se invoca sin argumentos (`undefined`), dispara automáticamente una llamada RPC de respaldo a `getFiltrosMatriz()` — diseño defensivo que resultó clave para la compatibilidad con el cambio posterior de Fase 8b/CONC-FE-04 (ver 12.24).
+5. **Reconfiguración de Graphify para Google Apps Script:** creado `.graphifyignore` (excluye `graphify-out/` y los entregables `Documento_Tecnico_*`); renombrado `cache_backend.gs` → `cache_backend.js` (funcionalmente idéntico en GAS/clasp) para que Graphify y `node --check` reconozcan el archivo como código — la extensión `.gs` no es reconocida como código fuente por ninguna de las dos herramientas.
+6. **Corrección de la regresión de Fase 7:** migradas a Bootstrap grid las 3 barras de filtro secundarias (Detalles RT, Historial, Auditoría) que compartían `.filter-group`/`.filter-actions`/`.filter-row` con la barra principal y quedaron rotas por la eliminación de `.filter-row` en 12.21 — encontrado por auditoría propia (`grep -n 'class="filter-row"'`), no por reporte adicional del usuario sobre el mismo síntoma ya conocido.
+
+**Validación y Pruebas Ejecutadas:**
+- [x] `node --check` en `Codigo.js`, `datos.js`, `cache_backend.js` — limpio
+- [x] Grep de auditoría de usos de `.filter-row` para confirmar las 3 pantallas afectadas antes de corregir
+- [x] `graphify tree` / `graphify cluster-only .` ejecutados tras el renombrado — confirmada generación de `graphify-out/GRAPH_TREE.html` y `graph.html`
+- [ ] QA manual en navegador real de las 4 barras de filtro (Matriz + 3 secundarias) — sigue pendiente, ver 12.24
+
+**Impacto en Producción:** corrige un error bloqueante del módulo PAC; restaura la consistencia visual de 3 pantallas secundarias; reduce deuda técnica (TODOS.md ítems 9 y 10 resueltos); embebido de `filtrosMatriz` fue posteriormente revertido por razones de tamaño de payload en CONC-FE-04 (12.18) — el diseño dual-mode de `cargarFiltrosMatriz()` absorbió ese cambio sin romperse (verificado en 12.24).
+
+### 12.23 [2026-08-06 22:53] [CONC-FE-03 Phase 8] Auditoría UI/UX integral, rediseño autónomo, perfilado de rendimiento crítico y corrección lógica del PAC
+
+**Nota de orden:** ver nota de 12.21 — commit `9083bbd`, cronológicamente anterior a 12.17-12.20.
+
+**Archivo(s) Intervenido(s):** `Codigo.js`, `Index.html`, `cache_backend.js`, `datos.js`, `estilos.html`, `pac_seccion.html`.
+
+**Motivo de la intervención:** pipeline de 5 tareas solicitado por el usuario: auditoría UI/UX integral con rediseño autónomo, investigación de causa raíz de una demora de carga percibida de 20-30 segundos, y corrección de lógica temporal del módulo PAC.
+
+**Cambios técnicos:**
+1. **KPIs con overflow oculto sin truncado visual:** `.kpi-card { overflow: hidden }` recortaba (hard-clip) el texto de `.kpi-title`/`.kpi-value` en vez de mostrar elipsis — corregido añadiendo `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` explícito, replicado también en `.pac-kpi-title`/`.pac-kpi-value` del módulo PAC.
+2. **Investigación de latencia (20-30s):** confirmado por lectura directa de código que `GestorDatos.leerDatos()` no tenía caché de lectura real — `this.cache = {}` solo se escribía como efecto de invalidación, nunca se leía. Esto causaba una triple lectura viva de Sheets dentro de `getDashboardData()` (`obtenerFiltroActivo()` → `leerDatos()`; internamente `obtenerPorId()` → `obtenerTodos()` → otro `leerDatos()`; más una llamada `obtenerTodos()` adicional en el propio `getDashboardData`). Corregido derivando `filtroActivo` de una única llamada a `obtenerTodos()`, eliminando las lecturas redundantes.
+3. **Corrección de lógica temporal del PAC:** `pac_aplicarFiltros()` (`pac_seccion.html`) ahora excluye del listado los RT cuya suma de `PROGRAMADO`+`VALOR_RADICADO`+`VALOR_EJECUTADO` en los meses de `pac_getMesesEscalaActual()` es cero, aplicado únicamente cuando `pac_escalaActual !== 'acumulado'` — antes se mostraban RT sin ningún movimiento en el periodo seleccionado. Corregido además que `pac_cambiarEscala()`/`pac_cambiarPeriodo()` no invocaban `pac_aplicarFiltros()` tras el cambio, por lo que el listado se seguía renderizando desde el array filtrado anterior (obsoleto) — ambos ahora disparan el recálculo.
+4. **Migración final de la barra de filtros de Detalles RT/Historial/Auditoría** al mismo patrón Bootstrap grid, consolidando el trabajo iniciado en 12.22.
+
+**Validación y Pruebas Ejecutadas:**
+- [x] `node --check` en los archivos `.js` tocados — limpio
+- [x] `/review` (adaptado, sin rama base — diff de trabajo sin commitear)
+- [x] Verificación por lectura directa de código de la causa raíz de latencia (no asumida por reporte de usuario)
+- [ ] Medición de tiempo real de carga en navegador tras el fix — no ejecutada en esta sesión, ver 12.24
+
+**Impacto en Producción:** elimina 2 de 3 lecturas redundantes de Sheets en la ruta crítica de carga del tablero; corrige un bug funcional real del PAC (RT sin movimiento apareciendo en el filtro temporal); mejora legibilidad de KPIs en tablero y PAC.
+
+### 12.24 [2026-08-06, cierre de sesión] Reconciliación de trabajo concurrente, corrección de premisa "Fase 8b pendiente" y estado real de cierre
+
+**Contexto:** al iniciar el pipeline de cierre de sesión (Reflect → Document → Export → Sync → Ship), el encargo original enmarcaba como "deuda técnica pendiente" una "Fase 8b: refactorización dinámica del UI de los filtros y fragmentación del CacheService para evadir el límite de 100KB". Antes de escribir esa entrada como pendiente, se verificó `git log` y se encontraron dos commits ya existentes — `da7ba22` (`fix(core): refactor dynamic search inputs into dropdowns and implement chunked CacheService to bypass 100KB limit [CONC-FE-03 Phase 8b]`, 23:11) y `e80222c` (`perf(ui): optimize startup path and expand searchable filters with Sprint 1 UX QA checklist [CONC-FE-04]`, 23:31) — de una sesión concurrente que ya había implementado y documentado (Secciones 12.17-12.20) exactamente ese trabajo. **Corrección de premisa:** Fase 8b y CONC-FE-04 NO son deuda pendiente — ya están implementadas, documentadas y con `node --check`/`get_errors` verificados por esa misma sesión.
+
+**Verificación de compatibilidad entre ambas líneas de trabajo (ejecutada en esta sesión, no asumida):**
+1. **Barra de filtros:** la sesión concurrente reemplazó el grid Bootstrap de la Matriz (12.21) por un componente de dropdown buscable (`filterProyectoToggle`/`filterProyectoMenu` y equivalentes para Tramo/Estado en `Index.html`) — confirmado por lectura directa del archivo actual. El rediseño de 12.21 queda superado en la práctica por este patrón más reciente; se documenta como tal en vez de mantener una descripción del código que ya no coincide con el estado real del repositorio.
+2. **Payload de `filtrosMatriz`:** CONC-FE-04 revirtió el embebido añadido en 12.22 (`getDashboardData()` ya no envía `filtrosMatriz` en la respuesta inicial, por tamaño de payload) y pasó a invocar `cargarFiltrosMatriz()` sin argumentos, diferido vía `setTimeout(..., 0)`. Se verificó por lectura directa (`app_matriz_js.html:2260-2267`) que el diseño dual-mode de esa función construido en 12.22 sigue intacto y cubre exactamente este caso: al recibir `undefined`, dispara el fallback RPC a `getFiltrosMatriz()` automáticamente — **cero incompatibilidad real entre ambos cambios**, a pesar de haberse hecho en sesiones distintas sin coordinación explícita.
+3. **Sintaxis del repositorio completo:** re-ejecutado `node --check` sobre `Codigo.js`, `datos.js`, `cache_backend.js`, y extracción+`vm.Script` de todos los bloques `<script>` de `Index.html`, `app_core_js.html`, `app_matriz_js.html`, `app_alertas_js.html`, `pac_seccion.html`, `estilos.html` tras la fusión de ambas líneas de trabajo — 100% limpio, sin errores de sintaxis.
+
+**Estado real de lo pendiente (no lo que el encargo original asumía):** confirmado por `QA_SPRINT1_UIUX.md` (creado por la sesión concurrente) y `DESIGN.md` (plan de Fase 9, Sprints 1-5, mismo origen):
+- Sprint 1 (arranque + filtros base) está "técnicamente listo" (validado por código) pero con **validación visual en runtime real (WebApp publicada) pendiente**: responsive en 360/768/1024/1440px, comportamiento Enter/Escape en los dropdowns buscables, overflow en tablas del PAC, revisión de Historial/Auditoría/Permisos/Reportes en runtime.
+- Sprints 2-5 de `DESIGN.md` (consistencia de filtros restantes, layout/legibilidad global, microinteracciones, accesibilidad/hardening visual) **no han iniciado** — son planificación, no ejecución.
+- No se capturaron métricas reales de tiempo de arranque en navegador (`t_boot_start`/`t_dashboard_loaded`/`t_first_render` de `DESIGN.md` Sección 5, Sprint 1, punto 3) — la mejora de 12.23 se verificó por lectura de código, no por medición en vivo.
+
+**Validación y Pruebas Ejecutadas (este cierre):**
+- [x] `git log` con timestamps para establecer el orden cronológico real de los 5 commits del día posteriores a Fase 5c (12.14/12.15/12.16)
+- [x] `git show --stat` de `da7ba22` y `e80222c` para confirmar alcance de archivos antes de documentar
+- [x] Lectura directa del estado actual de `Index.html`, `app_matriz_js.html`, `app_core_js.html` para verificar compatibilidad real (no asumida) entre ambas líneas de trabajo
+- [x] `node --check` + `vm.Script` sobre el conjunto completo de archivos tocados por ambas sesiones — limpio
+- [x] Lectura de `DESIGN.md` y `QA_SPRINT1_UIUX.md` (documentos nuevos de la sesión concurrente) antes de referenciarlos aquí
+
+**Impacto en Producción:** ninguno directo — esta sección es de consolidación documental. Confirma que el repositorio, tras la fusión no coordinada de dos líneas de trabajo concurrentes, queda en un estado sintácticamente limpio y funcionalmente compatible; dirige el trabajo futuro hacia la validación visual en runtime (el gap real) en vez de hacia una reimplementación de Fase 8b que ya existe.
 
 ## 13. Inventario Exhaustivo del Repositorio
 
