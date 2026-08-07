@@ -1,0 +1,12 @@
+# .graphifyignore — misma sintaxis que .gitignore (incluye negación con `!`).
+# Solo EXCLUYE archivos del grafo; no puede "incluir" ni reclasificar tipos de
+# archivo (los .html con <script> embebido siguen clasificándose como "docs",
+# no "code", en graphify 0.9.35 — no hay flag/config que lo cambie a la fecha,
+# verificado 2026-08-06 contra PyPI y la documentación del proyecto).
+
+# Salida propia de graphify — no indexar el grafo generado sobre sí mismo
+graphify-out/
+
+# Entregables binarios generados — no son código ni aportan al grafo
+Documento_Tecnico_Aplicacion_Predios.docx
+Documento_Tecnico_Aplicacion_Predios.pdf

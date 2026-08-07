@@ -313,119 +313,11 @@ class GestorFiltroMatriz {
     }
   }
 
-  /**
- * Activa un filtro (marca como ACTIVO_PRINCIPAL, desactiva los demás)
- */
-activarFiltro(id, usuario) {
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(30000);
-
-    const sheetName = getConfig('FILTRO_MATRIZ.SHEET_NAME');
-    const { rows, headers } = this.gestor.leerDatos(sheetName);
-
-    if (!headers || headers.length === 0) {
-      throw new Error('No hay headers en FiltroMatriz');
-    }
-
-    const idIndex = findColumnIndex(headers, 'ID');
-    const activoIndex = findColumnIndex(headers, 'ACTIVO');
-    const modIndex = findColumnIndex(headers, 'ULTIMA_MODIFICACION');
-
-    if (idIndex < 0 || activoIndex < 0) {
-      throw new Error('Columnas ID o ACTIVO no encontradas');
-    }
-
-    // Preparar arrays para setValues (batch)
-    const numRows = rows.length;
-    if (numRows === 0) {
-      throw new Error('No hay filas en FiltroMatriz');
-    }
-
-    const activos = [];
-    const mods = [];
-    let filtroEncontrado = false;
-    const ahora = new Date();
-
-    for (let i = 0; i < numRows; i++) {
-      const rowId = rows[i][headers[idIndex]];
-      const nuevoEstado = (rowId === id) ? 'ACTIVO_PRINCIPAL' : 'SI';
-      activos.push([nuevoEstado]);
-      mods.push([ahora]);
-      if (rowId === id) filtroEncontrado = true;
-    }
-
-    if (!filtroEncontrado) {
-      throw new Error(`Filtro no encontrado: ${id}`);
-    }
-
-    // Ejecutar actualizaciones en batch
-    const sheet = this.gestor.getSheet(sheetName);
-    sheet.getRange(2, activoIndex + 1, activos.length, 1).setValues(activos);
-    if (modIndex >= 0) {
-      sheet.getRange(2, modIndex + 1, mods.length, 1).setValues(mods);
-    }
-
-    // Invalidar cache local
-    this.gestor.cache = {};
-
-    this.auditoria.registrarAccion(usuario, 'ACTIVAR_FILTRO_MATRIZ', `ID: ${id}`);
-    console.log(`✅ Filtro activado: ${id}`);
-    invalidateDataCache(); // ✅ FASE 5b
-
-    return { success: true, message: 'Filtro activado correctamente' };
-  } catch (e) {
-    console.error(`Error en activarFiltro: ${e.message}`);
-    return { success: false, error: e.message };
-  } finally {
-    try { lock.releaseLock(); } catch (er) {}
-  }
-}
-
-/**
- * Elimina (desactiva) un filtro
- */
-eliminarFiltro(id, usuario) {
-  try {
-    const sheetName = getConfig('FILTRO_MATRIZ.SHEET_NAME');
-    const { rows, headers } = this.gestor.leerDatos(sheetName);
-    
-    if (!headers || headers.length === 0) {
-      throw new Error('No hay headers en FiltroMatriz');
-    }
-    
-    const idIndex    = findColumnIndex(headers, 'ID');
-    const activoIndex = findColumnIndex(headers, 'ACTIVO');
-    
-    if (idIndex < 0) throw new Error('Columna ID no encontrada');
-    
-    const rowIndex = rows.findIndex(r => r[headers[idIndex]] === id);
-    
-    if (rowIndex < 0) {
-      throw new Error(`Filtro no encontrado: ${id}`);
-    }
-    
-    // Marcar como NO (eliminado lógico) en batch con lock
-    if (activoIndex >= 0) {
-      const lock = LockService.getScriptLock();
-      try {
-        lock.waitLock(30000);
-        this.gestor.actualizarRango(sheetName, rowIndex + 2, activoIndex + 1, [[ 'NO' ]]);
-      } finally {
-        try { lock.releaseLock(); } catch (er) {}
-      }
-    }
-
-    this.auditoria.registrarAccion(usuario, 'ELIMINAR_FILTRO_MATRIZ', `ID: ${id}`);
-    console.log(`✅ Filtro eliminado: ${id}`);
-    invalidateDataCache(); // ✅ FASE 5b
-
-    return { success: true, message: 'Filtro eliminado correctamente' };
-  } catch (e) {
-    console.error(`Error en eliminarFiltro: ${e.message}`);
-    return { success: false, error: e.message };
-  }
-}
+  // ✅ FASE 6: activarFiltro()/eliminarFiltro() removidas de aquí — eran copias
+  // muertas/sombreadas (esta misma clase las redeclara más abajo; en JS la
+  // última declaración de un método en un cuerpo de clase gana en silencio,
+  // así que esas eran las que realmente se ejecutaban — ver más abajo en
+  // esta clase). Confirmado por TODOS.md ítem 10.
 
 
   /**
@@ -511,7 +403,6 @@ eliminarFiltro(id, usuario) {
       );
 
       console.log(`✅ Filtro creado: ${nombre} (${id})`);
-      invalidateDataCache(); // ✅ FASE 5b
 
       return {
         success: true,
@@ -587,7 +478,6 @@ eliminarFiltro(id, usuario) {
       );
 
       console.log(`✅ Filtro actualizado: ${nombre}`);
-      invalidateDataCache(); // ✅ FASE 5b
 
       return {
         success: true,
@@ -648,7 +538,6 @@ eliminarFiltro(id, usuario) {
       );
 
       console.log(`✅ Filtro activado: ${id}`);
-      invalidateDataCache(); // ✅ FASE 5b
 
       return {
         success: true,
@@ -707,7 +596,6 @@ eliminarFiltro(id, usuario) {
         );
 
         console.log(`✅ Filtro eliminado: ${id}`);
-        invalidateDataCache(); // ✅ FASE 5b
 
         return {
           success: true,

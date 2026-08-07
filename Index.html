@@ -199,7 +199,12 @@
                      aparte que solo era visible cuando había un Filtro Matriz activo. -->
                 <div class="filter-bar">
                     <h6><i class="fas fa-filter"></i> Filtros</h6>
-                    <div class="row g-3 align-items-end">
+                    <!-- ✅ FASE 7 (corrección de alturas): align-items-stretch (default de
+                         Bootstrap .row) en vez de align-items-end — así las 6 columnas quedan
+                         a la misma altura (la del grupo más alto: Proyecto/Tramo/Estado, con
+                         input+small+select) y .filter-group/.filter-actions empujan su control
+                         real al borde inferior via justify-content:end (ver estilos.html). -->
+                    <div class="row g-3 align-items-stretch">
                         <div class="col-lg-2 col-md-4 col-6 filter-group">
                             <label>Proyecto</label>
                             <input type="text" id="filterProyectoSearch" class="form-select-searchable" placeholder="Buscar proyecto..." oninput="applySelectSearch('filterProyecto', this.value)">

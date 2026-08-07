@@ -329,30 +329,6 @@ function getDashboardData() {
       console.log('⛔ Petición bloqueada: Sistema en mantenimiento');
       return { success: false, mantenimiento: true, message: "Sistema en mantenimiento" };
     }
-
-    // ✅ FASE 5b: CacheService — el check de mantenimiento de arriba SIEMPRE corre
-    // antes de esta lectura, y su resultado nunca se cachea. `user` es un dato
-    // POR-SESIÓN (Session.getActiveUser()) — CacheService.getScriptCache() es
-    // COMPARTIDO entre todas las ejecuciones del script para todos los usuarios,
-    // así que `user` NUNCA se guarda en el blob cacheado: se recalcula en vivo
-    // en cada retorno (cache-hit o cache-miss). Guardarlo cacheado filtraría el
-    // email de quien pobló el caché a cualquier otro usuario que golpee el hit
-    // durante el TTL — y el frontend usa ese valor como `currentUser` para el
-    // campo USUARIO de auditoría y como parámetro `usuario` en varias llamadas
-    // de permisos/filtro (app_matriz_js.html), así que la filtración no es solo
-    // cosmética.
-    const cache = CacheService.getScriptCache();
-    const cached = cache.get(CACHE_KEY_DASHBOARD);
-    if (cached) {
-      try {
-        const cachedResponse = JSON.parse(cached);
-        cachedResponse.user = Session.getActiveUser().getEmail();
-        return cachedResponse;
-      } catch (e) {
-        console.warn('⚠️ Caché de dashboard corrupto, recalculando: ' + e.message);
-      }
-    }
-
     const allRecords = [];
     const allProyectosSet = new Set(); // Guardará TODOS los proyectos reales
     let headers = [];
@@ -365,11 +341,17 @@ function getDashboardData() {
     // ✅ OBTENER FILTRO ACTIVO DE LA BASE DE DATOS
     let gestorFiltro = null;
     let filtroActivo = null;
+    let filtrosMatrizTodos = [];
     try {
       gestorFiltro = new GestorFiltroMatriz();
       filtroActivo = gestorFiltro.obtenerFiltroActivo();
+      // ✅ FASE 6: se embebe aquí la lista completa de agrupaciones/filtros matriz
+      // para que el cliente los reciba en la misma respuesta de getDashboardData()
+      // y no necesite una llamada RPC aparte (google.script.run.getFiltrosMatriz())
+      // — ver app_matriz_js.html, hidratación desde el payload inicial.
+      filtrosMatrizTodos = gestorFiltro.obtenerTodos();
     } catch (e) {}
-    
+
     let proyectosVisibles = { todos: true, proyectos: [], excluidos: [] };
     if (filtroActivo) {
         if (filtroActivo.proyectosIncluidos && filtroActivo.proyectosIncluidos.length > 0) {
@@ -448,29 +430,17 @@ function getDashboardData() {
       } catch (e) { console.error(`❌ Error archivo ${id}:`, e.message); }
     });
     
-    // ✅ FASE 5b: `user` queda FUERA del objeto cacheable a propósito (ver comentario
-    // arriba) — se agrega al final, en vivo, después del cache.put().
-    const cacheableResponse = {
+    return {
       success: true,
       records: JSON.stringify(allRecords),
       columns: JSON.stringify(headers),
       seguimiento: JSON.stringify(seguimientoRecords),
       allProyectos: JSON.stringify(Array.from(allProyectosSet).sort()), // ✅ ENVIAMOS LA LISTA COMPLETA AL ADMIN
-      filtroMatrizActivo: JSON.stringify(filtroActivo || {})
+      user: Session.getActiveUser().getEmail(),
+      filtroMatrizActivo: JSON.stringify(filtroActivo || {}),
+      filtrosMatriz: JSON.stringify(filtrosMatrizTodos) // ✅ FASE 6: reemplaza el RPC getFiltrosMatriz()
     };
-
-    // ✅ FASE 5b: CacheService.put() lanza síncronamente si el payload supera 100KB —
-    // fallback a no-cachear (fail-open), la respuesta en vivo ya se calculó y se
-    // retorna igual.
-    try {
-      cache.put(CACHE_KEY_DASHBOARD, JSON.stringify(cacheableResponse), 1800); // 30 min TTL
-    } catch (e) {
-      console.warn('⚠️ No se pudo cachear getDashboardData (posible overflow 100KB de CacheService): ' + e.message);
-    }
-
-    cacheableResponse.user = Session.getActiveUser().getEmail();
-    return cacheableResponse;
-
+    
   } catch (e) {
     return { success: false, message: e.message, records: '[]', columns: '[]', seguimiento: '[]', allProyectos: '[]' };
   }
@@ -772,9 +742,6 @@ function saveTrackingData(formObject, userEmail) {
       console.warn('⚠️ Error registrando auditoría: ' + audError.message);
     }
 
-    // ✅ FASE 5b: invalida el caché de dashboard — este RT cambió Seguimiento y/o Datos
-    invalidateDataCache();
-
     return {
       status: 'success',
       message: `✅ Seguimiento guardado en matriz principal para RT: ${formObject.rt}`,
@@ -912,35 +879,11 @@ function getPermissionsData() {
   }
 }
 
-function savePermission(email, rol, proyectos, usuario) {
-  try {
-    const gestor = new GestorPermisos();
-    const resultado = gestor.guardarPermiso(email, rol, proyectos, usuario);
-    if (resultado && resultado.success) invalidateDataCache(); // ✅ FASE 5b
-    return resultado;
-  } catch (e) {
-    console.error(`Error en savePermission: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
-  }
-}
-
-function deletePermission(email, usuario) {
-  try {
-    const gestor = new GestorPermisos();
-    const resultado = gestor.eliminarPermiso(email, usuario);
-    if (resultado && resultado.success) invalidateDataCache(); // ✅ FASE 5b
-    return resultado;
-  } catch (e) {
-    console.error(`Error en deletePermission: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
-  }
-}
+// ✅ FASE 6: savePermission()/deletePermission() removidas de este archivo —
+// eran copias muertas/sombreadas (permisos.js declara las mismas funciones y,
+// por orden de carga de Apps Script, esa copia era la que realmente se
+// ejecutaba). GestorPermisos en permisos.js queda como única fuente de verdad
+// para guardar/eliminar permisos — ver permisos.js:265-283.
 
 function getUserRole(email) {
   try {
@@ -1993,8 +1936,6 @@ function promoverDato2aDato1() {
     sheetNames.forEach(function(name) {
       copiarHojaDeStaging(ssStaging, ssPrincipal, name);
     });
-
-    invalidateDataCache(); // ✅ FASE 5b: promoción sobrescribe Datos/Seguimiento en el principal
 
     ui.alert('Promoción Staging', 'Promoción completada correctamente. Revisa el archivo principal para verificar los datos.', ui.ButtonSet.OK);
   } catch (e) {

@@ -1,2 +1,5 @@
 # gstack scratch (capturas de QA, reportes temporales)
 .gstack/
+
+# graphify — salida generada del grafo de conocimiento (graphify extract/tree/cluster-only)
+graphify-out/

@@ -730,8 +730,9 @@ function onDataLoaded(result) {
 
         applyFilters();
 
-        // ✅ Cargar agrupaciones y renderizar checkboxes de la pestaña "Filtro Matriz"
-        cargarFiltrosMatriz();
+        // ✅ FASE 6: agrupaciones/filtros matriz ya vienen en result.filtrosMatriz
+        // (embebidos por getDashboardData() en el servidor) — sin RPC secundaria.
+        cargarFiltrosMatriz(result.filtrosMatriz);
         renderProyectosCheckboxes();
 
         $('#loader').fadeOut(300);

@@ -8,46 +8,16 @@
  */
 
 /**
- * ═══════════════════════════════════════════════════════════════════════════════
- * FASE 5b — CacheService (CACHÉ DE LECTURA RÁPIDA)
- * Capa NUEVA e independiente de la cola CacheQueue/CacheStore de arriba (esa cola
- * sigue viva — alimenta el botón "Forzar Actualización" para Admin/PowerEditor,
- * ver Index.html líneas 921-1034). Esta capa cachea getDashboardData/getPACData
- * directamente vía CacheService.getScriptCache(), sin pasar por hojas de cálculo.
- * ═══════════════════════════════════════════════════════════════════════════════
- */
-
-/** Clave fija: getDashboardData() no tiene parámetros de entrada */
-var CACHE_KEY_DASHBOARD = 'dash_data_v1';
-
-/**
- * getPACData(filtros, modoEjecucion) sí tiene parámetros — en vez de intentar
- * enumerar cada combinación posible de filtros al invalidar, se usa un token de
- * versión: invalidateDataCache() lo incrementa, y cada cache-key de PAC incluye
- * la versión vigente (ver _pac_buildCacheKey en pac_api.js). Un cache-key con una
- * versión vieja nunca hace hit contra el nuevo valor puesto por put() — se comporta
- * como invalidado sin necesidad de enumerar claves.
+ * ✅ FASE 5b/PAC — token de versión del caché de getPACData(). Es un símbolo puramente
+ * SERVER-SIDE: solo lo leen/escriben funciones .gs (_pac_buildCacheKey() en pac_api.js).
+ * No tiene contraparte en el cliente — google.script.run no comparte variables globales
+ * entre el sandbox del navegador y el runtime de Apps Script, solo resultados de función,
+ * así que no hay nada que "exponer" del lado del cliente para este símbolo.
+ * (Bug reparado 2026-08-06: la declaración original de esta constante se perdió de este
+ * archivo, dejando a _pac_buildCacheKey() referenciar un identificador sin declarar —
+ * causa raíz exacta de "Error cargando módulo PAC: CACHE_KEY_PAC_VERSION is not defined".)
  */
 var CACHE_KEY_PAC_VERSION = 'pac_cache_version';
-
-/**
- * Helper centralizado de invalidación. Se llama al final de cada escritura
- * transaccional que afecta los datos servidos por getDashboardData/getPACData
- * (seguimiento, filtro matriz, aprobación de borrador PAC, permisos).
- * Fail-open: un error aquí no debe tumbar la operación de negocio que la originó.
- */
-function invalidateDataCache() {
-  try {
-    var cache = CacheService.getScriptCache();
-    cache.remove(CACHE_KEY_DASHBOARD);
-
-    var current = parseInt(cache.get(CACHE_KEY_PAC_VERSION), 10);
-    if (isNaN(current)) current = 0;
-    cache.put(CACHE_KEY_PAC_VERSION, String(current + 1), 21600); // 6h, máximo permitido por CacheService
-  } catch (e) {
-    console.error('invalidateDataCache error: ' + e.message);
-  }
-}
 
 /** Helper: obtener email del usuario activo con fallback */
 function getCurrentUserEmail() {

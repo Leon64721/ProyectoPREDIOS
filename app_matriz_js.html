@@ -2195,28 +2195,46 @@ function updateKPIs() {
 
 let agrupacionesGlobal = [];
 
-function cargarFiltrosMatriz() {
-  google.script.run
-    .withSuccessHandler(response => {
-      agrupacionesGlobal = typeof response === 'string' ? JSON.parse(response) : response || [];
-      mostrarFiltrosMatriz(agrupacionesGlobal);
-      
-      // Actualizar info del filtro activo en pantalla (Persistente)
-      const filtro = window.filtroMatrizActivoGlobal;
-      if (filtro && filtro.id) {
-        document.getElementById('filtroActivoBox').style.display = 'flex';
-        document.getElementById('filtroActivoNombre').textContent = filtro.nombre;
-        document.getElementById('filtroActivoDesc').textContent = filtro.descripcion || '';
-        const proys = (filtro.proyectosIncluidos && filtro.proyectosIncluidos.length > 0) ? filtro.proyectosIncluidos.join(', ') : 'Todos (o excluidos)';
-        document.getElementById('filtroActivoProyectos').textContent = `Proyectos: ${proys}`;
-      } else {
-        document.getElementById('filtroActivoBox').style.display = 'none';
-      }
-      
-      // Renderizar las listas de checkboxes
-      renderProyectosCheckboxes();
-    })
-    .getFiltrosMatriz();
+/**
+ * ✅ FASE 6: hidrata las agrupaciones/filtros matriz directamente desde el
+ * payload inicial de getDashboardData() (campo `filtrosMatriz`, JSON.stringify
+ * de GestorFiltroMatriz.obtenerTodos() ya calculado en el servidor) — ya no
+ * dispara su propia llamada RPC en la carga inicial. Acepta tanto el string
+ * JSON crudo (caso normal, viene del payload) como un array ya parseado.
+ *
+ * Llamada SIN argumento (después de crear/activar/eliminar un filtro, o desde
+ * el botón "Recargar" — ver refreshFiltrosMatriz()) SÍ necesita datos frescos
+ * del servidor, a diferencia de la carga inicial: en ese caso hace el fetch
+ * RPC a getFiltrosMatriz() y se re-invoca a sí misma con la respuesta.
+ */
+function cargarFiltrosMatriz(filtrosMatrizData) {
+  if (filtrosMatrizData === undefined) {
+    google.script.run
+      .withSuccessHandler(response => cargarFiltrosMatriz(response))
+      .withFailureHandler(err => console.error('Error recargando filtros matriz:', err && err.message ? err.message : err))
+      .getFiltrosMatriz();
+    return;
+  }
+
+  agrupacionesGlobal = typeof filtrosMatrizData === 'string'
+    ? JSON.parse(filtrosMatrizData || '[]')
+    : (filtrosMatrizData || []);
+  mostrarFiltrosMatriz(agrupacionesGlobal);
+
+  // Actualizar info del filtro activo en pantalla (Persistente)
+  const filtro = window.filtroMatrizActivoGlobal;
+  if (filtro && filtro.id) {
+    document.getElementById('filtroActivoBox').style.display = 'flex';
+    document.getElementById('filtroActivoNombre').textContent = filtro.nombre;
+    document.getElementById('filtroActivoDesc').textContent = filtro.descripcion || '';
+    const proys = (filtro.proyectosIncluidos && filtro.proyectosIncluidos.length > 0) ? filtro.proyectosIncluidos.join(', ') : 'Todos (o excluidos)';
+    document.getElementById('filtroActivoProyectos').textContent = `Proyectos: ${proys}`;
+  } else {
+    document.getElementById('filtroActivoBox').style.display = 'none';
+  }
+
+  // Renderizar las listas de checkboxes
+  renderProyectosCheckboxes();
 }
 
 function mostrarFiltrosMatriz(filtros) {

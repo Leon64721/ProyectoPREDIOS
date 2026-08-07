@@ -377,6 +377,15 @@
         .filter-group {
             display: flex;
             flex-direction: column;
+            /* ✅ FASE 7 (corrección de alturas): con .row usando align-items-stretch,
+               cada columna ocupa la altura del hermano más alto (Proyecto/Tramo/Estado,
+               que tienen input+small+select). justify-content:end empuja el control
+               real de las columnas más cortas (Fecha Corte, Buscar RT, Acciones) hacia
+               abajo, alineando el borde inferior de todos los controles interactivos
+               en una sola línea — evita que los selectores de "dos niveles" dupliquen
+               la altura visual respecto al resto. */
+            justify-content: flex-end;
+            height: 100%;
         }
 
         .filter-group label {
@@ -426,6 +435,10 @@
         .filter-actions {
             display: flex;
             gap: 10px;
+            /* ✅ FASE 7 (corrección de alturas): mismo tratamiento que .filter-group —
+               alinea los botones con el borde inferior del resto de controles. */
+            align-items: flex-end;
+            height: 100%;
         }
 
         .filter-actions button {
