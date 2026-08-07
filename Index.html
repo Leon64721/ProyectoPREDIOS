@@ -193,11 +193,14 @@
                     </div>
                 </div>
 
-                <!-- Filtros -->
+                <!-- ✅ FASE 7: Filtros — fila única compacta con grid de Bootstrap 5 (reemplaza el
+                     CSS grid propio de .filter-row); el buscador global de RT vive aquí ahora,
+                     integrado con Proyecto/Tramo/Estado/Fecha Corte en vez de en un contenedor
+                     aparte que solo era visible cuando había un Filtro Matriz activo. -->
                 <div class="filter-bar">
                     <h6><i class="fas fa-filter"></i> Filtros</h6>
-                    <div class="filter-row">
-                        <div class="filter-group">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-lg-2 col-md-4 col-6 filter-group">
                             <label>Proyecto</label>
                             <input type="text" id="filterProyectoSearch" class="form-select-searchable" placeholder="Buscar proyecto..." oninput="applySelectSearch('filterProyecto', this.value)">
                             <small id="filterProyectoSearchMeta" class="text-muted" style="font-size:0.72rem; margin-top:4px; display:block;">Escribe para filtrar opciones</small>
@@ -206,7 +209,7 @@
                             </select>
                         </div>
 
-                        <div class="filter-group">
+                        <div class="col-lg-2 col-md-4 col-6 filter-group">
                             <label>Tramo</label>
                             <input type="text" id="filterTramoSearch" class="form-select-searchable" placeholder="Buscar tramo..." oninput="applySelectSearch('filterTramo', this.value)">
                             <small id="filterTramoSearchMeta" class="text-muted" style="font-size:0.72rem; margin-top:4px; display:block;">Escribe para filtrar opciones</small>
@@ -215,7 +218,7 @@
                             </select>
                         </div>
 
-                        <div class="filter-group">
+                        <div class="col-lg-2 col-md-4 col-6 filter-group">
                             <label>Estado</label>
                             <input type="text" id="filterEstadoSearch" class="form-select-searchable" placeholder="Buscar estado..." oninput="applySelectSearch('filterEstado', this.value)">
                             <small id="filterEstadoSearchMeta" class="text-muted" style="font-size:0.72rem; margin-top:4px; display:block;">Escribe para filtrar opciones</small>
@@ -224,17 +227,29 @@
                             </select>
                         </div>
 
-                        <div class="filter-group">
+                        <div class="col-lg-2 col-md-6 col-12 filter-group">
                             <label>Fecha Corte (Estimada)</label>
-                            <div style="display: flex; gap: 5px;">
-                                <select id="dateMode" onchange="applyFilters()" style="max-width: 100px;">
+                            <div class="d-flex gap-2">
+                                <select id="dateMode" onchange="applyFilters()" style="max-width: 110px;">
                                     <option value="ACUM">Acumulado</option>
                                     <option value="MES">Solo Mes</option>
                                 </select>
-                                <input type="date" id="dateFilter" onchange="applyFilters()">
+                                <input type="date" id="dateFilter" onchange="applyFilters()" class="flex-grow-1">
                             </div>
                         </div>
-                        <div class="filter-actions">
+
+                        <!-- ✅ FASE 7: buscador global de RT, integrado (antes vivía en la página
+                             "Filtro Matriz", dentro de #filtroActivoBox, visible solo cuando había
+                             un filtro/agrupación activa — ver #page-filtroMatriz más abajo). -->
+                        <div class="col-lg-2 col-md-6 col-12 filter-group">
+                            <label for="rt-search">Buscar RT</label>
+                            <div class="search-dropdown w-100">
+                                <input type="text" id="rt-search" class="form-select-searchable" placeholder="Buscar..." autocomplete="off" />
+                                <ul id="rt-results" class="dropdown-list hidden"></ul>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-2 col-12 filter-actions">
                             <button class="btn-apply" onclick="applyFilters()">
                                 <i class="fas fa-check"></i> Aplicar
                             </button>
@@ -808,24 +823,16 @@
 
                 <div class="filter-bar" id="filtroActivoBox" style="display: none; background: #e8f4f8; border-left-color: #3498db;">
                     <h6><i class="fas fa-check-circle"></i> Filtro o Agrupación Activa en el Sistema</h6>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        </div>
 
-                        <!-- UI: Forzar Actualización + Searchable Dropdowns -->
+                        <!-- ✅ FASE 7: el buscador global de RT (antes aquí, dentro de #ui-container,
+                             solo visible cuando este panel estaba activo) se movió al filtro
+                             principal de la Matriz — ver la fila de Filtros arriba en #page-matriz.
+                             Se quitó también el <div> vacío que envolvía este bloque. -->
                         <div id="ui-container">
                             <!-- Botón de actualización (Oculto por defecto) -->
                             <button id="btn-force-update" class="btn hidden">
                                 <span class="spinner hidden" id="update-spinner">↻</span> Forzar Actualización
                             </button>
-
-                            <!-- Contenedores para Dropdowns -->
-                            <div class="dropdown-group">
-                                <label for="rt-search">Filtro RT:</label>
-                                <div class="search-dropdown">
-                                    <input type="text" id="rt-search" placeholder="Buscar..." autocomplete="off" />
-                                    <ul id="rt-results" class="dropdown-list hidden"></ul>
-                                </div>
-                            </div>
                         </div>
 
                         <!-- Modal de Confirmación -->

@@ -369,13 +369,10 @@
             letter-spacing: 0.5px;
         }
 
-        .filter-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            align-items: end;
-            width: 100%; 
-        }
+        /* ✅ FASE 7: .filter-row (CSS grid propio) reemplazado por el grid nativo de
+           Bootstrap 5 (row/col) directamente en el markup — ver Index.html #page-matriz.
+           Bootstrap ya resuelve el apilado responsivo vía sus breakpoints de col-*,
+           por eso los overrides de @media que apuntaban a esta clase también se quitaron. */
 
         .filter-group {
             display: flex;
@@ -1218,10 +1215,6 @@
                 grid-template-columns: 1fr;
             }
 
-            .filter-row {
-                grid-template-columns: 1fr;
-            }
-
             .table {
                 font-size: 0.75rem;
             }
@@ -1248,11 +1241,6 @@
 
             .page-header h2 {
                 font-size: 1.3rem;
-            }
-
-            .filter-row {
-                grid-template-columns: 1fr;
-                gap: 10px;
             }
 
             .kpi-value {
