@@ -925,6 +925,11 @@ function pac_renderKPIsPeriodo(registros) {
   var pct = t.prog > 0 ? Math.min(100, (cumpl / t.prog) * 100) : (cumpl > 0 ? 100 : 0);
   var labelPeriodo = pac_escalaActual === 'mes' ? (mesesPeriodo[0] || pacState.datos.mesActual) : (pac_periodoActual || pac_escalaActual);
 
+  // ✅ FASE 5c: limpia el estado skeleton (ver pac_showSkeleton) al llegar el dato real.
+  ['pac-kpi-verde', 'pac-kpi-amarillo', 'pac-kpi-naranja', 'pac-kpi-rojo', 'pac-kpi-pct', 'pac-kpi-prog'].forEach(function(id) {
+    document.getElementById(id).classList.remove('kpi-skeleton');
+  });
+
   document.getElementById('pac-kpi-verde').textContent = t.VERDE;
   document.getElementById('pac-kpi-amarillo').textContent = t.AMARILLO;
   document.getElementById('pac-kpi-naranja').textContent = t.NARANJA;
@@ -1506,13 +1511,17 @@ function pac_toast(msg, tipo) {
 }
 
 /**
- * ✅ FASE 5c: Skeleton Loader del módulo PAC — reemplaza el bloque de spinner +
- * "Cargando módulo PAC..." (#pac-loader, que ocultaba TODO #pac-contenido) por
- * placeholders pulsantes con la forma real de los KPI de semáforo y de la tabla
- * de calendario. #pac-loader se mantiene en el HTML como fallback pero ya no se
- * usa en el camino feliz — solo #pac-contenido con contenido-skeleton.
- * Reutiliza las clases .skeleton-bar/.skeleton-cell definidas en app_core_js.html
- * (mismo documento, mismo scope global de CSS — no se duplican estilos).
+ * ✅ FASE 5c (revisión post-incidente): Skeleton Loader del módulo PAC —
+ * reemplaza el bloque de spinner + "Cargando módulo PAC..." (#pac-loader, que
+ * ocultaba TODO #pac-contenido) por placeholders pulsantes con la forma real
+ * de los KPI de semáforo y de la tabla de calendario. #pac-loader se mantiene
+ * en el HTML como fallback pero ya no se usa en el camino feliz.
+ * Construido con document.createElement()/appendChild(), sin innerHTML ni
+ * concatenación de cadenas HTML — HtmlService en @HEAD sirve la página vía
+ * document.write() y no tolera bloques HTML complejos reescritos como cadenas
+ * JS (ver DOCUMENTACION_TECNICA_VIVA.md, incidente mae_html_user SyntaxError).
+ * Reutiliza la clase .skeleton-cell definida en app_core_js.html (mismo
+ * documento, mismo scope global de CSS — no se duplican estilos).
  */
 function pac_showSkeleton() {
   document.getElementById('pac-loader').style.display = 'none';
@@ -1527,33 +1536,41 @@ function pac_showSkeleton() {
   ['pac-kpi-verde', 'pac-kpi-amarillo', 'pac-kpi-naranja', 'pac-kpi-rojo', 'pac-kpi-pct', 'pac-kpi-prog'].forEach(function(id) {
     var el = document.getElementById(id);
     if (el) {
-      el.style.color = '#bbbbbb';
-      el.innerHTML = '<span class="skeleton-bar" style="width:2.2em;"></span>';
+      el.classList.add('kpi-skeleton');
+      el.textContent = ' ';
     }
   });
 
+  function buildSkeletonCell(tag, width) {
+    var cell = document.createElement(tag);
+    var span = document.createElement('span');
+    span.className = 'skeleton-cell';
+    span.style.width = width + 'px';
+    cell.appendChild(span);
+    return cell;
+  }
+
   var head = document.getElementById('pac-tabla-head');
   if (head) {
-    head.innerHTML = '<tr><th><span class="skeleton-cell" style="width:80px;"></span></th>' +
-      '<th><span class="skeleton-cell" style="width:60px;"></span></th>' +
-      '<th><span class="skeleton-cell" style="width:60px;"></span></th>' +
-      '<th><span class="skeleton-cell" style="width:60px;"></span></th>' +
-      '<th><span class="skeleton-cell" style="width:50px;"></span></th></tr>';
+    while (head.firstChild) head.removeChild(head.firstChild);
+    var headRow = document.createElement('tr');
+    [80, 60, 60, 60, 50].forEach(function(w) {
+      headRow.appendChild(buildSkeletonCell('th', w));
+    });
+    head.appendChild(headRow);
   }
 
   var body = document.getElementById('pac-tabla-body');
   if (body) {
-    var rows = '';
+    while (body.firstChild) body.removeChild(body.firstChild);
     for (var i = 0; i < 6; i++) {
-      rows += '<tr class="skeleton-row">' +
-        '<td><span class="skeleton-cell" style="width:70px;"></span></td>' +
-        '<td><span class="skeleton-cell" style="width:45px;"></span></td>' +
-        '<td><span class="skeleton-cell" style="width:45px;"></span></td>' +
-        '<td><span class="skeleton-cell" style="width:45px;"></span></td>' +
-        '<td><span class="skeleton-cell" style="width:35px;"></span></td>' +
-        '</tr>';
+      var row = document.createElement('tr');
+      row.className = 'skeleton-row';
+      [70, 45, 45, 45, 35].forEach(function(w) {
+        row.appendChild(buildSkeletonCell('td', w));
+      });
+      body.appendChild(row);
     }
-    body.innerHTML = rows;
   }
 }
 

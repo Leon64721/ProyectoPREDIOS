@@ -230,23 +230,27 @@ styleSheet.textContent = `
         }
     }
 
-    /* ✅ FASE 5c: Skeleton Loader — placeholders pulsantes en vez del spinner de
-       página completa. Reemplazan el contenido real mientras carga; .text()/.html()
-       los sobrescriben naturalmente cuando llegan los datos reales, sin limpieza manual. */
+    /* ✅ FASE 5c (revisión): Skeleton Loader — placeholders pulsantes en vez del
+       spinner de página completa. showDashboardSkeleton()/pac_showSkeleton() ya NO
+       inyectan HTML vía innerHTML/template literals — solo togglean esta clase y
+       construyen nodos con document.createElement(), evitando el document.write()
+       de HtmlService en @HEAD que no tolera bloques HTML multilínea complejos
+       reescritos vía cadenas JS (ver DOCUMENTACION_TECNICA_VIVA.md, hallazgo del
+       mae_html_user syntax error). .textContent/.classList los limpian de forma
+       natural cuando llegan los datos reales, sin necesidad de limpieza manual. */
     @keyframes skeletonPulse {
         0%   { opacity: 0.55; }
         50%  { opacity: 1; }
         100% { opacity: 0.55; }
     }
 
-    .skeleton-bar {
-        display: inline-block;
-        height: 1em;
-        min-width: 3em;
-        border-radius: 4px;
+    /* Aplicada directamente sobre el elemento de valor KPI existente (ej. #val-total)
+       — sin span hijo, sin innerHTML. */
+    .kpi-skeleton {
+        color: transparent !important;
         background: linear-gradient(90deg, #e0e0e0, #eeeeee, #e0e0e0);
+        border-radius: 4px;
         animation: skeletonPulse 1.4s ease-in-out infinite;
-        vertical-align: middle;
     }
 
     .skeleton-row td {
@@ -596,23 +600,39 @@ function showDashboardSkeleton() {
   try {
     DASHBOARD_KPI_VALUE_IDS.forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.innerHTML = '<span class="skeleton-bar" style="width:2.5em;"></span>';
+      if (el) {
+        el.classList.add('kpi-skeleton');
+        el.textContent = ' '; // espacio no-separable: mantiene la altura sin dato real
+      }
     });
 
-    let skeletonRows = '';
-    for (let i = 0; i < 6; i++) {
-      skeletonRows += `<tr class="skeleton-row">
-        <td><span class="skeleton-cell" style="width:90px;"></span></td>
-        <td><span class="skeleton-cell" style="width:40px;"></span></td>
-        <td><span class="skeleton-cell" style="width:40px;"></span></td>
-        <td><span class="skeleton-cell" style="width:40px;"></span></td>
-        <td><span class="skeleton-cell" style="width:60px;"></span></td>
-        <td><span class="skeleton-cell" style="width:70px;"></span></td>
-      </tr>`;
-    }
+    // ✅ Revisión post-incidente: tabla-esqueleto construida con
+    // document.createElement()/appendChild(), sin innerHTML ni template literals
+    // multilínea — HtmlService en @HEAD sirve la página vía document.write() y
+    // no tolera bloques HTML complejos reescritos como cadenas JS (ver
+    // DOCUMENTACION_TECNICA_VIVA.md, incidente mae_html_user SyntaxError).
     const wrapper = document.getElementById('matrix-wrapper');
     if (wrapper) {
-      wrapper.innerHTML = `<table class="table-matrix"><tbody>${skeletonRows}</tbody></table>`;
+      while (wrapper.firstChild) wrapper.removeChild(wrapper.firstChild);
+      const table = document.createElement('table');
+      table.className = 'table-matrix';
+      const tbody = document.createElement('tbody');
+      const colWidths = [90, 40, 40, 40, 60, 70];
+      for (let i = 0; i < 6; i++) {
+        const tr = document.createElement('tr');
+        tr.className = 'skeleton-row';
+        colWidths.forEach(w => {
+          const td = document.createElement('td');
+          const span = document.createElement('span');
+          span.className = 'skeleton-cell';
+          span.style.width = w + 'px';
+          td.appendChild(span);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
     }
   } catch (e) {
     console.error('❌ Error mostrando skeleton del tablero:', e.message);
@@ -627,10 +647,19 @@ function hideDashboardSkeleton() {
   try {
     DASHBOARD_KPI_VALUE_IDS.forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.textContent = '-';
+      if (el) {
+        el.classList.remove('kpi-skeleton');
+        el.textContent = '-';
+      }
     });
     const wrapper = document.getElementById('matrix-wrapper');
-    if (wrapper) wrapper.innerHTML = '<div class="text-center p-3 text-muted">No se pudieron cargar los datos.</div>';
+    if (wrapper) {
+      while (wrapper.firstChild) wrapper.removeChild(wrapper.firstChild);
+      const msg = document.createElement('div');
+      msg.className = 'text-center p-3 text-muted';
+      msg.textContent = 'No se pudieron cargar los datos.';
+      wrapper.appendChild(msg);
+    }
   } catch (e) {
     console.error('❌ Error limpiando skeleton del tablero:', e.message);
   }

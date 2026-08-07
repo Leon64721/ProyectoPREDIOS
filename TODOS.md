@@ -217,3 +217,19 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 **Context:** El Skeleton Loader (placeholders CSS pulsantes) SÍ quedó implementado y es la mejora principal de esta fase — este ítem es solo sobre la capa adicional de "pintar datos viejos mientras confirma", que se decidió posponer via AskUserQuestion en vez de aceptar el riesgo. Ver `DOCUMENTACION_TECNICA_VIVA.md` sección de Fase 5c para el detalle completo del `/review` (incluye 2 hallazgos adicionales del subagente adversarial ya corregidos en el mismo commit: `refreshData()` seguía mostrando el overlay de página completa, y `pac_mostrarError()` destruía el DOM que el reintento necesitaba).
 
 **Depends on / blocked by:** Depende de una decisión de diseño sobre inyección de identidad server-side en `Index.html` — no depende de ningún otro ítem de este backlog.
+
+---
+
+## 12. Coordinación entre agentes concurrentes sobre el mismo `@HEAD` de `clasp` — [PENDIENTE, hallado 2026-08-06]
+
+**What:** Establecer un protocolo (aunque sea informal — un aviso en el chat, un archivo lock, o simplemente coordinar turnos) antes de que más de una sesión de agente (Claude Code, GitHub Copilot, o cualquier otra) ejecute `clasp push` sobre el mismo deployment `@HEAD` en una ventana de tiempo cercana.
+
+**Why:** Durante la depuración de un `SyntaxError` en Fase 5c, se descubrió que una sesión de GitHub Copilot había editado `Index.html` (eliminando por accidente la línea `<?!= include('app_permisos_js') ?>`, con un diagnóstico basado en el estado desactualizado del repo — creía que `Index.html` todavía incluía `app_js`, retirado desde la Fase 4 de CONC-FE-02) y había ejecutado su propio `clasp push`, todo esto en el working tree local sin commitear, de forma concurrente con esta sesión de Claude Code. El `clasp push --force` de esta sesión estuvo a punto de volver a desplegar esa versión rota sin darse cuenta — se detectó por revisar `git status`/`git diff` antes de comitear, no porque el proceso lo hubiera prevenido. Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.15-12.16 para el detalle completo.
+
+**Pros:** Evita que el trabajo de un agente sobrescriba silenciosamente el de otro en el mismo deployment; reduce el riesgo de que un usuario reporte "sigue roto" cuando en realidad el problema es que dos versiones distintas se están alternando en producción sin que nadie lo note.
+
+**Cons:** Requiere un mecanismo de coordinación que hoy no existe — este proyecto ya usa `DOCUMENTACION_TECNICA_VIVA.md` como bitácora compartida (ver Sección 7), pero eso documenta DESPUÉS del hecho, no previene el push concurrente en sí.
+
+**Context:** Confirmado por timestamps de archivo (`Index.html` y `DOCUMENTACION_TECNICA_VIVA.md` modificados minutos antes de que esta sesión empezara a editar los mismos archivos) — no es una hipótesis, es un incidente real ya ocurrido una vez.
+
+**Depends on / blocked by:** Ninguno — es una decisión de proceso/flujo de trabajo, no de código.

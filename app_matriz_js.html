@@ -807,6 +807,13 @@ function updateKPIs() {
             sumPag += parseMoneyRobust(d[C.PAG]);
         });
 
+        // ✅ FASE 5c: limpia el estado skeleton (ver showDashboardSkeleton en app_core_js.html)
+        // al llegar el dato real.
+        DASHBOARD_KPI_VALUE_IDS.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('kpi-skeleton');
+        });
+
         // ✅ ACTUALIZAR TOTAL GENERAL
         $('#val-total').text(totalGeneral);
         $('#val-total-cesion').text(totalCesion);
