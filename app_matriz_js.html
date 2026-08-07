@@ -47,50 +47,31 @@ $(document).ready(function() {
     // ✅ Configurar limpieza de modales
     setupModalCleanup();
     bindSearchableFilterInputs();
-    
+
+    // Priorizar datos del tablero: no bloquear arranque por consulta de rol.
+    $('#user-display').text('Cargando...');
+    $('#role-display').text('Cargando...');
+    loadDashboardData();
+
     try {
         google.script.run
             .withSuccessHandler(function(data) {
-                try {
-                    console.log('✅ Datos de usuario recibidos:', data);
-                    
-                    if (!data) {
-                        throw new Error('Datos de usuario vacíos');
-                    }
-                    
-                    currentUser = data.user || 'Usuario';
-                    currentRole = data.role || 'Lector';
-                    
-                    $('#user-display').text(currentUser);
-                    $('#role-display').text(currentRole);
-                    
-                    console.log('👤 Usuario: ' + currentUser);
-                    console.log('👥 Rol: ' + currentRole);
-                    
-                    loadDashboardData();
-                } catch (e) {
-                    console.error('❌ Error procesando datos de usuario: ' + e.message);
-                    currentUser = 'Usuario';
-                    currentRole = 'Lector';
-                    $('#user-display').text(currentUser);
-                    $('#role-display').text(currentRole);
-                    loadDashboardData();
-                }
-            })
-            .withFailureHandler(function(error) {
-                console.error('❌ Error obteniendo datos de usuario: ' + error.message);
-                currentUser = 'Usuario';
-                currentRole = 'Lector';
+                if (!data) return;
+                currentUser = data.user || currentUser || 'Usuario';
+                currentRole = data.role || currentRole || 'Lector';
                 $('#user-display').text(currentUser);
                 $('#role-display').text(currentRole);
-                loadDashboardData();
+            })
+            .withFailureHandler(function(error) {
+                console.warn('⚠️ No se pudo hidratar rol en background: ' + (error && error.message ? error.message : error));
+                if (!currentUser) currentUser = 'Usuario';
+                if (!currentRole) currentRole = 'Lector';
+                $('#user-display').text(currentUser);
+                $('#role-display').text(currentRole);
             })
             .getUserAndRole();
     } catch (e) {
-        console.error('❌ Error crítico en inicialización: ' + e.message);
-        currentUser = 'Usuario';
-        currentRole = 'Lector';
-        loadDashboardData();
+        console.warn('⚠️ Hidratar rol en background falló: ' + e.message);
     }
 });
 

@@ -1057,6 +1057,59 @@ Solicitud explícita del usuario para iniciar "Fase 5: Optimización de Rendimie
 2. `getDashboardData` deja de depender de una sola key de `CacheService`; si el payload supera el umbral, se guarda fragmentado y se reconstruye al leer.
 3. Si algún fragmento desaparece o expira antes que el resto, el sistema invalida el conjunto y recalcula desde Sheets en vez de devolver JSON incompleto/corrupto.
 
+### 12.18 [2026-08-06] [CONC-FE-04] Diagnóstico y corrección de demora de arranque + mejora UI/UX transversal
+
+**Archivo(s) intervenido(s):**
+- `Codigo.js`
+- `datos.js`
+- `app_core_js.html`
+- `app_matriz_js.html`
+- `Index.html`
+- `app_alertas_js.html`
+- `estilos.html`
+
+**Diagnóstico confirmado:**
+1. El arranque se bloqueaba por una llamada previa a `getUserAndRole()` en `$(document).ready` antes de disparar `getDashboardData()`.
+2. `getDashboardData()` embebía datos de filtros matriz completos en el payload inicial (`filtrosMatriz`), aumentando tamaño y tiempo de serialización/transferencia.
+3. El cálculo del filtro matriz activo podía incurrir en lecturas redundantes (`obtenerFiltroActivo` + `obtenerPorId`).
+
+**Correcciones ejecutadas:**
+1. **Desbloqueo de arranque frontend**:
+  - `app_matriz_js.html`: se prioriza `loadDashboardData()` al iniciar; la hidratación de `getUserAndRole()` queda en segundo plano (no bloqueante).
+2. **Reducción de payload inicial**:
+  - `Codigo.js`: `getDashboardData()` ya no envía `filtrosMatriz` completos en la respuesta inicial.
+  - `app_core_js.html`: `cargarFiltrosMatriz()` se invoca diferida (`setTimeout(..., 0)`) para cargar agrupaciones después del primer render.
+3. **Lectura más eficiente de filtro activo**:
+  - `datos.js`: `obtenerFiltroActivo()` ahora mapea directamente la fila activa y evita releer toda la colección por ID.
+
+**Mejoras UI/UX aplicadas en esta misma intervención:**
+1. `Index.html` + `app_alertas_js.html`: se migraron los filtros de Alertas (`Regla`, `Proyecto`, `Articulador`) a dropdowns buscables (misma experiencia que Proyecto/Tramo/Estado).
+2. `estilos.html`: se reforzó control de overflow (`overflow-wrap`/`word-break`) para títulos KPI, tarjetas de alertas, badges y celdas de tabla.
+
+**Validaciones ejecutadas:**
+- `get_errors` sin errores en todos los archivos modificados.
+- `node --check` exitoso para `Codigo.js`, `datos.js` y para el contenido JS extraído de `app_core_js.html`, `app_matriz_js.html`, `app_alertas_js.html`.
+
+**Impacto funcional esperado:**
+1. Menor tiempo hasta primer render útil del tablero al eliminar el bloqueo de identidad previo.
+2. Menor latencia y presión de caché al no transportar filtros matriz completos en la carga inicial.
+3. Mayor consistencia visual y descubribilidad en filtros secundarios (Alertas) con búsqueda integrada.
+
+### 12.19 [2026-08-06] [CONC-FE-04-QA] Checklist guiado de Sprint 1 (Performance + UI/UX)
+
+**Entregable generado:**
+- `QA_SPRINT1_UIUX.md` (nuevo): checklist por pantallas para cierre de Sprint 1, separando validaciones "por código" y pendientes de validación manual en runtime real.
+
+**Cobertura del checklist:**
+1. Matriz General: filtros buscables principales y consistencia de barra.
+2. Alertas: filtros buscables (`Regla`, `Proyecto`, `Articulador`) y comportamiento de limpieza.
+3. PAC/Historial/Auditoría/Permisos/Reportes: puntos de revisión visual pendientes en runtime (overflow, alineación, legibilidad).
+4. Evidencia automática incluida: `get_errors` + `node --check` sobre archivos modificados.
+
+**Estado de cierre Sprint 1:**
+- **Listo técnicamente** (código y sintaxis validados).
+- **Pendiente cierre visual final** en WebApp runtime para declarar Sprint 1 completamente cerrado de cara a usuario final.
+
 **Decisión de scope (`/plan-ceo-review`, Mega Plan Review, modo HOLD SCOPE):** Firestore u otra base de datos externa como reemplazo de Sheets, descartada por ROI negativo frente al costo/riesgo de reescritura dado el tamaño actual del sistema. Arquitectura aprobada: 2 capas de caché (`CacheService` en backend + IndexedDB en cliente) sobre el mismo origen Sheets, más separación física del spreadsheet de LOGS. En modo HOLD SCOPE el documento de plan CEO completo se omite (regla propia del skill) — el output formal es el dictamen de `/plan-eng-review` que sigue.
 
 **Arquitectura de componentes (Mermaid):**

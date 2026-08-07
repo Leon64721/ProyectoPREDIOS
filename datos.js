@@ -360,9 +360,31 @@ class GestorFiltroMatriz {
       if (!filaActiva) return null;
 
       const idIndex = findColumnIndex(headers, 'ID');
-      if (idIndex < 0) return null;
+      const nomIdx = findColumnIndex(headers, 'NOMBRE_FILTRO');
+      const descIdx = findColumnIndex(headers, 'DESCRIPCION');
+      const inclIdx = findColumnIndex(headers, 'PROYECTOS_INCLUIDOS');
+      const exclIdx = findColumnIndex(headers, 'PROYECTOS_EXCLUIDOS');
+      const tipoIdx = findColumnIndex(headers, 'TIPO');
+      const usrIdx = findColumnIndex(headers, 'USUARIO_CREADOR');
+      const fechaIdx = findColumnIndex(headers, 'FECHA_CREACION');
+      const modIdx = findColumnIndex(headers, 'ULTIMA_MODIFICACION');
 
-      return this.obtenerPorId(filaActiva[headers[idIndex]]);
+      return {
+        id: idIndex >= 0 ? filaActiva[headers[idIndex]] || '' : '',
+        nombre: nomIdx >= 0 ? filaActiva[headers[nomIdx]] || '' : '',
+        descripcion: descIdx >= 0 ? filaActiva[headers[descIdx]] || '' : '',
+        proyectosIncluidos: inclIdx >= 0
+          ? String(filaActiva[headers[inclIdx]] || '').split(',').map(p => p.trim()).filter(p => p)
+          : [],
+        proyectosExcluidos: exclIdx >= 0
+          ? String(filaActiva[headers[exclIdx]] || '').split(',').map(p => p.trim()).filter(p => p)
+          : [],
+        activo: filaActiva[headers[activoIndex]] || 'SI',
+        tipo: tipoIdx >= 0 ? filaActiva[headers[tipoIdx]] || 'INDIVIDUAL' : 'INDIVIDUAL',
+        usuarioCreador: usrIdx >= 0 ? filaActiva[headers[usrIdx]] || '' : '',
+        fechaCreacion: fechaIdx >= 0 ? filaActiva[headers[fechaIdx]] || '' : '',
+        ultimaModificacion: modIdx >= 0 ? filaActiva[headers[modIdx]] || '' : ''
+      };
     } catch (e) {
       console.error(`Error en obtenerFiltroActivo: ${e.message}`);
       return null;

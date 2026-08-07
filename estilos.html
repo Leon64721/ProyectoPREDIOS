@@ -449,6 +449,7 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            line-height: 1.25;
         }
 
         .filter-select-toggle:hover,
@@ -518,6 +519,21 @@
             font-size: 0.8rem;
             color: #7f8c8d;
             text-align: center;
+        }
+
+        .kpi-title,
+        .kpi-value,
+        .tarjeta-alerta h6,
+        .tarjeta-alerta p,
+        .tarjeta-alerta .badge,
+        .table td,
+        .table th {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .table-responsive {
+            overflow-x: auto;
         }
 
         .filter-actions {

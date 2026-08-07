@@ -550,21 +550,51 @@
                     <div class="row g-2">
                         <div class="col-md-4">
                             <label class="small fw-bold text-muted">Tipo de Alerta (Regla)</label>
-                            <select id="filterAlertaRegla" class="form-select form-select-sm" onchange="aplicarFiltrosAlertas()">
-                                <option value="ALL">Todas las reglas</option>
-                            </select>
+                            <div class="filter-select-shell dropdown" data-alert-filter-id="filterAlertaRegla">
+                                <button class="btn filter-select-toggle dropdown-toggle" type="button" id="filterAlertaReglaToggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                                    Todas las reglas
+                                </button>
+                                <div class="dropdown-menu filter-search-menu w-100 p-2" id="filterAlertaReglaMenu" aria-labelledby="filterAlertaReglaToggle">
+                                    <input type="text" id="filterAlertaReglaSearch" class="form-select-searchable" placeholder="Buscar regla..." oninput="applyAlertSelectSearch('filterAlertaRegla', this.value)" autocomplete="off">
+                                    <small class="text-muted">Escribe para filtrar opciones</small>
+                                    <div id="filterAlertaReglaOptions" class="filter-options-list"></div>
+                                </div>
+                                <select id="filterAlertaRegla" class="form-select form-select-sm d-none" onchange="aplicarFiltrosAlertas()" aria-hidden="true">
+                                    <option value="ALL">Todas las reglas</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="col-md-3">
                             <label class="small fw-bold text-muted">Proyecto</label>
-                            <select id="filterAlertaProyecto" class="form-select form-select-sm" onchange="aplicarFiltrosAlertas()">
-                                <option value="ALL">Todos los proyectos</option>
-                            </select>
+                            <div class="filter-select-shell dropdown" data-alert-filter-id="filterAlertaProyecto">
+                                <button class="btn filter-select-toggle dropdown-toggle" type="button" id="filterAlertaProyectoToggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                                    Todos los proyectos
+                                </button>
+                                <div class="dropdown-menu filter-search-menu w-100 p-2" id="filterAlertaProyectoMenu" aria-labelledby="filterAlertaProyectoToggle">
+                                    <input type="text" id="filterAlertaProyectoSearch" class="form-select-searchable" placeholder="Buscar proyecto..." oninput="applyAlertSelectSearch('filterAlertaProyecto', this.value)" autocomplete="off">
+                                    <small class="text-muted">Escribe para filtrar opciones</small>
+                                    <div id="filterAlertaProyectoOptions" class="filter-options-list"></div>
+                                </div>
+                                <select id="filterAlertaProyecto" class="form-select form-select-sm d-none" onchange="aplicarFiltrosAlertas()" aria-hidden="true">
+                                    <option value="ALL">Todos los proyectos</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="col-md-3">
                             <label class="small fw-bold text-muted">Articulador / Abogado</label>
-                            <select id="filterAlertaArticulador" class="form-select form-select-sm" onchange="aplicarFiltrosAlertas()">
-                                <option value="ALL">Todos los articuladores</option>
-                            </select>
+                            <div class="filter-select-shell dropdown" data-alert-filter-id="filterAlertaArticulador">
+                                <button class="btn filter-select-toggle dropdown-toggle" type="button" id="filterAlertaArticuladorToggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                                    Todos los articuladores
+                                </button>
+                                <div class="dropdown-menu filter-search-menu w-100 p-2" id="filterAlertaArticuladorMenu" aria-labelledby="filterAlertaArticuladorToggle">
+                                    <input type="text" id="filterAlertaArticuladorSearch" class="form-select-searchable" placeholder="Buscar articulador..." oninput="applyAlertSelectSearch('filterAlertaArticulador', this.value)" autocomplete="off">
+                                    <small class="text-muted">Escribe para filtrar opciones</small>
+                                    <div id="filterAlertaArticuladorOptions" class="filter-options-list"></div>
+                                </div>
+                                <select id="filterAlertaArticulador" class="form-select form-select-sm d-none" onchange="aplicarFiltrosAlertas()" aria-hidden="true">
+                                    <option value="ALL">Todos los articuladores</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="col-md-2 d-flex align-items-end">
                             <button class="btn btn-sm btn-outline-secondary w-100 fw-bold" onclick="limpiarFiltrosAlertas()">

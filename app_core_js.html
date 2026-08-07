@@ -684,6 +684,9 @@ function loadDashboardData() {
     }
 
     try {
+            currentUser = response.user || currentUser || 'Usuario';
+            $('#user-display').text(currentUser);
+
       // ✅ Guardar filtro activo y lista COMPLETA de proyectos (para el admin)
       window.filtroMatrizActivoGlobal = response.filtroMatrizActivo ? JSON.parse(response.filtroMatrizActivo) : null;
       window.proyectosListaUnicaGlobal = response.allProyectos ? JSON.parse(response.allProyectos) : [];
@@ -730,9 +733,11 @@ function onDataLoaded(result) {
 
         applyFilters();
 
-        // ✅ FASE 6: agrupaciones/filtros matriz ya vienen en result.filtrosMatriz
-        // (embebidos por getDashboardData() en el servidor) — sin RPC secundaria.
-        cargarFiltrosMatriz(result.filtrosMatriz);
+        // Cargar lista completa de filtros matriz en segundo plano para no
+        // agrandar ni bloquear la respuesta inicial del dashboard.
+        window.setTimeout(function() {
+            cargarFiltrosMatriz();
+        }, 0);
         renderProyectosCheckboxes();
 
         $('#loader').fadeOut(300);

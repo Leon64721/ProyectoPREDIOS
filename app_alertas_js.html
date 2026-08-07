@@ -315,6 +315,141 @@ function renderizarAlertas(alertas) {
     aplicarFiltrosAlertas();
 }
 
+const alertSearchableSelectState = {
+    filterAlertaRegla: [],
+    filterAlertaProyecto: [],
+    filterAlertaArticulador: []
+};
+
+function updateAlertSelectToggleLabel(selectId) {
+    const toggle = document.getElementById(selectId + 'Toggle');
+    const select = document.getElementById(selectId);
+    if (!toggle || !select) return;
+
+    const selected = select.options[select.selectedIndex];
+    toggle.textContent = selected ? selected.text : 'Seleccionar';
+}
+
+function cacheAlertSelectOptions(selectId) {
+    const options = [];
+    $('#' + selectId + ' option').each(function() {
+        options.push({ value: this.value, text: this.textContent || this.innerText || '' });
+    });
+    alertSearchableSelectState[selectId] = options;
+}
+
+function applyAlertSelectSearch(selectId, query) {
+    const allOptions = alertSearchableSelectState[selectId] || [];
+    const optionsContainer = document.getElementById(selectId + 'Options');
+    const select = document.getElementById(selectId);
+    if (!allOptions.length || !optionsContainer || !select) return;
+
+    const normalizedQuery = String(query || '').toUpperCase().trim();
+    const firstOption = allOptions[0];
+    const currentValue = select.value || (firstOption ? firstOption.value : 'ALL');
+    const filtered = normalizedQuery
+        ? allOptions.slice(1).filter(o => String(o.text).toUpperCase().includes(normalizedQuery))
+        : allOptions.slice(1);
+
+    optionsContainer.innerHTML = '';
+
+    if (firstOption) {
+        const allButton = document.createElement('button');
+        allButton.type = 'button';
+        allButton.className = 'filter-option-item';
+        if (firstOption.value === currentValue) allButton.classList.add('active');
+        allButton.textContent = firstOption.text;
+        allButton.setAttribute('data-value', firstOption.value);
+        allButton.addEventListener('click', function() {
+            select.value = firstOption.value;
+            updateAlertSelectToggleLabel(selectId);
+            aplicarFiltrosAlertas();
+            const toggle = document.getElementById(selectId + 'Toggle');
+            if (toggle && window.bootstrap && bootstrap.Dropdown) {
+                bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+            }
+        });
+        optionsContainer.appendChild(allButton);
+    }
+
+    if (!filtered.length) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'filter-empty-state';
+        emptyState.textContent = 'Sin coincidencias para la búsqueda';
+        optionsContainer.appendChild(emptyState);
+        return;
+    }
+
+    filtered.forEach(function(o) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'filter-option-item';
+        if (o.value === currentValue) button.classList.add('active');
+        button.textContent = o.text;
+        button.setAttribute('data-value', o.value);
+        button.addEventListener('click', function() {
+            select.value = o.value;
+            updateAlertSelectToggleLabel(selectId);
+            aplicarFiltrosAlertas();
+            const toggle = document.getElementById(selectId + 'Toggle');
+            if (toggle && window.bootstrap && bootstrap.Dropdown) {
+                bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+            }
+        });
+        optionsContainer.appendChild(button);
+    });
+
+    const stillExists = filtered.some(o => o.value === currentValue);
+    if (!stillExists && firstOption) {
+        select.value = firstOption.value;
+    }
+    updateAlertSelectToggleLabel(selectId);
+}
+
+function refreshAlertSelectSearch(selectId) {
+    cacheAlertSelectOptions(selectId);
+    const input = document.getElementById(selectId + 'Search');
+    const query = input ? (input.value || '') : '';
+    applyAlertSelectSearch(selectId, query);
+    updateAlertSelectToggleLabel(selectId);
+}
+
+function bindAlertSearchableInputs() {
+    ['filterAlertaRegla', 'filterAlertaProyecto', 'filterAlertaArticulador'].forEach(function(selectId) {
+        const input = document.getElementById(selectId + 'Search');
+        const select = document.getElementById(selectId);
+        const shell = document.querySelector('[data-alert-filter-id="' + selectId + '"]');
+        if (!input || !select || !shell) return;
+        if (input.dataset.bound === 'true') return;
+
+        input.dataset.bound = 'true';
+
+        shell.addEventListener('shown.bs.dropdown', function() {
+            window.setTimeout(function() {
+                input.focus();
+                input.select();
+                applyAlertSelectSearch(selectId, input.value || '');
+            }, 0);
+        });
+
+        input.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                const hasQuery = String(input.value || '').trim().length > 0;
+                const preferredOption = hasQuery
+                    ? document.querySelector('#' + selectId + 'Options .filter-option-item[data-value]:not([data-value="ALL"])')
+                    : document.querySelector('#' + selectId + 'Options .filter-option-item[data-value]');
+                if (preferredOption) preferredOption.click();
+            }
+            if (ev.key === 'Escape') {
+                ev.preventDefault();
+                input.value = '';
+                applyAlertSelectSearch(selectId, '');
+            }
+        });
+    });
+}
+
 // Extrae las opciones únicas para poblar los filtros desplegables
 function popularDropdownsAlertas() {
     const reglas = [...new Set(alertasGlobales.map(a => a.REGLA))].sort();
@@ -333,6 +468,11 @@ function popularDropdownsAlertas() {
 
     $artic.find('option:not(:first)').remove();
     articuladores.forEach(ar => $artic.append(`<option value="${ar}">${ar}</option>`));
+
+    bindAlertSearchableInputs();
+    refreshAlertSelectSearch('filterAlertaRegla');
+    refreshAlertSelectSearch('filterAlertaProyecto');
+    refreshAlertSelectSearch('filterAlertaArticulador');
 }
 
 // Al dar clic en un KPI de la parte superior (Rojo, Naranja, Amarillo, Todos)
@@ -354,6 +494,12 @@ function limpiarFiltrosAlertas() {
     $('#filterAlertaRegla').val('ALL');
     $('#filterAlertaProyecto').val('ALL');
     $('#filterAlertaArticulador').val('ALL');
+    $('#filterAlertaReglaSearch').val('');
+    $('#filterAlertaProyectoSearch').val('');
+    $('#filterAlertaArticuladorSearch').val('');
+    refreshAlertSelectSearch('filterAlertaRegla');
+    refreshAlertSelectSearch('filterAlertaProyecto');
+    refreshAlertSelectSearch('filterAlertaArticulador');
     filtrarAlertasPorNivel('ALL');
 }
 

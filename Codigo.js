@@ -368,24 +368,10 @@ function getDashboardData() {
     const dataFilesIds = getDataFilesIds();
     
     // ✅ OBTENER FILTRO ACTIVO DE LA BASE DE DATOS
-    let gestorFiltro = null;
     let filtroActivo = null;
-    let filtrosMatrizTodos = [];
     try {
-      gestorFiltro = new GestorFiltroMatriz();
-      // ✅ FASE 8 (perf): una sola lectura de la hoja FiltroMatriz en vez de tres.
-      // obtenerFiltroActivo() internamente hace su propio leerDatos() + llama a
-      // obtenerPorId(), que a su vez llama a obtenerTodos() (OTRO leerDatos()) —
-      // GestorDatos no cachea lecturas (this.cache solo se escribe para invalidar
-      // en escrituras, nunca se lee), así que cada llamada es un round-trip real
-      // a Sheets. Aquí se llama a obtenerTodos() UNA vez y el filtro activo se
-      // deriva del mismo array en memoria (obtenerTodos() ya incluye el campo
-      // `activo` por fila — ver datos.js:obtenerTodos()).
-      // ✅ FASE 6: filtrosMatrizTodos se embebe en el payload para que el cliente
-      // no necesite una llamada RPC aparte (google.script.run.getFiltrosMatriz())
-      // — ver app_matriz_js.html, hidratación desde el payload inicial.
-      filtrosMatrizTodos = gestorFiltro.obtenerTodos();
-      filtroActivo = filtrosMatrizTodos.find(f => f.activo === 'ACTIVO_PRINCIPAL') || null;
+      const gestorFiltro = new GestorFiltroMatriz();
+      filtroActivo = gestorFiltro.obtenerFiltroActivo();
     } catch (e) {}
 
     let proyectosVisibles = { todos: true, proyectos: [], excluidos: [] };
@@ -474,8 +460,7 @@ function getDashboardData() {
       columns: JSON.stringify(headers),
       seguimiento: JSON.stringify(seguimientoRecords),
       allProyectos: JSON.stringify(Array.from(allProyectosSet).sort()), // ✅ ENVIAMOS LA LISTA COMPLETA AL ADMIN
-      filtroMatrizActivo: JSON.stringify(filtroActivo || {}),
-      filtrosMatriz: JSON.stringify(filtrosMatrizTodos) // ✅ FASE 6: reemplaza el RPC getFiltrosMatriz()
+      filtroMatrizActivo: JSON.stringify(filtroActivo || {})
     };
 
     // ✅ CacheService.put() lanza síncronamente si el payload supera 100KB —
