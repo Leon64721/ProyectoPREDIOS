@@ -26,6 +26,91 @@ var CACHE_KEY_PAC_VERSION = 'pac_cache_version';
  * de entrada.
  */
 var CACHE_KEY_DASHBOARD = 'dash_data_v1';
+var CACHE_KEY_DASHBOARD_META = CACHE_KEY_DASHBOARD + '_meta';
+var CACHE_KEY_DASHBOARD_CHUNK_PREFIX = CACHE_KEY_DASHBOARD + '_chunk_';
+var CACHE_DASHBOARD_CHUNK_SIZE = 90000;
+
+function _dashboardChunkKey(index) {
+  return CACHE_KEY_DASHBOARD_CHUNK_PREFIX + String(index);
+}
+
+function _removeDashboardCacheKeys(cache, knownChunkCount) {
+  try {
+    cache.remove(CACHE_KEY_DASHBOARD);
+    cache.remove(CACHE_KEY_DASHBOARD_META);
+
+    var maxToRemove = knownChunkCount || 12;
+    for (var i = 1; i <= maxToRemove; i++) {
+      cache.remove(_dashboardChunkKey(i));
+    }
+  } catch (e) {
+    console.error('_removeDashboardCacheKeys error: ' + e.message);
+  }
+}
+
+function getDashboardCachePayload(cache) {
+  var metaRaw = cache.get(CACHE_KEY_DASHBOARD_META);
+  if (metaRaw) {
+    var meta = null;
+    try {
+      meta = JSON.parse(metaRaw);
+    } catch (e) {
+      console.warn('⚠️ Meta de caché dashboard corrupta, invalidando: ' + e.message);
+      _removeDashboardCacheKeys(cache, 12);
+      return null;
+    }
+
+    var chunkCount = Number(meta.chunkCount || 0);
+    if (!chunkCount || chunkCount < 1) {
+      _removeDashboardCacheKeys(cache, 12);
+      return null;
+    }
+
+    var chunks = [];
+    for (var i = 1; i <= chunkCount; i++) {
+      var chunk = cache.get(_dashboardChunkKey(i));
+      if (!chunk) {
+        console.warn('⚠️ Faltó chunk ' + i + '/' + chunkCount + ' de dashboard, invalidando caché completo');
+        _removeDashboardCacheKeys(cache, chunkCount);
+        return null;
+      }
+      chunks.push(chunk);
+    }
+
+    return chunks.join('');
+  }
+
+  return cache.get(CACHE_KEY_DASHBOARD);
+}
+
+function putDashboardCachePayload(cache, payload, ttlSeconds) {
+  var jsonStr = String(payload || '');
+  if (!jsonStr) return { chunkCount: 0, payloadSize: 0 };
+
+  var maxChunkSize = CACHE_DASHBOARD_CHUNK_SIZE;
+  var chunkCount = Math.ceil(jsonStr.length / maxChunkSize);
+  _removeDashboardCacheKeys(cache, 20);
+
+  if (chunkCount <= 1) {
+    cache.put(CACHE_KEY_DASHBOARD, jsonStr, ttlSeconds);
+    return { chunkCount: 1, payloadSize: jsonStr.length };
+  }
+
+  for (var i = 0; i < chunkCount; i++) {
+    var start = i * maxChunkSize;
+    var end = start + maxChunkSize;
+    cache.put(_dashboardChunkKey(i + 1), jsonStr.substring(start, end), ttlSeconds);
+  }
+
+  cache.put(CACHE_KEY_DASHBOARD_META, JSON.stringify({
+    chunkCount: chunkCount,
+    payloadSize: jsonStr.length,
+    chunkSize: maxChunkSize,
+    createdAt: new Date().toISOString()
+  }), ttlSeconds);
+
+  return { chunkCount: chunkCount, payloadSize: jsonStr.length };
+}
 
 /**
  * Helper centralizado de invalidación del caché de lectura. Se llama al final de
@@ -36,7 +121,16 @@ var CACHE_KEY_DASHBOARD = 'dash_data_v1';
 function invalidateDataCache() {
   try {
     var cache = CacheService.getScriptCache();
-    cache.remove(CACHE_KEY_DASHBOARD);
+    var metaRaw = cache.get(CACHE_KEY_DASHBOARD_META);
+    var chunkCount = 12;
+    if (metaRaw) {
+      try {
+        var parsed = JSON.parse(metaRaw);
+        chunkCount = Number(parsed.chunkCount || 12);
+      } catch (e) {}
+    }
+
+    _removeDashboardCacheKeys(cache, chunkCount);
   } catch (e) {
     console.error('invalidateDataCache error: ' + e.message);
   }

@@ -432,6 +432,94 @@
             box-shadow: 0 0 0 3px rgba(52,152,219,0.1);
         }
 
+        .filter-select-shell {
+            width: 100%;
+        }
+
+        .filter-select-toggle {
+            width: 100%;
+            text-align: left;
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: #fff;
+            color: #2f3640;
+            font-size: 0.85rem;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .filter-select-toggle:hover,
+        .filter-select-toggle:focus,
+        .filter-select-toggle.show {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(52,152,219,0.1);
+            background: #fff;
+            color: #2f3640;
+        }
+
+        .filter-search-menu {
+            min-width: 100%;
+            border-radius: 10px;
+            border: 1px solid #dfe6e9;
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+            margin-top: 6px;
+        }
+
+        .filter-search-menu small {
+            font-size: 0.72rem;
+            margin-top: 4px;
+            display: block;
+        }
+
+        .filter-options-list {
+            margin-top: 8px;
+            max-height: 220px;
+            overflow-y: auto;
+            border: 1px solid #eef1f4;
+            border-radius: 8px;
+            background: #fff;
+        }
+
+        .filter-option-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 8px 10px;
+            border: none;
+            background: #fff;
+            font-size: 0.82rem;
+            color: #2d3436;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f3f5;
+        }
+
+        .filter-option-item:last-child {
+            border-bottom: none;
+        }
+
+        .filter-option-item:hover,
+        .filter-option-item:focus {
+            background: #ecf5ff;
+            color: #0b4f84;
+            outline: none;
+        }
+
+        .filter-option-item.active {
+            background: #dfeeff;
+            color: #0b4f84;
+            font-weight: 700;
+        }
+
+        .filter-empty-state {
+            padding: 10px;
+            font-size: 0.8rem;
+            color: #7f8c8d;
+            text-align: center;
+        }
+
         .filter-actions {
             display: flex;
             gap: 10px;

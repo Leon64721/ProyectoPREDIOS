@@ -1009,6 +1009,54 @@ Solicitud explícita del usuario para iniciar "Fase 5: Optimización de Rendimie
 
 **Corrección de premisa (hecha durante el Architecture Review):** el framing inicial del usuario sobre "bloqueos por concurrencia (sheet contention)" en las escrituras de auditoría sugería un problema de `LockService`. Verificado por lectura de `GestorAuditoria.registrarAccion` (`auditoria.js` ~17-35) → `GestorDatos.agregarFila` (`datos.js:146-160`): **no existe ningún `LockService` propio** en esta ruta — depende enteramente de que el llamador ya sostenga un lock. El riesgo real es la serialización interna de Google Sheets a nivel de **archivo completo, no de pestaña** (confirmado por WebSearch) — un hallazgo más grave que la premisa original porque es invisible/no controlable desde el código de la aplicación. Consecuencia directa: mover el log de auditoría a una **pestaña** separada dentro del mismo archivo no resuelve nada; se requiere un **spreadsheet físicamente distinto**.
 
+### 12.17 [2026-08-06] [CONC-FE-03] Fase 8b — Hotfix de inyección dinámica UI y bypass de caché 100KB (PRE-IMPLEMENTACIÓN)
+
+**Archivo(s) Objetivo (antes de modificar):**
+- `Index.html` — contiene la barra principal de filtros (`Proyecto`, `Tramo`, `Estado`) con inputs de búsqueda fuera del contexto del selector, lo que produce doble altura visual y superposición en runtime.
+- `app_matriz_js.html` — contiene la lógica dinámica de filtros (`bindSearchableFilterInputs`, `applySelectSearch`, `refreshSelectSearch`, `populateDropdowns`) donde se reconstruye el DOM funcional de opciones.
+- `cache_backend.js` — concentra constantes y helpers de caché backend; se extenderá para invalidación segura de caché fragmentado de dashboard.
+- `Codigo.js` — en `getDashboardData` realiza lectura/escritura de `CacheService`; aquí se aplicará el mecanismo de fragmentación y reconstrucción de payload.
+
+**Cambio planificado (antes de intervenir):**
+1. UI: mover búsqueda a un dropdown contextual (input interno al menú desplegable) para eliminar la doble altura en la barra principal y evitar el solapamiento input/select.
+2. Backend: implementar chunking para el payload cacheado de dashboard cuando supere ~90,000 caracteres, con metadatos de chunks y fail-safe: si falta un fragmento, invalidar todo el caché y recalcular.
+3. Validación: ejecutar chequeo de sintaxis sobre artefactos JS/HTML impactados y revisión de integridad del flujo de caché fragmentado.
+
+**Post-implementación (ejecutado en esta sesión):**
+
+**Cambios técnicos realizados (UI):**
+- `Index.html` (barra de filtros): se reemplazó el patrón `input + small + select` en línea por un contenedor `dropdown` por filtro (`Proyecto`, `Tramo`, `Estado`) con:
+  - Botón visible (`filter*Toggle`) en la barra principal.
+  - Menú contextual (`filter*Menu`) con input interno (`filter*Search`) y lista dinámica (`filter*Options`).
+  - `select` real oculto (`d-none`) conservado como fuente de verdad para compatibilidad con `applyFilters`, `onProyectoChange` y `onTramoChange`.
+- `estilos.html`: nuevas clases para el componente (`filter-select-shell`, `filter-select-toggle`, `filter-search-menu`, `filter-options-list`, `filter-option-item`, `filter-empty-state`) con scroll interno y foco visual coherente.
+- `app_matriz_js.html`:
+  - `bindSearchableFilterInputs()` ahora gestiona eventos de `shown.bs.dropdown`, foco automático, atajos de teclado y selección por `Enter` sobre opciones filtradas.
+  - `applySelectSearch()` dejó de reescribir `<option>` del `select`; ahora renderiza botones de opciones dentro del menú contextual y sincroniza el `select` oculto.
+  - `refreshSelectSearch()` ahora sincroniza también el label del botón visible.
+  - Nuevo helper `updateSelectToggleLabel(selectId)` para mantener el texto actual del selector visible.
+
+**Cambios técnicos realizados (caché backend):**
+- `cache_backend.js`:
+  - Nuevas constantes: `CACHE_KEY_DASHBOARD_META`, `CACHE_KEY_DASHBOARD_CHUNK_PREFIX`, `CACHE_DASHBOARD_CHUNK_SIZE=90000`.
+  - Nuevos helpers: `_dashboardChunkKey`, `_removeDashboardCacheKeys`, `getDashboardCachePayload`, `putDashboardCachePayload`.
+  - Regla de integridad implementada: si falta un chunk al reconstruir, se invalida todo el caché del dashboard y se fuerza recálculo (fail-safe explícito).
+  - `invalidateDataCache()` actualizado para eliminar cache legacy y cache fragmentado.
+- `Codigo.js` (`getDashboardData`):
+  - Lectura por `getDashboardCachePayload(cache)`.
+  - Escritura por `putDashboardCachePayload(cache, serializedResponse, 1800)`.
+  - Log de diagnóstico con tamaño serializado y número de chunks usados por escritura.
+
+**Validación ejecutada:**
+- `get_errors` sin errores en: `Index.html`, `estilos.html`, `app_matriz_js.html`, `cache_backend.js`, `Codigo.js`.
+- `node --check Codigo.js` y `node --check cache_backend.js`: sin errores de sintaxis.
+- `node --check` del contenido JS de `app_matriz_js.html` (extraído a temporal): sin errores de sintaxis.
+
+**Resultado funcional esperado del hotfix:**
+1. La barra principal deja de renderizar dos niveles de controles (input encima de select) para `Proyecto/Tramo/Estado`; ahora muestra un único control por filtro y la búsqueda vive dentro del dropdown.
+2. `getDashboardData` deja de depender de una sola key de `CacheService`; si el payload supera el umbral, se guarda fragmentado y se reconstruye al leer.
+3. Si algún fragmento desaparece o expira antes que el resto, el sistema invalida el conjunto y recalcula desde Sheets en vez de devolver JSON incompleto/corrupto.
+
 **Decisión de scope (`/plan-ceo-review`, Mega Plan Review, modo HOLD SCOPE):** Firestore u otra base de datos externa como reemplazo de Sheets, descartada por ROI negativo frente al costo/riesgo de reescritura dado el tamaño actual del sistema. Arquitectura aprobada: 2 capas de caché (`CacheService` en backend + IndexedDB en cliente) sobre el mismo origen Sheets, más separación física del spreadsheet de LOGS. En modo HOLD SCOPE el documento de plan CEO completo se omite (regla propia del skill) — el output formal es el dictamen de `/plan-eng-review` que sigue.
 
 **Arquitectura de componentes (Mermaid):**

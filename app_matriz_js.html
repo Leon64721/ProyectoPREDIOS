@@ -259,23 +259,46 @@ function updateSearchMeta(selectId, totalOptions, matchedOptions, query) {
     el.textContent = 'Coincidencias: ' + matchedOptions + ' de ' + totalOptions;
 }
 
+function updateSelectToggleLabel(selectId) {
+    const toggle = document.getElementById(selectId + 'Toggle');
+    const select = document.getElementById(selectId);
+    if (!toggle || !select) return;
+
+    const selected = select.options[select.selectedIndex];
+    toggle.textContent = selected ? selected.text : 'Seleccionar';
+}
+
 function bindSearchableFilterInputs() {
     Object.keys(searchableSelectConfig).forEach(function(selectId) {
         const cfg = searchableSelectConfig[selectId];
         const input = document.getElementById(cfg.inputId);
         const select = document.getElementById(selectId);
-        if (!input || !select) return;
+        const shell = document.querySelector('[data-filter-id="' + selectId + '"]');
+        if (!input || !select || !shell) return;
+
+        shell.addEventListener('shown.bs.dropdown', function() {
+            window.setTimeout(function() {
+                input.focus();
+                input.select();
+                applySelectSearch(selectId, input.value || '');
+            }, 0);
+        });
 
         input.addEventListener('keydown', function(ev) {
             if (ev.key === 'Enter') {
                 ev.preventDefault();
-                cfg.onCommit();
+                const hasQuery = String(input.value || '').trim().length > 0;
+                const preferredOption = hasQuery
+                    ? document.querySelector('#' + selectId + 'Options .filter-option-item[data-value]:not([data-value="ALL"])')
+                    : document.querySelector('#' + selectId + 'Options .filter-option-item[data-value]');
+                if (preferredOption) preferredOption.click();
                 return;
             }
 
             if (ev.key === 'ArrowDown') {
                 ev.preventDefault();
-                select.focus();
+                const firstOption = document.querySelector('#' + selectId + 'Options .filter-option-item');
+                if (firstOption) firstOption.focus();
                 return;
             }
 
@@ -283,7 +306,6 @@ function bindSearchableFilterInputs() {
                 ev.preventDefault();
                 input.value = '';
                 applySelectSearch(selectId, '');
-                cfg.onCommit();
             }
         });
     });
@@ -299,31 +321,77 @@ function cacheSelectOptions(selectId) {
 
 function applySelectSearch(selectId, query) {
     const allOptions = searchableSelectState[selectId] || [];
-    if (!allOptions.length) return;
+    const optionsContainer = document.getElementById(selectId + 'Options');
+    const select = document.getElementById(selectId);
+    if (!allOptions.length || !optionsContainer || !select) return;
 
     const normalizedQuery = String(query || '').toUpperCase().trim();
     const firstOption = allOptions[0];
-    const currentValue = $('#' + selectId).val();
+    const currentValue = select.value || (firstOption ? firstOption.value : 'ALL');
     const filtered = normalizedQuery
         ? allOptions.slice(1).filter(o => String(o.text).toUpperCase().includes(normalizedQuery))
         : allOptions.slice(1);
 
-    const $select = $('#' + selectId);
-    $select.empty();
+    optionsContainer.innerHTML = '';
 
     if (firstOption) {
-        $select.append('<option value="' + firstOption.value + '">' + firstOption.text + '</option>');
+        const allButton = document.createElement('button');
+        allButton.type = 'button';
+        allButton.className = 'filter-option-item';
+        if (firstOption.value === currentValue) allButton.classList.add('active');
+        allButton.textContent = firstOption.text;
+        allButton.setAttribute('data-value', firstOption.value);
+        allButton.addEventListener('click', function() {
+            select.value = firstOption.value;
+            updateSelectToggleLabel(selectId);
+            if (typeof searchableSelectConfig[selectId].onCommit === 'function') {
+                searchableSelectConfig[selectId].onCommit();
+            }
+
+            const toggle = document.getElementById(selectId + 'Toggle');
+            if (toggle && window.bootstrap && bootstrap.Dropdown) {
+                bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+            }
+        });
+        optionsContainer.appendChild(allButton);
     }
+
+    if (!filtered.length) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'filter-empty-state';
+        emptyState.textContent = 'Sin coincidencias para la búsqueda';
+        optionsContainer.appendChild(emptyState);
+        updateSearchMeta(selectId, allOptions.length > 0 ? allOptions.length - 1 : 0, 0, query);
+        return;
+    }
+
     filtered.forEach(function(o) {
-        $select.append('<option value="' + o.value + '">' + o.text + '</option>');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'filter-option-item';
+        if (o.value === currentValue) button.classList.add('active');
+        button.textContent = o.text;
+        button.setAttribute('data-value', o.value);
+        button.addEventListener('click', function() {
+            select.value = o.value;
+            updateSelectToggleLabel(selectId);
+            if (typeof searchableSelectConfig[selectId].onCommit === 'function') {
+                searchableSelectConfig[selectId].onCommit();
+            }
+
+            const toggle = document.getElementById(selectId + 'Toggle');
+            if (toggle && window.bootstrap && bootstrap.Dropdown) {
+                bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+            }
+        });
+        optionsContainer.appendChild(button);
     });
 
-    const stillExists = filtered.some(o => o.value === currentValue) || (firstOption && currentValue === firstOption.value);
-    $select.val(stillExists ? currentValue : (firstOption ? firstOption.value : 'ALL'));
-
-    if (normalizedQuery && filtered.length === 1) {
-        $select.val(filtered[0].value);
+    const stillExists = filtered.some(o => o.value === currentValue);
+    if (!stillExists && firstOption) {
+        select.value = firstOption.value;
     }
+    updateSelectToggleLabel(selectId);
 
     updateSearchMeta(selectId, allOptions.length > 0 ? allOptions.length - 1 : 0, filtered.length, query);
 }
@@ -332,6 +400,7 @@ function refreshSelectSearch(selectId, searchInputId) {
     cacheSelectOptions(selectId);
     const query = $('#' + searchInputId).val() || '';
     applySelectSearch(selectId, query);
+    updateSelectToggleLabel(selectId);
 }
 
 // ✅ CONC-FE-02 Fase 4: versión vigente reconciliada (integra el widget de select

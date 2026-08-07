@@ -207,29 +207,53 @@
                     <div class="row g-3 align-items-stretch">
                         <div class="col-lg-2 col-md-4 col-6 filter-group">
                             <label>Proyecto</label>
-                            <input type="text" id="filterProyectoSearch" class="form-select-searchable" placeholder="Buscar proyecto..." oninput="applySelectSearch('filterProyecto', this.value)">
-                            <small id="filterProyectoSearchMeta" class="text-muted" style="font-size:0.72rem; margin-top:4px; display:block;">Escribe para filtrar opciones</small>
-                            <select id="filterProyecto" onchange="onProyectoChange()" class="form-select-searchable">
-                                <option value="ALL">🔍 Todos los Proyectos</option>
-                            </select>
+                            <div class="filter-select-shell dropdown" data-filter-id="filterProyecto">
+                                <button class="btn filter-select-toggle dropdown-toggle" type="button" id="filterProyectoToggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                                    🔍 Todos los Proyectos
+                                </button>
+                                <div class="dropdown-menu filter-search-menu w-100 p-2" id="filterProyectoMenu" aria-labelledby="filterProyectoToggle">
+                                    <input type="text" id="filterProyectoSearch" class="form-select-searchable" placeholder="Buscar proyecto..." oninput="applySelectSearch('filterProyecto', this.value)" autocomplete="off">
+                                    <small id="filterProyectoSearchMeta" class="text-muted">Escribe para filtrar opciones</small>
+                                    <div id="filterProyectoOptions" class="filter-options-list"></div>
+                                </div>
+                                <select id="filterProyecto" onchange="onProyectoChange()" class="form-select-searchable d-none" aria-hidden="true">
+                                    <option value="ALL">🔍 Todos los Proyectos</option>
+                                </select>
+                            </div>
                         </div>
 
                         <div class="col-lg-2 col-md-4 col-6 filter-group">
                             <label>Tramo</label>
-                            <input type="text" id="filterTramoSearch" class="form-select-searchable" placeholder="Buscar tramo..." oninput="applySelectSearch('filterTramo', this.value)">
-                            <small id="filterTramoSearchMeta" class="text-muted" style="font-size:0.72rem; margin-top:4px; display:block;">Escribe para filtrar opciones</small>
-                            <select id="filterTramo" onchange="onTramoChange()" class="form-select-searchable">
-                                <option value="ALL">🔍 Todos los Tramos</option>
-                            </select>
+                            <div class="filter-select-shell dropdown" data-filter-id="filterTramo">
+                                <button class="btn filter-select-toggle dropdown-toggle" type="button" id="filterTramoToggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                                    🔍 Todos los Tramos
+                                </button>
+                                <div class="dropdown-menu filter-search-menu w-100 p-2" id="filterTramoMenu" aria-labelledby="filterTramoToggle">
+                                    <input type="text" id="filterTramoSearch" class="form-select-searchable" placeholder="Buscar tramo..." oninput="applySelectSearch('filterTramo', this.value)" autocomplete="off">
+                                    <small id="filterTramoSearchMeta" class="text-muted">Escribe para filtrar opciones</small>
+                                    <div id="filterTramoOptions" class="filter-options-list"></div>
+                                </div>
+                                <select id="filterTramo" onchange="onTramoChange()" class="form-select-searchable d-none" aria-hidden="true">
+                                    <option value="ALL">🔍 Todos los Tramos</option>
+                                </select>
+                            </div>
                         </div>
 
                         <div class="col-lg-2 col-md-4 col-6 filter-group">
                             <label>Estado</label>
-                            <input type="text" id="filterEstadoSearch" class="form-select-searchable" placeholder="Buscar estado..." oninput="applySelectSearch('filterEstado', this.value)">
-                            <small id="filterEstadoSearchMeta" class="text-muted" style="font-size:0.72rem; margin-top:4px; display:block;">Escribe para filtrar opciones</small>
-                            <select id="filterEstado" onchange="applyFilters()" class="form-select-searchable">
-                                <option value="ALL">🔍 Todos los Estados</option>
-                            </select>
+                            <div class="filter-select-shell dropdown" data-filter-id="filterEstado">
+                                <button class="btn filter-select-toggle dropdown-toggle" type="button" id="filterEstadoToggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                                    🔍 Todos los Estados
+                                </button>
+                                <div class="dropdown-menu filter-search-menu w-100 p-2" id="filterEstadoMenu" aria-labelledby="filterEstadoToggle">
+                                    <input type="text" id="filterEstadoSearch" class="form-select-searchable" placeholder="Buscar estado..." oninput="applySelectSearch('filterEstado', this.value)" autocomplete="off">
+                                    <small id="filterEstadoSearchMeta" class="text-muted">Escribe para filtrar opciones</small>
+                                    <div id="filterEstadoOptions" class="filter-options-list"></div>
+                                </div>
+                                <select id="filterEstado" onchange="applyFilters()" class="form-select-searchable d-none" aria-hidden="true">
+                                    <option value="ALL">🔍 Todos los Estados</option>
+                                </select>
+                            </div>
                         </div>
 
                         <div class="col-lg-2 col-md-6 col-12 filter-group">

@@ -347,7 +347,7 @@ function getDashboardData() {
     // fechas/porcentajes que el cliente espera, sin poder verificar en
     // navegador).
     const cache = CacheService.getScriptCache();
-    const cached = cache.get(CACHE_KEY_DASHBOARD);
+    const cached = getDashboardCachePayload(cache);
     if (cached) {
       try {
         const cachedResponse = JSON.parse(cached);
@@ -484,7 +484,9 @@ function getDashboardData() {
     // CacheService puede afectar esta función: nunca como un crash, siempre
     // como "no se pudo cachear esta vez".
     try {
-      cache.put(CACHE_KEY_DASHBOARD, JSON.stringify(cacheableResponse), 1800); // 30 min TTL
+      const serializedResponse = JSON.stringify(cacheableResponse);
+      const writeInfo = putDashboardCachePayload(cache, serializedResponse, 1800); // 30 min TTL
+      console.log('✅ Cache dashboard actualizado: ' + writeInfo.payloadSize + ' chars en ' + writeInfo.chunkCount + ' chunk(s)');
     } catch (e) {
       console.warn('⚠️ No se pudo cachear getDashboardData (posible overflow 100KB de CacheService): ' + e.message);
     }
