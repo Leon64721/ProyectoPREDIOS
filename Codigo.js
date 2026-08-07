@@ -329,6 +329,35 @@ function getDashboardData() {
       console.log('⛔ Petición bloqueada: Sistema en mantenimiento');
       return { success: false, mantenimiento: true, message: "Sistema en mantenimiento" };
     }
+
+    // ✅ FASE 8 (perf, restaurado): CacheService — el check de mantenimiento de
+    // arriba SIEMPRE corre antes de esta lectura, y su resultado nunca se
+    // cachea. `user` es un dato POR-SESIÓN (Session.getActiveUser()) —
+    // CacheService.getScriptCache() es COMPARTIDO entre todas las ejecuciones
+    // del script para todos los usuarios, así que `user` NUNCA se guarda en el
+    // blob cacheado: se recalcula en vivo en cada retorno, cache-hit o
+    // cache-miss (evita filtrar el email de quien pobló el caché a otro
+    // usuario — el frontend usa ese valor como identidad para auditoría y
+    // llamadas de permisos/filtro, no es solo cosmético).
+    // Nota de alcance: este caché acelera cargas REPETIDAS dentro del TTL; no
+    // reduce el costo de la primera carga en frío, que depende del tamaño real
+    // de las hojas Datos/Seguimiento — ver DOCUMENTACION_TECNICA_VIVA.md Fase 8
+    // para el análisis completo de por qué getDisplayValues() no se reemplazó
+    // por getValues() en este mismo pase (riesgo de romper el formato de
+    // fechas/porcentajes que el cliente espera, sin poder verificar en
+    // navegador).
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get(CACHE_KEY_DASHBOARD);
+    if (cached) {
+      try {
+        const cachedResponse = JSON.parse(cached);
+        cachedResponse.user = Session.getActiveUser().getEmail();
+        return cachedResponse;
+      } catch (e) {
+        console.warn('⚠️ Caché de dashboard corrupto, recalculando: ' + e.message);
+      }
+    }
+
     const allRecords = [];
     const allProyectosSet = new Set(); // Guardará TODOS los proyectos reales
     let headers = [];
@@ -344,12 +373,19 @@ function getDashboardData() {
     let filtrosMatrizTodos = [];
     try {
       gestorFiltro = new GestorFiltroMatriz();
-      filtroActivo = gestorFiltro.obtenerFiltroActivo();
-      // ✅ FASE 6: se embebe aquí la lista completa de agrupaciones/filtros matriz
-      // para que el cliente los reciba en la misma respuesta de getDashboardData()
-      // y no necesite una llamada RPC aparte (google.script.run.getFiltrosMatriz())
+      // ✅ FASE 8 (perf): una sola lectura de la hoja FiltroMatriz en vez de tres.
+      // obtenerFiltroActivo() internamente hace su propio leerDatos() + llama a
+      // obtenerPorId(), que a su vez llama a obtenerTodos() (OTRO leerDatos()) —
+      // GestorDatos no cachea lecturas (this.cache solo se escribe para invalidar
+      // en escrituras, nunca se lee), así que cada llamada es un round-trip real
+      // a Sheets. Aquí se llama a obtenerTodos() UNA vez y el filtro activo se
+      // deriva del mismo array en memoria (obtenerTodos() ya incluye el campo
+      // `activo` por fila — ver datos.js:obtenerTodos()).
+      // ✅ FASE 6: filtrosMatrizTodos se embebe en el payload para que el cliente
+      // no necesite una llamada RPC aparte (google.script.run.getFiltrosMatriz())
       // — ver app_matriz_js.html, hidratación desde el payload inicial.
       filtrosMatrizTodos = gestorFiltro.obtenerTodos();
+      filtroActivo = filtrosMatrizTodos.find(f => f.activo === 'ACTIVO_PRINCIPAL') || null;
     } catch (e) {}
 
     let proyectosVisibles = { todos: true, proyectos: [], excluidos: [] };
@@ -430,17 +466,32 @@ function getDashboardData() {
       } catch (e) { console.error(`❌ Error archivo ${id}:`, e.message); }
     });
     
-    return {
+    // ✅ FASE 8: `user` queda FUERA del objeto cacheable a propósito (ver comentario
+    // arriba) — se agrega al final, en vivo, después del cache.put().
+    const cacheableResponse = {
       success: true,
       records: JSON.stringify(allRecords),
       columns: JSON.stringify(headers),
       seguimiento: JSON.stringify(seguimientoRecords),
       allProyectos: JSON.stringify(Array.from(allProyectosSet).sort()), // ✅ ENVIAMOS LA LISTA COMPLETA AL ADMIN
-      user: Session.getActiveUser().getEmail(),
       filtroMatrizActivo: JSON.stringify(filtroActivo || {}),
       filtrosMatriz: JSON.stringify(filtrosMatrizTodos) // ✅ FASE 6: reemplaza el RPC getFiltrosMatriz()
     };
-    
+
+    // ✅ CacheService.put() lanza síncronamente si el payload supera 100KB —
+    // fallback a no-cachear (fail-open), la respuesta en vivo ya se calculó y
+    // se retorna igual. Esta es la única forma en que el límite de 100KB de
+    // CacheService puede afectar esta función: nunca como un crash, siempre
+    // como "no se pudo cachear esta vez".
+    try {
+      cache.put(CACHE_KEY_DASHBOARD, JSON.stringify(cacheableResponse), 1800); // 30 min TTL
+    } catch (e) {
+      console.warn('⚠️ No se pudo cachear getDashboardData (posible overflow 100KB de CacheService): ' + e.message);
+    }
+
+    cacheableResponse.user = Session.getActiveUser().getEmail();
+    return cacheableResponse;
+
   } catch (e) {
     return { success: false, message: e.message, records: '[]', columns: '[]', seguimiento: '[]', allProyectos: '[]' };
   }
@@ -741,6 +792,10 @@ function saveTrackingData(formObject, userEmail) {
     } catch (audError) {
       console.warn('⚠️ Error registrando auditoría: ' + audError.message);
     }
+
+    // ✅ FASE 8 (perf, restaurado): invalida el caché del tablero — este RT cambió
+    // Seguimiento y/o Datos.
+    invalidateDataCache();
 
     return {
       status: 'success',
@@ -1936,6 +1991,8 @@ function promoverDato2aDato1() {
     sheetNames.forEach(function(name) {
       copiarHojaDeStaging(ssStaging, ssPrincipal, name);
     });
+
+    invalidateDataCache(); // ✅ FASE 8 (perf, restaurado): promoción sobrescribe Datos/Seguimiento
 
     ui.alert('Promoción Staging', 'Promoción completada correctamente. Revisa el archivo principal para verificar los datos.', ui.ButtonSet.OK);
   } catch (e) {

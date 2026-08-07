@@ -39,9 +39,13 @@
 }
 .pac-kpi-title {
   font-size:.68rem;font-weight:700;text-transform:uppercase;color:#666;margin-bottom:6px;letter-spacing:.5px;
+  /* ✅ FASE 8: cohesión con .kpi-title del tablero principal — evita que un
+     título largo rompa el ritmo vertical de la tarjeta. */
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .pac-kpi-value {
   font-size:1.75rem;font-weight:800;line-height:1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .pac-kpi-sub {
   font-size:.7rem;color:#999;margin-top:5px;
@@ -783,6 +787,21 @@ function pac_aplicarFiltros() {
   pacState.filtros.tipoNeg = document.getElementById('pac-fil-tiponeg').value;
 
   var registros = pacState.datos.registros || [];
+
+  // ✅ FASE 8: filtro temporal estricto — cuando la escala NO es "acumulado"
+  // (o sea, hay un Mes/Trimestre/Semestre específico seleccionado), un RT sin
+  // NINGÚN movimiento (Programado, Radicado o Ejecutado, los tres en cero) en
+  // los meses de ese periodo se excluye de la vista. Antes pac_aplicarFiltros()
+  // no tenía ninguna noción del periodo temporal — cambiar de escala solo
+  // cambiaba qué columnas se veían en la tabla, nunca qué RTs se mostraban.
+  // Nota: se exige que Programado, Radicado Y Ejecutado sean los tres cero (no
+  // solo Programado+Ejecutado) para no ocultar un RT que sí tiene un radicado
+  // real en el periodo pero cuya ejecución aún está pendiente — "cero
+  // movimiento" es más seguro que el literal "Programado+Ejecutado" para no
+  // esconder actividad real por accidente.
+  var mesesPeriodoFiltro = pac_getMesesEscalaActual();
+  var aplicarFiltroTemporal = pac_escalaActual !== 'acumulado' && mesesPeriodoFiltro.length > 0;
+
   pacState.registrosFiltrados = registros.filter(function(r) {
     if (pacState.filtros.proyecto !== 'ALL' && r.proyecto !== pacState.filtros.proyecto) return false;
     if (pacState.filtros.fuente !== 'ALL' && r.fuente !== pacState.filtros.fuente) return false;
@@ -791,6 +810,16 @@ function pac_aplicarFiltros() {
     if (pacState.filtros.gestor !== 'ALL' && r.gestor !== pacState.filtros.gestor) return false;
     if (pacState.filtros.tipoNeg !== 'ALL' && pac_norm(r.tipoNeg) !== pac_norm(pacState.filtros.tipoNeg)) return false;
     if (pacState.filtros.rt && String(r.rt).toUpperCase().indexOf(pacState.filtros.rt) < 0) return false;
+
+    if (aplicarFiltroTemporal) {
+      var sumaPeriodo = 0;
+      mesesPeriodoFiltro.forEach(function(mes) {
+        var m = (r.datosMensuales || {})[mes] || {};
+        sumaPeriodo += (m.PROGRAMADO || 0) + (m.VALOR_RADICADO || 0) + (m.VALOR_EJECUTADO || 0);
+      });
+      if (sumaPeriodo === 0) return false;
+    }
+
     return true;
   });
 
@@ -875,14 +904,17 @@ function pac_cambiarEscala(escala) {
 
   pac_periodoActual = pac_detectarPeriodoActual(escala, pacState.datos.mesActual);
   pac_poblarSelectorPeriodo(escala, pacState.datos.mesActual);
-  pac_renderTablaCalendario(pacState.registrosFiltrados);
-  pac_renderKPIsPeriodo(pacState.registrosFiltrados);
+  // ✅ FASE 8: pac_aplicarFiltros() re-evalúa registrosFiltrados con el nuevo
+  // periodo (incluido el filtro de "sin movimiento en el periodo") y ya llama
+  // a pac_renderTablaCalendario()/pac_renderKPIsPeriodo() al final — antes esta
+  // función los llamaba directo sobre el array filtrado de la escala ANTERIOR,
+  // que nunca se refrescaba con el cambio de periodo.
+  pac_aplicarFiltros();
 }
 
 function pac_cambiarPeriodo(periodoId) {
   pac_periodoActual = periodoId;
-  pac_renderTablaCalendario(pacState.registrosFiltrados);
-  pac_renderKPIsPeriodo(pacState.registrosFiltrados);
+  pac_aplicarFiltros(); // ✅ FASE 8: ver comentario en pac_cambiarEscala()
 }
 
 function pac_getMesesEscalaActual() {

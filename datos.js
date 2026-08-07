@@ -403,6 +403,7 @@ class GestorFiltroMatriz {
       );
 
       console.log(`✅ Filtro creado: ${nombre} (${id})`);
+      invalidateDataCache(); // ✅ FASE 8 (perf, restaurado)
 
       return {
         success: true,
@@ -478,6 +479,7 @@ class GestorFiltroMatriz {
       );
 
       console.log(`✅ Filtro actualizado: ${nombre}`);
+      invalidateDataCache(); // ✅ FASE 8 (perf, restaurado)
 
       return {
         success: true,
@@ -538,6 +540,7 @@ class GestorFiltroMatriz {
       );
 
       console.log(`✅ Filtro activado: ${id}`);
+      invalidateDataCache(); // ✅ FASE 8 (perf, restaurado)
 
       return {
         success: true,
@@ -596,6 +599,7 @@ class GestorFiltroMatriz {
         );
 
         console.log(`✅ Filtro eliminado: ${id}`);
+        invalidateDataCache(); // ✅ FASE 8 (perf, restaurado)
 
         return {
           success: true,

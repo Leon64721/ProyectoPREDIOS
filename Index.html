@@ -403,14 +403,16 @@
                     </h2>
                 </div>
 
+                <!-- ✅ FASE 8: migrado a grid de Bootstrap 5, mismo patrón que la barra
+                     principal de la Matriz — .filter-row (CSS grid propio) ya no existe. -->
                 <div class="filter-bar">
                     <h6><i class="fas fa-search"></i> Buscar RT</h6>
-                    <div class="filter-row">
-                        <div class="filter-group" style="flex: 1;">
+                    <div class="row g-3 align-items-stretch">
+                        <div class="col-lg-4 col-md-6 col-12 filter-group">
                             <label>Número RT</label>
-                            <input type="text" id="searchRT" placeholder="Ej: RT-2024-001">
+                            <input type="text" id="searchRT" class="form-select-searchable" placeholder="Ej: RT-2024-001">
                         </div>
-                        <div class="filter-actions">
+                        <div class="col-lg-2 col-12 filter-actions">
                             <button class="btn-apply" onclick="searchRTDetails()">
                                 <i class="fas fa-search"></i> Buscar
                             </button>
@@ -433,18 +435,19 @@
                     </h2>
                 </div>
 
+                <!-- ✅ FASE 8: migrado a grid de Bootstrap 5 -->
                 <div class="filter-bar">
                     <h6><i class="fas fa-filter"></i> Filtros</h6>
-                    <div class="filter-row">
-                        <div class="filter-group">
+                    <div class="row g-3 align-items-stretch">
+                        <div class="col-lg-3 col-md-4 col-6 filter-group">
                             <label>RT</label>
-                            <input type="text" id="filterHistRT" placeholder="Filtrar por RT">
+                            <input type="text" id="filterHistRT" class="form-select-searchable" placeholder="Filtrar por RT">
                         </div>
-                        <div class="filter-group">
+                        <div class="col-lg-3 col-md-4 col-6 filter-group">
                             <label>Usuario</label>
-                            <input type="text" id="filterHistUser" placeholder="Filtrar por usuario">
+                            <input type="text" id="filterHistUser" class="form-select-searchable" placeholder="Filtrar por usuario">
                         </div>
-                        <div class="filter-actions">
+                        <div class="col-lg-2 col-12 filter-actions">
                             <button class="btn-apply" onclick="applyHistorialFilters()">
                                 <i class="fas fa-check"></i> Aplicar
                             </button>
@@ -769,23 +772,24 @@
                     </h2>
                 </div>
 
+                <!-- ✅ FASE 8: migrado a grid de Bootstrap 5 -->
                 <div class="filter-bar">
                     <h6><i class="fas fa-filter"></i> Filtros</h6>
-                    <div class="filter-row">
-                        <div class="filter-group">
+                    <div class="row g-3 align-items-stretch">
+                        <div class="col-lg-3 col-md-4 col-6 filter-group">
                             <label>Usuario</label>
-                            <input type="text" id="filterAudUser" placeholder="Filtrar por usuario">
+                            <input type="text" id="filterAudUser" class="form-select-searchable" placeholder="Filtrar por usuario">
                         </div>
-                        <div class="filter-group">
+                        <div class="col-lg-3 col-md-4 col-6 filter-group">
                             <label>Acción</label>
-                            <select id="filterAudAccion">
+                            <select id="filterAudAccion" class="form-select-searchable">
                                 <option value="">Todas las acciones</option>
                                 <option value="Ingreso">Ingreso</option>
                                 <option value="Actualización">Actualización</option>
                                 <option value="Eliminación">Eliminación</option>
                             </select>
                         </div>
-                        <div class="filter-actions">
+                        <div class="col-lg-2 col-12 filter-actions">
                             <button class="btn-apply" onclick="applyAuditoriaFilters()">
                                 <i class="fas fa-check"></i> Aplicar
                             </button>

@@ -503,6 +503,11 @@
     font-weight: 700;
     letter-spacing: 0.5px;
     margin-bottom: 10px;
+    /* ✅ FASE 8: .kpi-card tiene overflow:hidden — sin esto, un título largo se
+       corta abruptamente a la mitad de una palabra en vez de mostrar "…". */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .kpi-value {
@@ -510,6 +515,11 @@
     font-weight: 800;
     color: #2c3e50;
     line-height: 1;
+    /* ✅ FASE 8: mismo tratamiento — un valor de moneda grande ($1.234.567.890)
+       ya no se corta a la mitad, se reduce con ellipsis. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .kpi-subtitle {

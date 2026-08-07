@@ -19,6 +19,29 @@
  */
 var CACHE_KEY_PAC_VERSION = 'pac_cache_version';
 
+/**
+ * ✅ FASE 8 (perf) — restaura el caché de lectura de getDashboardData() (parte del
+ * mismo bloque de Fase 5b que se perdió de este archivo, ver nota de
+ * CACHE_KEY_PAC_VERSION arriba). Clave fija: getDashboardData() no tiene parámetros
+ * de entrada.
+ */
+var CACHE_KEY_DASHBOARD = 'dash_data_v1';
+
+/**
+ * Helper centralizado de invalidación del caché de lectura. Se llama al final de
+ * cada escritura transaccional que afecta los datos servidos por getDashboardData
+ * (seguimiento, filtro matriz). Fail-open: un error aquí no debe tumbar la
+ * operación de negocio que la originó.
+ */
+function invalidateDataCache() {
+  try {
+    var cache = CacheService.getScriptCache();
+    cache.remove(CACHE_KEY_DASHBOARD);
+  } catch (e) {
+    console.error('invalidateDataCache error: ' + e.message);
+  }
+}
+
 /** Helper: obtener email del usuario activo con fallback */
 function getCurrentUserEmail() {
   try {
