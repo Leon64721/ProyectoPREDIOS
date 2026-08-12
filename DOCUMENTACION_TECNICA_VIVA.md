@@ -250,6 +250,39 @@ Se intento inyectar el email del usuario con una expresion compleja dentro de un
 - [x] Refactor de injection verificado por revision del codigo.
 - [x] Listo para despliegue a Apps Script con `clasp push --force`.
 
+### 5.7 Fase B — UI de mapeo visual y resolucion de conflictos
+
+**Objetivo funcional**
+
+Permitir decidir, revisar y confirmar el mapeo entre columnas crudas y campos canónicos antes de la consolidacion final, con feedback grafico y persistencia por usuario para evitar reconfigurar el mismo mapeo ante recargas accidentales.
+
+**Archivo(s) intervenido(s):**
+
+- [Index.html](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\Index.html#L1670-L1675)
+- [app_normalizacion_js.html](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\app_normalizacion_js.html)
+- [TODOS.md](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\TODOS.md)
+
+**Cambios realizados**
+
+- Se agrego el modal `#modalMapeoNormalizacion` para revisar columnas detectadas y asignarlas a campos canonicos.
+- Se implemento `renderizarFormularioMapeo(columnasDetectadas, mapeoSugerido)` para mostrar la tabla de mapeo con selector por columna y marca visual de requeridos faltantes.
+- Se implemento `renderizarReporteConflictos(reporte)` para mostrar badges de advertencia sobre RT duplicados y campos vacios.
+- Se adiciono almacenamiento persistente en IndexedDB con clave `normalizacion_map_<USER_EMAIL>` para conservar la configuracion por usuario sin usar `localStorage`.
+- Se incorpora la carga del partial desde `Index.html` antes del bloque principal de la app.
+
+**Impacto tecnico**
+
+- La normalizacion deja de depender de decisiones ad hoc del operador y pasa a una capa visual de revision previa.
+- Se reduce la probabilidad de merge con columnas mal mapeadas o campos obligatorios faltantes.
+- Se mejora la trazabilidad de la etapa de prepocesamiento por usuario y por sesion de trabajo.
+
+**Validacion ejecutada despues del cambio:**
+
+- [x] Pull/Push a Apps Script con `npx clasp push --force` verificado con salida de `Pushed 43 files...`.
+- [x] Commit generado correctamente: `2574879` con mensaje `feat(normalization): implement visual column mapping UI and conflict resolution panel [CONC-FE-07]`.
+- [x] `node --check normalizacion_script/ConfigNormalizacion.js` y `node --check normalizacion_script/CoreNormalizacion.js` ejecutados previamente con salida exitosa (sin errores).
+- [x] `TODOS.md` actualizado marcando la Fase B como completada.
+
 ## 6. Agentes, herramientas y skills utilizados o definidos para este proceso
 
 ### 6.1 Agente principal de implementacion
