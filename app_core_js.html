@@ -709,6 +709,77 @@ function hideSyncingIndicator() {
 // incorrecto persistido como si fuera "confirmado" en la próxima carga.
 let _dashboardLoadToken = 0;
 
+const DASHBOARD_CACHE_DB_NAME = 'dashboard-cache-v1';
+const DASHBOARD_CACHE_STORE_NAME = 'dashboard-cache-store';
+
+function openDashboardCacheDb() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB no está disponible en este navegador.'));
+      return;
+    }
+
+    const request = indexedDB.open(DASHBOARD_CACHE_DB_NAME, 1);
+
+    request.onupgradeneeded = function() {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DASHBOARD_CACHE_STORE_NAME)) {
+        db.createObjectStore(DASHBOARD_CACHE_STORE_NAME);
+      }
+    };
+
+    request.onsuccess = function() {
+      resolve(request.result);
+    };
+
+    request.onerror = function() {
+      reject(request.error || new Error('No se pudo abrir la base de caché del tablero.'));
+    };
+  });
+}
+
+function readDashboardCache(cacheKey) {
+  if (!cacheKey) return Promise.resolve(null);
+
+  return openDashboardCacheDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(DASHBOARD_CACHE_STORE_NAME, 'readonly');
+    const store = tx.objectStore(DASHBOARD_CACHE_STORE_NAME);
+    const request = store.get(cacheKey);
+
+    request.onsuccess = function() {
+      const cached = request.result;
+      resolve(cached && cached.response ? cached : null);
+    };
+
+    request.onerror = function() {
+      reject(request.error || new Error('Fallo leyendo la caché IndexedDB del tablero.'));
+    };
+  })).catch(err => {
+    console.warn('⚠️ No se pudo leer el caché del tablero en IndexedDB:', err.message);
+    return null;
+  });
+}
+
+function writeDashboardCache(cacheKey, payload) {
+  if (!cacheKey) return Promise.resolve();
+
+  return openDashboardCacheDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(DASHBOARD_CACHE_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(DASHBOARD_CACHE_STORE_NAME);
+    const request = store.put({ response: payload, savedAt: Date.now() }, cacheKey);
+
+    request.onsuccess = function() {
+      resolve();
+    };
+
+    request.onerror = function() {
+      reject(request.error || new Error('Fallo escribiendo la caché IndexedDB del tablero.'));
+    };
+  })).catch(err => {
+    console.warn('⚠️ No se pudo escribir el caché del tablero en IndexedDB:', err.message);
+  });
+}
+
 function loadDashboardData() {
   // ✅ CONC-FE-05: UI optimista aislada por usuario (TODOS.md ítem 11, cierra el
   // hueco dejado en FASE 5c). CURRENT_USER_EMAIL llega de forma SÍNCRONA desde
@@ -727,18 +798,13 @@ function loadDashboardData() {
   let paintedFromCache = false;
 
   if (cacheKey) {
-    try {
-      const cachedRaw = localStorage.getItem(cacheKey);
-      if (cachedRaw) {
-        const cached = JSON.parse(cachedRaw);
-        if (cached && cached.response) {
-          onDataLoaded(cached.response);
-          paintedFromCache = true;
-        }
+    readDashboardCache(cacheKey).then(cached => {
+      if (loadToken !== _dashboardLoadToken) return;
+      if (cached && cached.response) {
+        onDataLoaded(cached.response);
+        paintedFromCache = true;
       }
-    } catch (e) {
-      console.warn('⚠️ No se pudo leer el caché local del tablero:', e.message);
-    }
+    }).catch(() => {});
   }
 
   // El pintado desde caché (si ocurrió) es siempre síncrono y termina antes de
@@ -776,11 +842,7 @@ function loadDashboardData() {
       onDataLoaded(response);
 
       if (cacheKey) {
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify({ response: response, savedAt: Date.now() }));
-        } catch (e) {
-          console.warn('⚠️ No se pudo escribir el caché local del tablero:', e.message);
-        }
+        writeDashboardCache(cacheKey, response).catch(() => {});
       }
 
       // Manejar visualmente el badge del Filtro Matriz
