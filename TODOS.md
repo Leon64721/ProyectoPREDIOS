@@ -292,7 +292,7 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 **Fase A — Core Backend:** [COMPLETADO 2026-08-12] reforzar lectura completa, normalización, unificación, validación de RT y esquema objetivo; mantener fuente de verdad centralizada y establecer trazabilidad de ejecución. Implementación realizada en `normalizacion_script/ConfigNormalizacion.js` y `normalizacion_script/CoreNormalizacion.js` con diccionario maestro, sanitización V8 y detección de conflictos por lotes.
 
-**Fase B — UI de Mapeo:** crear una capa visual para revisar columnas, propuestas de mapeo, conflictos semánticos y resultados de previsualización antes de confirmar el merge.
+**Fase B — UI de Mapeo:** [COMPLETADO 2026-08-12] crear una capa visual para revisar columnas, propuestas de mapeo, conflictos semánticos y resultados de previsualización antes de confirmar el merge. Incluye modal `#modalMapeoNormalizacion`, reporte visual de conflictos y persistencia intermedia en IndexedDB bajo la clave `normalizacion_map_<USER_EMAIL>`.
 
 **Fase C — Validación y Merge:** ejecutar validación final de filas, columnas críticas y estructura objetivo; materializar el resultado final y dejarlo listo para consolidación operativa con los módulos principales.
 

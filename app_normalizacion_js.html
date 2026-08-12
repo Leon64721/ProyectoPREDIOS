@@ -1,0 +1,376 @@
+<script>
+(function() {
+  const NORMALIZACION_CANONICAL_FIELDS = [
+    'RT_NORMALIZADO',
+    'PROYECTO_NORMALIZADO',
+    'TRAMO_NORMALIZADO',
+    'ESTADO_NORMALIZADO',
+    'MONTO_NORMALIZADO',
+    'FECHA_NORMALIZADA',
+    'OBSERVACIONES'
+  ];
+
+  const NORMALIZACION_REQUIRED_FIELDS = [
+    'RT_NORMALIZADO',
+    'PROYECTO_NORMALIZADO',
+    'TRAMO_NORMALIZADO',
+    'ESTADO_NORMALIZADO'
+  ];
+
+  const NORMALIZACION_MAP_DB_NAME = 'normalizacion_ui_cache';
+  const NORMALIZACION_MAP_STORE = 'normalizacion_map';
+
+  function getNormalizacionMapKey() {
+    const emailSource = typeof currentUser === 'string' && currentUser
+      ? currentUser
+      : (window.currentUser || document.body?.dataset?.userEmail || 'CURRENT_USER_EMAIL');
+
+    const normalized = (emailSource && emailSource.indexOf('@') > -1)
+      ? emailSource.trim()
+      : 'CURRENT_USER_EMAIL';
+
+    return 'normalizacion_map_' + normalized;
+  }
+
+  function openNormalizacionMapDB() {
+    return new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) {
+        reject(new Error('IndexedDB no está disponible en este navegador.'));
+        return;
+      }
+
+      const request = window.indexedDB.open(NORMALIZACION_MAP_DB_NAME, 1);
+
+      request.onupgradeneeded = function(event) {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(NORMALIZACION_MAP_STORE)) {
+          db.createObjectStore(NORMALIZACION_MAP_STORE);
+        }
+      };
+
+      request.onsuccess = function() {
+        resolve(request.result);
+      };
+
+      request.onerror = function() {
+        reject(request.error || new Error('No se pudo abrir IndexedDB para el mapeo de normalización.'));
+      };
+    });
+  }
+
+  async function guardarMapeoNormalizacion(mapeo) {
+    const db = await openNormalizacionMapDB();
+    const tx = db.transaction(NORMALIZACION_MAP_STORE, 'readwrite');
+    const store = tx.objectStore(NORMALIZACION_MAP_STORE);
+    const key = getNormalizacionMapKey();
+
+    return new Promise((resolve, reject) => {
+      try {
+        store.put({
+          key: key,
+          value: mapeo,
+          updatedAt: Date.now()
+        }, key);
+
+        tx.oncomplete = function() {
+          resolve(true);
+        };
+
+        tx.onerror = function() {
+          reject(tx.error || new Error('Fallo al guardar el mapeo de normalización.'));
+        };
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  async function cargarMapeoNormalizacion() {
+    try {
+      const db = await openNormalizacionMapDB();
+      const tx = db.transaction(NORMALIZACION_MAP_STORE, 'readonly');
+      const store = tx.objectStore(NORMALIZACION_MAP_STORE);
+      const key = getNormalizacionMapKey();
+
+      return new Promise((resolve, reject) => {
+        const request = store.get(key);
+
+        request.onsuccess = function() {
+          const result = request.result && request.result.value ? request.result.value : {};
+          resolve(result);
+        };
+
+        request.onerror = function() {
+          reject(request.error || new Error('No se pudo recuperar el mapeo persistido.'));
+        };
+      });
+    } catch (error) {
+      console.warn('⚠️ No se pudo cargar el mapeo persistido en IndexedDB:', error.message);
+      return {};
+    }
+  }
+
+  function obtenerCamposCanonicos() {
+    return NORMALIZACION_CANONICAL_FIELDS.slice();
+  }
+
+  function normalizarValorSeleccionado(valor) {
+    if (valor === null || valor === undefined) {
+      return '';
+    }
+
+    if (Array.isArray(valor)) {
+      return valor[0] || '';
+    }
+
+    return String(valor).trim();
+  }
+
+  function crearModalMapeoNormalizacion() {
+    let modal = document.getElementById('modalMapeoNormalizacion');
+
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'modalMapeoNormalizacion';
+      modal.className = 'modal fade';
+      modal.setAttribute('tabindex', '-1');
+      modal.setAttribute('aria-hidden', 'true');
+      modal.innerHTML = `
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+          <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-dark text-white">
+              <div>
+                <h5 class="modal-title mb-0">
+                  <i class="fas fa-arrows-rotate me-2"></i>
+                  Mapeo visual de columnas
+                </h5>
+                <small class="text-light opacity-75">Normalización de datos operativos</small>
+              </div>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body p-0">
+              <div class="container-fluid p-3">
+                <div id="normalizacionReportConflicts" class="mb-3"></div>
+                <div class="table-responsive">
+                  <table class="table table-striped table-hover align-middle mb-0" id="tablaMapeoNormalizacion">
+                    <thead class="table-dark">
+                      <tr>
+                        <th style="width: 42%;">Columna origen</th>
+                        <th style="width: 42%;">Campo destino canónico</th>
+                        <th style="width: 16%;">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbodyMapeoNormalizacion"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer bg-light">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                <i class="fas fa-xmark me-2"></i>
+                Cancelar
+              </button>
+              <button type="button" class="btn btn-primary" id="btnGuardarMapeoNormalizacion">
+                <i class="fas fa-save me-2"></i>
+                Guardar mapeo
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modal);
+    }
+
+    return modal;
+  }
+
+  function renderizarReporteConflictos(reporte) {
+    const contenedor = document.getElementById('normalizacionReportConflicts');
+    if (!contenedor) {
+      return;
+    }
+
+    let conflictos = Array.isArray(reporte) ? reporte : (reporte && Array.isArray(reporte.conflictos) ? reporte.conflictos : []);
+    let hayDuplicados = conflictos.some(function(item) {
+      return item && (item.tipo === 'RT_DUPLICADO' || /duplicado/i.test(String(item.tipo || '')));
+    });
+    let hayVacios = conflictos.some(function(item) {
+      return item && (item.tipo === 'CAMPO_OBLIGATORIO_NULO' || /vacio|vacío|nulo/i.test(String(item.detalle || '')));
+    });
+
+    if (!conflictos.length) {
+      contenedor.innerHTML = `
+        <div class="alert alert-success mb-0 border-0 shadow-sm">
+          <i class="fas fa-circle-check me-2"></i>
+          No se detectaron conflictos críticos en la vista previa del mapeo.
+        </div>
+      `;
+      return;
+    }
+
+    const badges = [];
+    if (hayDuplicados) {
+      badges.push('<span class="badge bg-warning text-dark me-2"><i class="fas fa-triangle-exclamation me-1"></i>RT duplicado</span>');
+    }
+    if (hayVacios) {
+      badges.push('<span class="badge bg-danger me-2"><i class="fas fa-circle-exclamation me-1"></i>Campos vacíos</span>');
+    }
+
+    contenedor.innerHTML = `
+      <div class="alert alert-warning border-0 shadow-sm mb-0">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div>
+            <strong><i class="fas fa-bell me-2"></i>Reporte de conflictos</strong>
+          </div>
+          <div>${badges.join('')}</div>
+        </div>
+        <div class="mt-3 small">
+          ${conflictos.slice(0, 6).map(function(item) {
+            return '<div class="d-flex justify-content-between gap-3 py-1 border-bottom border-warning-subtle">' +
+              '<span><strong>' + (item.tipo || 'ADVERTENCIA') + '</strong> ' + (item.campo ? '· ' + item.campo : '') + '</span>' +
+              '<span class="text-muted">Fila ' + (item.fila || 'N/A') + '</span>' +
+              '</div>';
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderizarFormularioMapeo(columnasDetectadas, mapeoSugerido) {
+    const modal = crearModalMapeoNormalizacion();
+    const contenedor = document.getElementById('tbodyMapeoNormalizacion');
+    const columnas = Array.isArray(columnasDetectadas) ? columnasDetectadas : [];
+    const mapeo = mapeoSugerido && typeof mapeoSugerido === 'object' ? mapeoSugerido : {};
+    const camposCanonicos = obtenerCamposCanonicos();
+    const requiredMissing = NORMALIZACION_REQUIRED_FIELDS.filter(function(campo) {
+      return !Object.values(mapeo).includes(campo);
+    });
+
+    if (!contenedor) {
+      return;
+    }
+
+    if (!columnas.length) {
+      contenedor.innerHTML = `
+        <tr>
+          <td colspan="3" class="text-center text-muted py-4">
+            <i class="fas fa-circle-info me-2"></i>
+            No se detectaron columnas para mapear.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    const filasHtml = columnas.map(function(columna, index) {
+      const nombreColumna = String(columna || '').trim() || 'COLUMNA_' + (index + 1);
+      const valorSeleccionado = normalizarValorSeleccionado(mapeo[nombreColumna] || mapeo[columna] || '');
+      const selectOptions = camposCanonicos.map(function(campoCanonico) {
+        const selected = valorSeleccionado === campoCanonico ? 'selected' : '';
+        return '<option value="' + campoCanonico + '" ' + selected + '>' + campoCanonico + '</option>';
+      }).join('');
+
+      const isRequiredField = NORMALIZACION_REQUIRED_FIELDS.includes(valorSeleccionado);
+      const isMissingRequiredField = !valorSeleccionado && requiredMissing.length > 0;
+      const rowClass = isMissingRequiredField ? 'table-warning' : '';
+      const estadoLabel = valorSeleccionado ? 'Asignado' : 'Sin mapeo';
+      const estadoClass = valorSeleccionado ? 'text-success' : 'text-warning';
+      const requiredBadge = isRequiredField
+        ? '<span class="badge bg-info text-dark ms-2">Obligatorio</span>'
+        : (isMissingRequiredField ? '<span class="badge bg-warning text-dark ms-2">Falta</span>' : '');
+
+      return `
+        <tr class="${rowClass}">
+          <td class="fw-semibold">${nombreColumna}</td>
+          <td>
+            <select class="form-select form-select-sm normalizacion-column-select" data-column-name="${nombreColumna}">
+              <option value="">-- Sin asignar --</option>
+              ${selectOptions}
+            </select>
+          </td>
+          <td>
+            <span class="fw-semibold ${estadoClass}">${estadoLabel}</span>
+            ${requiredBadge}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    contenedor.innerHTML = filasHtml;
+
+    const selects = contenedor.querySelectorAll('.normalizacion-column-select');
+    selects.forEach(function(select) {
+      select.addEventListener('change', function() {
+        const mapping = {};
+        const rows = contenedor.querySelectorAll('.normalizacion-column-select');
+        rows.forEach(function(rowSelect) {
+          const key = rowSelect.dataset.columnName;
+          const value = normalizarValorSeleccionado(rowSelect.value);
+          if (key && value) {
+            mapping[key] = value;
+          }
+        });
+
+        const currentMapKey = getNormalizacionMapKey();
+        const exportMap = {
+          key: currentMapKey,
+          mapping: mapping,
+          updatedAt: Date.now()
+        };
+
+        guardarMapeoNormalizacion(exportMap).catch(function(error) {
+          console.warn('⚠️ Error guardando mapeo:', error.message);
+        });
+      }, { passive: true });
+    });
+
+    const btnGuardar = document.getElementById('btnGuardarMapeoNormalizacion');
+    if (btnGuardar) {
+      btnGuardar.onclick = function() {
+        const rows = contenedor.querySelectorAll('.normalizacion-column-select');
+        const selectedMap = {};
+        rows.forEach(function(select) {
+          const key = select.dataset.columnName;
+          const value = normalizarValorSeleccionado(select.value);
+          if (key && value) {
+            selectedMap[key] = value;
+          }
+        });
+
+        guardarMapeoNormalizacion({
+          key: getNormalizacionMapKey(),
+          mapping: selectedMap,
+          updatedAt: Date.now()
+        }).then(function() {
+          if (window.bootstrap && window.bootstrap.Modal) {
+            const modalInstance = window.bootstrap.Modal.getInstance(modal) || new window.bootstrap.Modal(modal);
+            modalInstance.hide();
+          }
+        }).catch(function(error) {
+          console.warn('⚠️ No se pudo guardar:', error.message);
+        });
+      };
+    }
+
+    if (window.bootstrap && window.bootstrap.Modal) {
+      const modalInstance = window.bootstrap.Modal.getOrCreateInstance(modal);
+      modalInstance.show();
+    }
+  }
+
+  async function abrirModalMapeoNormalizacion(columnasDetectadas, mapeoSugerido, reporte) {
+    const savedMap = await cargarMapeoNormalizacion();
+    const resolvedMap = savedMap && savedMap.mapping ? savedMap.mapping : (mapeoSugerido || {});
+
+    renderizarReporteConflictos(reporte || []);
+    renderizarFormularioMapeo(columnasDetectadas || [], resolvedMap);
+  }
+
+  window.abrirModalMapeoNormalizacion = abrirModalMapeoNormalizacion;
+  window.renderizarFormularioMapeo = renderizarFormularioMapeo;
+  window.renderizarReporteConflictos = renderizarReporteConflictos;
+  window.guardarMapeoNormalizacion = guardarMapeoNormalizacion;
+  window.cargarMapeoNormalizacion = cargarMapeoNormalizacion;
+})();
+</script>
