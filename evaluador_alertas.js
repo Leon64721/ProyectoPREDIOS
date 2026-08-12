@@ -473,6 +473,109 @@ class MotorEvaluadorReglas {
   }
 }
 
+function _normalizarSeveridadAlertas(valor) {
+  const nivel = String(valor || '').toUpperCase();
+  if (['CRITICA', 'ALERTA', 'ADVERTENCIA', 'INFO'].includes(nivel)) return nivel;
+  return 'INFO';
+}
+
+function evaluarAlertasDataset(dataset) {
+  try {
+    const registros = Array.isArray(dataset) ? dataset : [];
+    const MotorReglasClass = (typeof globalThis !== 'undefined' && globalThis.MotorReglas) ? globalThis.MotorReglas : null;
+
+    if (!MotorReglasClass) {
+      return {
+        success: true,
+        totalAlertas: 0,
+        severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+        proyectosImpactados: 0,
+        rtImpactados: 0,
+        alertas: [],
+        ultimaEvaluacion: new Date().toISOString()
+      };
+    }
+
+    const motor = new MotorReglasClass();
+    const alertas = [];
+    const severidades = { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 };
+    const proyectos = new Set();
+    const rts = new Set();
+
+    registros.forEach((registro) => {
+      if (!registro || typeof registro !== 'object') return;
+
+      const evaluados = motor.evaluarRegistro(registro);
+      if (!Array.isArray(evaluados) || evaluados.length === 0) return;
+
+      evaluados.forEach((alerta) => {
+        const nivel = _normalizarSeveridadAlertas(alerta.severidad);
+        severidades[nivel] = (severidades[nivel] || 0) + 1;
+
+        const proyecto = String(alerta.proyecto || registro.PROYECTO || 'SIN PROYECTO').trim() || 'SIN PROYECTO';
+        const rt = String(alerta.rt || registro.RT || registro['NUMERO RT'] || 'SIN_RT').trim() || 'SIN_RT';
+
+        proyectos.add(proyecto);
+        rts.add(rt);
+
+        alertas.push({
+          RT: rt,
+          PROYECTO: proyecto,
+          REGLA: alerta.nombre || alerta.codigo || 'DESCONOCIDA',
+          NIVEL: nivel,
+          MENSAJE: alerta.mensaje || '',
+          FECHA_EVALUACION: alerta.fechaEvaluacion || new Date().toISOString()
+        });
+      });
+    });
+
+    const pesoNivel = { CRITICA: 1, ALERTA: 2, ADVERTENCIA: 3, INFO: 4 };
+    const alertasOrdenadas = alertas
+      .sort((a, b) => (pesoNivel[a.NIVEL] || 99) - (pesoNivel[b.NIVEL] || 99))
+      .slice(0, 25);
+
+    const resumen = {
+      success: true,
+      totalAlertas: alertas.length,
+      severidades,
+      proyectosImpactados: proyectos.size,
+      rtImpactados: rts.size,
+      alertas: alertasOrdenadas,
+      ultimaEvaluacion: new Date().toISOString()
+    };
+
+    if (severidades.CRITICA > 0) {
+      try {
+        const emailUsuario = (typeof Session !== 'undefined' && Session.getActiveUser && Session.getActiveUser())
+          ? Session.getActiveUser().getEmail()
+          : 'Sistema';
+
+        logAction(emailUsuario, 'ALERTA_CRITICA_DETECTADA', JSON.stringify({
+          totalCriticas: severidades.CRITICA,
+          proyectosImpactados: Array.from(proyectos).slice(0, 10),
+          alertas: alertasOrdenadas.filter(a => a.NIVEL === 'CRITICA').slice(0, 10)
+        }));
+      } catch (e) {
+        console.warn('No se pudo registrar alerta crítica en LOGS:', e && e.message ? e.message : e);
+      }
+    }
+
+    return resumen;
+  } catch (e) {
+    console.error('Error evaluando alertas por dataset:', e && e.message ? e.message : e);
+    return {
+      success: false,
+      totalAlertas: 0,
+      severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+      proyectosImpactados: 0,
+      rtImpactados: 0,
+      alertas: [],
+      error: e && e.message ? e.message : String(e),
+      ultimaEvaluacion: new Date().toISOString()
+    };
+  }
+}
+
 /**
  * ═══════════════════════════════════════════════════════════
  * FUNCIONES PARA LLAMAR DESDE LA INTERFAZ Y TRIGGERS

@@ -193,6 +193,124 @@ function formatearJSON() {
 // MÓDULO DE ALERTAS TEMPRANAS (BANDEJA DE ENTRADA)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
+function ensureAlertSummaryDom() {
+    const alertBar = document.getElementById('alert-summary-bar');
+    if (alertBar) return;
+
+    const target = document.getElementById('alertasContainer') || document.querySelector('.matrix-box');
+    if (!target) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.id = 'alert-summary-bar';
+    wrapper.className = 'd-flex flex-wrap gap-2 align-items-center mb-3';
+    wrapper.innerHTML = [
+        '<span class="badge rounded-pill bg-danger-subtle border border-danger text-danger px-3 py-2" id="badgeCriticas" style="font-size:0.8rem;">CRÍTICAS: 0</span>',
+        '<span class="badge rounded-pill bg-warning-subtle border border-warning text-warning px-3 py-2" id="badgeAdvertencias" style="font-size:0.8rem;">ADVERTENCIAS: 0</span>',
+        '<span class="badge rounded-pill bg-dark-subtle border border-dark text-dark px-3 py-2" id="badgeTotalAlertas" style="font-size:0.8rem;">TOTAL: 0</span>'
+    ].join('');
+    target.parentNode.insertBefore(wrapper, target);
+}
+
+function renderizarResumenAlertas(alertasResumen) {
+    ensureAlertSummaryDom();
+
+    const resumen = (() => {
+        if (!alertasResumen) return { success: true, totalAlertas: 0, severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 }, alertas: [] };
+        if (typeof alertasResumen === 'string') {
+            try {
+                return JSON.parse(alertasResumen);
+            } catch (e) {
+                console.warn('⚠️ No se pudo parsear alertasResumen:', e.message);
+                return { success: true, totalAlertas: 0, severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 }, alertas: [] };
+            }
+        }
+        return alertasResumen;
+    })();
+
+    const criticas = Number((resumen && resumen.severidades && resumen.severidades.CRITICA) || 0);
+    const advertencias = Number((resumen && resumen.severidades && resumen.severidades.ADVERTENCIA) || 0);
+    const total = Number((resumen && resumen.totalAlertas) || 0);
+
+    const criticasBadge = document.getElementById('badgeCriticas');
+    const advertenciasBadge = document.getElementById('badgeAdvertencias');
+    const totalBadge = document.getElementById('badgeTotalAlertas');
+
+    if (criticasBadge) criticasBadge.textContent = `CRÍTICAS: ${criticas}`;
+    if (advertenciasBadge) advertenciasBadge.textContent = `ADVERTENCIAS: ${advertencias}`;
+    if (totalBadge) totalBadge.textContent = `TOTAL: ${total}`;
+
+    const items = Array.isArray(resumen && resumen.alertas) ? resumen.alertas : [];
+    const trigger = document.getElementById('badgeTotalAlertas');
+    if (trigger) {
+        trigger.onclick = function() {
+            const modal = document.getElementById('modalDetalleAlertas');
+            if (!modal) {
+                const modalHtml = `
+                  <div class="modal fade" id="modalDetalleAlertas" tabindex="-1" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                      <div class="modal-content border-0 shadow-lg">
+                        <div class="modal-header bg-dark text-white">
+                          <h5 class="modal-title"><i class="fas fa-triangle-exclamation"></i> Alertas activas</h5>
+                          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                        </div>
+                        <div class="modal-body p-0">
+                          <div id="modalDetalleAlertasBody" class="p-3"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>`;
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = modalHtml;
+                document.body.appendChild(wrapper.firstElementChild);
+            }
+
+            const detalleBody = document.getElementById('modalDetalleAlertasBody');
+            if (!detalleBody) return;
+
+            if (!items.length) {
+                detalleBody.innerHTML = '<div class="text-center text-muted py-4"><i class="fas fa-check-circle text-success"></i><div class="mt-2">No hay alertas activas para mostrar.</div></div>';
+            } else {
+                detalleBody.innerHTML = items.map(item => {
+                    const nivel = String(item.NIVEL || item.severidad || 'INFO').toUpperCase();
+                    const color = nivel === 'CRITICA' ? 'danger' : nivel === 'ADVERTENCIA' ? 'warning' : 'secondary';
+                    return `
+                      <div class="border-start border-4 border-${color} rounded p-3 mb-3 shadow-sm bg-light">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                          <span class="badge bg-${color} text-white">${nivel}</span>
+                          <small class="text-muted">${item.RT || 'RT'}</small>
+                        </div>
+                        <div class="fw-bold text-dark">${item.REGLA || 'Regla'}</div>
+                        <div class="small text-muted mb-2">${item.PROYECTO || 'Sin proyecto'}</div>
+                        <div class="small text-body">${item.MENSAJE || 'Sin detalle'}</div>
+                        <div class="mt-2">
+                          <button class="btn btn-sm btn-outline-primary" onclick="focusAlertRt(${JSON.stringify(String(item.RT || ''))}, ${JSON.stringify(String(item.PROYECTO || ''))})">
+                            Abrir RT
+                          </button>
+                        </div>
+                      </div>`;
+                }).join('');
+            }
+
+            const modalInst = new bootstrap.Modal(document.getElementById('modalDetalleAlertas'));
+            modalInst.show();
+        };
+    }
+}
+
+function focusAlertRt(rt, proyecto) {
+    if (!rt || rt === 'SIN_RT') return;
+    try {
+        const searchInput = document.getElementById('rt-search');
+        if (searchInput) {
+            searchInput.value = rt;
+            searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if (typeof applyFilters === 'function') applyFilters();
+    } catch (e) {
+        console.warn('⚠️ No se pudo enfocar el RT desde la alerta:', e.message);
+    }
+}
+
 // Botón para ejecutar el motor manualmente desde la pantalla
 function ejecutarMotorManual() {
     showLoader('Ejecutando Motor de Reglas...', 'Analizando fechas, festivos y cruzando con la matriz. Esto tomará unos segundos.');
@@ -203,7 +321,7 @@ function ejecutarMotorManual() {
                 showToast(`✅ Motor finalizado con éxito. ${res.totalAlertas} alertas procesadas.`, 'success');
                 cargarAlertasWeb(); // Recarga la bandeja automáticamente
             } else {
-                showToast('❌ Error: ' + res.error, 'danger');
+                showToast('❠ Error: ' + res.error, 'danger');
             }
         })
         .withFailureHandler(onError)

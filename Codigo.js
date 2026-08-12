@@ -455,6 +455,8 @@ function getDashboardData() {
     });
     console.timeEnd('dashboard:sheetRead');
 
+    const alertasResumen = evaluarAlertasDataset(allRecords);
+
     console.time('dashboard:serialize');
     const cacheableResponse = {
       success: true,
@@ -462,7 +464,8 @@ function getDashboardData() {
       columns: JSON.stringify(headers),
       seguimiento: JSON.stringify(seguimientoRecords),
       allProyectos: JSON.stringify(Array.from(allProyectosSet).sort()),
-      filtroMatrizActivo: JSON.stringify(filtroActivo || {})
+      filtroMatrizActivo: JSON.stringify(filtroActivo || {}),
+      alertasResumen: JSON.stringify(alertasResumen)
     };
 
     try {
@@ -480,7 +483,23 @@ function getDashboardData() {
   } catch (e) {
     console.error('❌ Error crítico en getDashboardData:', e.message);
     console.timeEnd('dashboard:total');
-    return { success: false, message: e.message, records: '[]', columns: '[]', seguimiento: '[]', allProyectos: '[]' };
+    return {
+      success: false,
+      message: e.message,
+      records: '[]',
+      columns: '[]',
+      seguimiento: '[]',
+      allProyectos: '[]',
+      alertasResumen: JSON.stringify({
+        success: false,
+        totalAlertas: 0,
+        severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+        proyectosImpactados: 0,
+        rtImpactados: 0,
+        alertas: [],
+        error: e.message
+      })
+    };
   }
 }
 

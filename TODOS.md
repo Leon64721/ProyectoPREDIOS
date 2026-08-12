@@ -268,7 +268,15 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 ---
 
-## 14. Fase 9 (`DESIGN.md`) — Sprints 2 a 5: consistencia de filtros, layout/legibilidad, microinteracciones y accesibilidad — [PLANIFICADO, no iniciado]
+## 14. Fase C — Integración UI y Visualización de Alertas — [COMPLETADO 2026-08-12]
+
+**Completado:** `app_alertas_js.html` incluye `renderizarResumenAlertas(alertasResumen)`, `app_core_js.html` lo dispara desde `onDataLoaded`, los badges `#badgeCriticas`, `#badgeAdvertencias` y `#badgeTotalAlertas` reflejan severidades reales, y el modal `#modalDetalleAlertas` permite abrir el RT relacionado desde la lista de alertas. La estructura `alertasResumen` queda persistida dentro del mismo payload de `dashboardData_<email>` en IndexedDB, y el render optimista reusa ese valor en la primera pintura sin usar `localStorage` ni scriptlets `<?= ?>`.
+
+**Verificación:** `node --check` sobre el contenido extraído de los partials de UI y validación del flujo completo de carga del dashboard.
+
+---
+
+## 15. Fase 9 (`DESIGN.md`) — Sprints 2 a 5: consistencia de filtros, layout/legibilidad, microinteracciones y accesibilidad — [PLANIFICADO, no iniciado]
 
 **What:** Ejecutar los Sprints 2-5 definidos en `DESIGN.md` Sección 5: (2) migrar todos los selects de filtros restantes a `SearchableDropdown` con contador de coincidencias y QA responsive; (3) normalizar spacing vertical global, corregir overflow/word-break restante, revisar contraste AA; (4) estandarizar toasts y animaciones de apertura/cierre; (5) navegación por teclado, atributos ARIA y pruebas de regresión visual por captura.
 

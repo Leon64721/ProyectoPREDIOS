@@ -876,6 +876,9 @@ function onDataLoaded(result) {
         seguimientoData = JSON.parse(result.seguimiento || '[]');
         currentData = rawData.slice();
 
+        const alertasResumen = result && result.alertasResumen ? result.alertasResumen : null;
+        renderizarResumenAlertas(alertasResumen);
+
         rawData.forEach(row => { row['FECHA_ISO'] = parseDateRobust(row[C.FECHA]); });
 
         populateDropdowns();
