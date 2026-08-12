@@ -282,6 +282,26 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 **Cobertura:** batch backend, render seguro, caché cliente y cierre documental del Sprint 2.
 
+**Verificación ejecutada:** `npx clasp push --force` completado con éxito; `git commit -m "fix(alerts): implement empty-state rendering, payload limits, and close Sprint 2 [CONC-BE-04]"` creado en `7094284`; `node --check` verificado sobre los scripts extraídos/afectados; y sincronización del contexto en gbrain completada con el slug `sprint-2-alertas-hardening`.
+
+---
+
+## 15.5. Sprint 3 — Módulo de Normalización y Cruce Colab — [PLANIFICADO 2026-08-12]
+
+**Objetivo:** convertir la normalización en un pipeline backend-first, trazable y validable antes del merge operativo.
+
+**Fase A — Core Backend:** reforzar lectura completa, normalización, unificación, validación de RT y esquema objetivo; mantener fuente de verdad centralizada y establecer trazabilidad de ejecución.
+
+**Fase B — UI de Mapeo:** crear una capa visual para revisar columnas, propuestas de mapeo, conflictos semánticos y resultados de previsualización antes de confirmar el merge.
+
+**Fase C — Validación y Merge:** ejecutar validación final de filas, columnas críticas y estructura objetivo; materializar el resultado final y dejarlo listo para consolidación operativa con los módulos principales.
+
+**Why:** la lógica ya existe en `normalizacion_script/CoreNormalizacion.js`, `ConfigNormalizacion.js` y `MenuNormalizacion.js`, pero necesita pasar de ejecución manual aislada a pipeline operativo con intermedios persistidos y validación de negocio. El enfoque debe priorizar procesamiento backend, no render del navegador.
+
+**Contexto de arquitectura:** gráfo validado con `graphify query "Normalizacion"`; núcleo funcional detectado y documentado en `ARCHITECTURE_V3.md`.
+
+**Depends on / blocked by:** ninguno funcional, pero requiere cerrar la preparación de backend y de revisión de calidad antes de merge operativo.
+
 ---
 
 ## 16. Fase 9 (`DESIGN.md`) — Sprints 2 a 5: consistencia de filtros, layout/legibilidad, microinteracciones y accesibilidad — [PLANIFICADO, no iniciado]
@@ -290,7 +310,7 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 **Why:** `DESIGN.md` es un plan de diseño Fase 9 completo (creado 2026-08-06 por la sesión concurrente) del cual solo el Sprint 1 (performance de arranque) tiene trabajo de código ejecutado (Secciones 12.17-12.24). Los Sprints 2-5 son planificación pura todavía, no deuda técnica retroactiva.
 
-**Pros:** Plan ya existe con criterios de aceptación claros (`DESIGN.md` Sección 6) — no requiere replanificación, solo ejecución.
+**Pros:** Plan ya existe con criterios de aceptación claros (`DESIGN.md` Sección 6) — no requiere replanización, solo ejecución.
 
 **Cons:** Alcance grande (5 sprints), varios módulos (Alertas, PAC, Historial, Auditoría, Permisos) — no es un cambio aislado.
 

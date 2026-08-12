@@ -1,144 +1,206 @@
-# Arquitectura V3 — Fase 9, escalabilidad para 8.000+ registros
+# ARCHITECTURE_V3 — Sprint 3: Módulo de Normalización y Cruce Colab
 
-## 1. Diagnóstico operativo
+## 1. Objetivo del sprint
 
-El problema principal no es un bug funcional sino un problema de arquitectura de carga y caché:
+El Sprint 3 centra el esfuerzo en convertir la normalización de predios en un módulo operable y auditable, que reciba una matriz cruda del usuario y la convierta en una estructura estandarizada del sistema, lista para consolidación operativa y consumo por el tablero principal.
 
-- El cliente estaba intentando persistir un payload de 8.734 registros en `localStorage`.
-- `localStorage` en navegadores modernos tiene un límite aproximado de 5 MB por origen y no es adecuado para datasets de análisis.
-- Cuando la escritura falla, la UI optimista se rompe, y se desmonta la experiencia del usuario.
-- La carga del dashboard además recibe un payload muy grande desde Google Sheets, lo que multiplica costo de CPU, serialización y memoria en cliente.
+La estrategia prioriza una ejecución backend y un pipeline observable: las transformaciones pesadas se hacen en Apps Script V8, mientras que el cliente se limita a coordinar, mostrar avances y dar acceso a los reportes de calidad.
 
-Conclusión: la capa cliente debe dejar de ser el almacenamiento primario de datasets voluminosos y pasar a modelos de caché asíncrona, paginación y segmentación de datos.
+---
 
-## 2. Hallazgos de la arquitectura actual
+## 2. Especificación de producto (/office-hours)
 
-### 2.1 `getDashboardData()`
+### 2.1 Preguntas fundamentales del producto
 
-El backend devuelve un payload completo para todo el conjunto de registros del tablero. Esto funciona para volúmenes pequeños, pero:
+1. ¿Cuál es el problema real que resuelve el módulo?
+   - Una matriz de predios llega con columnas heterogéneas, nombres duplicados, fechas como texto, valores numéricos inconsistentes y semántica de negocio mezclada.
+   - Si no se normaliza, la app no puede comparar, consolidar, alertar ni cruzar datos con fiabilidad.
 
-- escala mal con 8.000+ filas,
-- empuja JSON grandes a través de Apps Script,
-- aumenta el tiempo de serialización y deserialización,
-- acopla la UI a un único payload monolítico.
+2. ¿Quiénes son los usuarios principales?
+   - Usuario operativo: carga la hoja fuente y ejecuta el pipeline.
+   - Administrador: valida reglas y resuelve conflictos.
+   - Sistema: consume el resultado normalizado para dashboard, PAC y seguimiento.
 
-### 2.2 Caché del cliente
+3. ¿Qué debe suceder al cargar una matriz?
+   - Leer todas las filas sin perder registros.
+   - Normalizar encabezados y tipos.
+   - Corregir contexto faltante (proyecto/tramo).
+   - Unificar columnas equivalentes y detectar conflictos.
+   - Generar una salida estandarizada y un reporte de revisión.
 
-El uso de `localStorage` para persistir `dashboardData_CURRENT_USER_EMAIL` rompe la escalabilidad por dos razones:
+4. ¿Cuál es el mínimo viable para producción?
+   - Ejecutar el pipeline completo sobre una hoja origen.
+   - Mostrar resumen: filas leídas, filas destino, columnas unificadas, conflictos detectados y RT problemáticos.
+   - Generar salida final con estructura objetivo y acceso a reporte de validación.
 
-1. el almacenamiento es síncrono y bloquea el hilo principal,
-2. el tamaño del payload supera el límite del navegador.
+5. ¿Qué riesgos debe evitar?
+   - Pérdida de filas.
+   - Ocultamiento de conflictos semánticos.
+   - Ejecución intensa en el navegador.
+   - Validación de reglas sin trazabilidad.
 
-### 2.3 UI optimista
+6. ¿Cuál es la meta de valor?
+   - Convertir matrices heterogéneas en una estructura única, consistente y auditable que habilite la consolidación operacional del proyecto.
 
-La estrategia actual de pintar desde caché y luego revalidar en segundo plano es válida, pero solo si la caché es:
+### 2.2 Caso de uso principal
 
-- asíncrona,
-- segmentada,
-- tolerante a capacidad limitada.
+Como usuario operativo, quiero cargar una matriz cruda desde Excel/CSV y ejecutarla en el módulo de normalización, para que el sistema procese los datos, unifique columnas, corrija tipos, complete contexto faltante y entregue una versión estandarizada del esquema del sistema, lista para consolidar información operativa y alimentar la matriz principal.
 
-## 3. Estrategia propuesta para Sprints 2-5
+---
 
-### Sprint 2 — Paginación del servidor
+## 3. Revisión de ingeniería y grafo
 
-Objetivo: no devolver 8.000 registros de golpe.
+La auditoría del grafo sobre “Normalizacion” confirmó el núcleo funcional ya existente:
+- [normalizacion_script/CoreNormalizacion.js](normalizacion_script/CoreNormalizacion.js)
+- [normalizacion_script/ConfigNormalizacion.js](normalizacion_script/ConfigNormalizacion.js)
+- [normalizacion_script/MenuNormalizacion.js](normalizacion_script/MenuNormalizacion.js)
 
-Estrategia:
+Funciones y rutas clave detectadas:
+- `normalizarEncabezado()`
+- `leerHojaCompleta()`
+- `preprocesarTiposDatos()`
+- `completarTramoDesdeProyecto()`
+- `unificarColumnas()`
+- `aplicarEstrategia()`
+- `aplicarEstructuraObjetivo()`
+- `validarRTs()`
+- `analizarColumnas()`
+- `ejecutarNormalizacionCompleta()`
 
-- `getDashboardData(page, pageSize, filters)` con API paginada.
-- devolver `records`, `total`, `page`, `pageSize`, `hasMore`.
-- el cliente renderiza solo la página activa y no el dataset completo.
+### 3.1 Conclusión técnica del grafo
 
-Ventaja:
+El motor de normalización ya está funcionando como un pipeline ETL local sobre Google Sheets. El punto importante es que la lógica de negocio está bien concentrada, pero el flujo necesita reforzarse en tres dimensiones:
 
-- reduce el tamaño del payload,
-- minimiza memoria del navegador,
-- mejora tiempo de interacción y scroll.
+1. Backend-first execution
+2. intermedios persistidos
+3. trazabilidad y validación antes del merge
 
-### Sprint 3 — Caché asíncrona y segmentada
+---
 
-Objetivo: reemplazar la caché monolítica por piezas menores.
+## 4. Sprint 3: Módulo de Normalización y Cruce Colab
 
-Estrategia:
+### 4.1 Objetivo arquitectónico
 
-- IndexedDB para persistencia de respuesta paginada por usuario.
-- almacenamiento por clave por proyecto/filtro/usuario,
-- caché de metadatos separados de registros.
+Diseñar la normalización como un subsistema de negocio operable, no como un script aislado de una sola ejecución. Debe incorporar:
+- lectura completa de la matriz origen,
+- estandarización de encabezados,
+- tipado estricto,
+- enriquecimiento contextual,
+- unificación semántica,
+- validación de calidad,
+- materialización en output final,
+- almacenamiento de resultados intermedios en IndexedDB.
 
-Patrón sugerido:
+### 4.2 Principio de diseño
 
-- `dashboardMeta_<user>_<filterHash>` para columnas, KPIs, contadores.
-- `dashboardPage_<user>_<filterHash>_<page>_<pageSize>` para páginas.
+- Las transformaciones pesadas se ejecutan en backend (Apps Script V8 / runtime server-side).
+- La UI solo dispara el pipeline, muestra progreso y presenta resultados resumidos.
+- Los estados intermedios se persisten en IndexedDB para permitir reintento, rehidratación y revisión.
+- El resultado final se materializa con trazabilidad de origen y reporte de conflictos.
 
-Esto elimina la escritura masiva y evita bloquear el hilo principal.
+### 4.3 Flujo recomendado de datos
 
-### Sprint 4 — Compresión y serialización eficiente
+```mermaid
+flowchart LR
+  A[Usuario / Importador] --> B[MenuNormalizacion.js]
+  B --> C[CoreNormalizacion.js]
+  C --> D[ConfigNormalizacion.js]
+  C --> E[Lectura completa y limpieza]
+  E --> F[Normalización de encabezados]
+  F --> G[Tipado estricto]
+  G --> H[Enriquecimiento del proyecto/tramo]
+  H --> I[Unificación de columnas]
+  I --> J[Validación RT + estructura objetivo]
+  J --> K[Salida DATOS_NORMALIZADOS]
+  J --> L[Reporte de conflictos]
+  J --> M[IndexedDB / estado intermedio]
+  K --> N[Dashboard + PAC + consolidación]
+```
 
-Objetivo: reducir el tamaño del JSON sin romper compatibilidad.
+### 4.4 Capa backend
 
-Opciones reales:
+Funciones que deben seguir residiendo en backend:
+- `leerHojaCompleta()`
+- `preprocesarTiposDatos()`
+- `completarTramoDesdeProyecto()`
+- `unificarColumnas()`
+- `aplicarEstrategia()`
+- `aplicarEstructuraObjetivo()`
+- `validarRTs()`
+- `analizarColumnas()`
+- `ejecutarNormalizacionCompleta()`
 
-- `LZString.compressToEncodedURIComponent` para payloads de texto grande,
-- compresión selectiva solo para bloques de datos repetidos,
-- serialización de valores numéricos a formato compacto,
-- evitar mandar columnas internas no utilizadas por tabla.
+Estas operaciones son costosas y dependen del conjunto completo de la matriz; deben correr en el servidor para evitar bloqueos del navegador y errores de memoria.
 
-Recomendación: usar compresión solo en rutas que realmente lleven JSON grande, no por defecto para todos los casos.
+### 4.5 Capa front-end
 
-### Sprint 5 — Migración gradual de módulos pesados
+La capa cliente debe concentrarse en:
+- selector de archivo/hoja de origen,
+- progreso visual del pipeline,
+- resumen de filas/columnas y conflictos,
+- vista previa del resultado final,
+- apertura de reportes de validación,
+- aprobación de merge manual si el sistema lo requiere.
 
-Objetivo: desacoplar la carga del tablero del cálculo total del dataset.
+### 4.6 Resultado intermedio en IndexedDB
 
-Estrategia:
+Para mejorar la experiencia de usuario y la robustez operacional, se recomienda guardar snapshots por usuario:
+- origen sin procesar,
+- columnas normalizadas,
+- tipos estimados,
+- unificación aplicada,
+- conflictos detectados,
+- resultado final parseado.
 
-- mover KPIs y resúmenes a endpoints especializados,
-- cargar detalles solo al abrir modal/RT,
-- separar cálculo de matriz vs. panel de alertas vs. panel de permisos,
-- crear una capa de “lazy data” para `detailModal`, `filters`, `audit` y `metrics`.
+Esto permite reanudar trabajo y evitar correr de nuevo todo el proceso cuando el usuario vuelve al módulo.
 
-Resultado:
+### 4.7 Riesgos a mitigar en Sprint 3
 
-- arranque más rápido,
-- menos bloqueos del hilo principal,
-- menos presión sobre Apps Script y Sheets.
+1. Pérdida de filas
+   - La validación final de conteo debe ser obligatoria antes de materializar.
 
-## 4. Recomendación de arquitectura objetivo
+2. Conflictos semánticos ocultos
+   - Todo conflicto debe quedar en reporte explicativo, nunca en silencio.
 
-### Capa 1: Backend de consultas
+3. Carga pesada en cliente
+   - Ningún cálculo de matriz grande debe ejecutarse en UI.
 
-- `getDashboardDataPage` para páginas de registro.
-- `getDashboardSummaries` para KPIs y contadores.
-- `getDashboardFilterOptions` para listados dinámicos.
-- `getRTDetail` para detalle de RT bajo demanda.
+4. Dependencia entre entrada y salida
+   - El pipeline debe dejar trazabilidad del origen y del usuario ejecutor.
 
-### Capa 2: Capa de caché
+---
 
-- `IndexedDB` para persistencia del detalle de la sesión.
-- `CacheService` solo para metadatos livianos y validaciones rápidas.
-- `localStorage` solo para preferencia UI de pequeño tamaño.
+## 5. Fases del Sprint 3
 
-### Capa 3: Frontend reactivo
+### Fase A — Core Backend
+- Reforzar la ejecución del pipeline con validaciones estrictas de conteo y calidad.
+- Alinear reglas de configuración y schema objetivo en una sola fuente de verdad.
+- Documentar estados del pipeline y reportes de ejecución.
 
-- render por página,
-- scroll virtual o paginación incremental,
-- carga progresiva de filas visibles,
-- UI optimista únicamente para cambios locales y transaccionales.
+### Fase B — UI de Mapeo
+- Construir la capa de revisión visual: columnas, mapeos, conflictos y propuesta de unificación.
+- Permitir ajustar manualmente columnas ambiguas antes del merge.
+- Mostrar una previsualización del resultado final.
 
-## 5. Estrategia de migración sugerida
+### Fase C — Validación y Merge
+- Validar RT, columnas críticas y estructura final.
+- Ejecutar el merge final hacia la matriz operativa.
+- Preparar la integración con los módulos de pantalla principal y PAC.
 
-1. Mantener la carga actual funcionando con el hotfix IndexedDB.
-2. Añadir paginación desde el backend sin romper el contrato actual del cliente.
-3. Introducir respuestas paginadas por filtro y por proyecto.
-4. Rediseñar la caché del cliente como una capa de páginas y metadatos, no de dataset completo.
-5. Desacoplar paneles pesados del arranque inicial.
+---
 
-## 6. Criterios de éxito
+## 6. Recomendación operacional
 
-- tiempo de cold start < 3 s para el dashboard inicial,
-- uso de memoria del cliente estable,
-- ausencia de errores de quota en `Storage`,
-- carga incremental basada en user interaction y no endataset global.
+Para Sprint 3 se recomienda mantener la estructura actual del motor y reforzarla con una capa de orquestación del pipeline:
+- `estado del proceso`
+- `snapshots intermedios`
+- `reportes de calidad`
+- `resultados finales` con validación explícita de conteos
+
+Esto fortalece la noción de normalización como proceso de negocio industrial, no como simple transformación puntual en una hoja de cálculo.
+
+---
 
 ## 7. Conclusión
 
-La verdadera solución no es “guardar un JSON más grande en otra api del navegador”, sino cambiar el modelo de consumo: mover la base de verdad a partir de paginación, caché segmentada y carga progresiva. El dataset grande no debe ser una respuesta monolítica; debe convertirse en un servicio de datos incremental y precalculado.
+El módulo de normalización ya posee la semántica y el motor funcional necesario. Lo que falta es convertirlo en un pipeline operativo, controlado y auditable: backend-first, persistente a nivel intermedio y validado antes del merge. Esa es la base correcta para la consolidación operacional del Sprint 3.
