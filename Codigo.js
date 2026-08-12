@@ -189,6 +189,9 @@ function doGet(e) {
       const template = HtmlService.createTemplateFromFile('Index');
       template.currentUser = userEmail;
       template.currentRole = role;
+      // ✅ CONC-FE-05: email disponible de forma SÍNCRONA en el HTML servido,
+      // para namespacing de caché de cliente por usuario (ver TODOS.md ítem 11)
+      template.userEmail = userEmail;
 
       return template.evaluate()
         .setTitle('Tablero de Gestión Predial - Enterprise Modular')

@@ -1662,6 +1662,15 @@
     <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
     <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js"></script>
 
+    <!-- ✅ CONC-FE-05: identidad inyectada de forma síncrona, antes de cualquier
+         partial de negocio, para namespacing de LocalCache por usuario -->
+    <script>
+      // JSON.stringify (no <?= ?> + comillas manuales): el escape HTML de <?= ?>
+      // no es lo mismo que escape de string JS — un apóstrofe legal en el
+      // local-part del correo (ej. o'brien@dominio.com) rompería silenciosamente
+      // el namespacing de la cache-key si se interpolara con comillas simples.
+      const CURRENT_USER_EMAIL = <?!= JSON.stringify(userEmail) ?>;
+    </script>
     <?!= include('app_core_js') ?>
     <?!= include('app_alertas_js') ?>
     <?!= include('app_permisos_js') ?>

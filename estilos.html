@@ -1476,4 +1476,29 @@ select option[value*="NUEVO"] {
 }
 
         }
+
+/* ✅ CONC-FE-05: UI optimista — tablero pintado desde LocalCache aislado por
+   usuario mientras se confirma con el servidor (ver TODOS.md ítem 11) */
+#matrix-wrapper.syncing-optimistic {
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+.optimistic-sync-badge {
+    display: none;
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 2000;
+    align-items: center;
+    gap: 6px;
+    background: #2c3e50;
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
     </style>

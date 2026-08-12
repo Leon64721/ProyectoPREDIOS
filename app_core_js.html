@@ -665,20 +665,102 @@ function hideDashboardSkeleton() {
   }
 }
 
+// ✅ CONC-FE-05: indicador visual de "revalidando en segundo plano" para la
+// UI optimista de loadDashboardData() — ver TODOS.md ítem 11.
+function showSyncingIndicator() {
+  try {
+    const wrapper = document.getElementById('matrix-wrapper');
+    if (wrapper) wrapper.classList.add('syncing-optimistic');
+
+    let badge = document.getElementById('optimisticSyncBadge');
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = 'optimisticSyncBadge';
+      badge.className = 'optimistic-sync-badge';
+      const icon = document.createElement('i');
+      icon.className = 'fas fa-sync fa-spin';
+      const label = document.createElement('span');
+      label.textContent = 'Sincronizando…';
+      badge.appendChild(icon);
+      badge.appendChild(label);
+      document.body.appendChild(badge);
+    }
+    badge.style.display = 'flex';
+  } catch (e) {
+    console.warn('⚠️ No se pudo mostrar el indicador de sincronización:', e.message);
+  }
+}
+
+function hideSyncingIndicator() {
+  try {
+    const wrapper = document.getElementById('matrix-wrapper');
+    if (wrapper) wrapper.classList.remove('syncing-optimistic');
+    const badge = document.getElementById('optimisticSyncBadge');
+    if (badge) badge.style.display = 'none';
+  } catch (e) {
+    console.warn('⚠️ No se pudo ocultar el indicador de sincronización:', e.message);
+  }
+}
+
+// ✅ CONC-FE-05 (post-review): token de carga — loadDashboardData() se invoca
+// desde ~7 sitios (filtros, refreshData, etc.) sin ningún guard previo. Sin este
+// token, dos llamadas superpuestas pueden resolver fuera de orden y la más
+// vieja pisaría el pintado Y el localStorage de la más nueva, dejando un dato
+// incorrecto persistido como si fuera "confirmado" en la próxima carga.
+let _dashboardLoadToken = 0;
+
 function loadDashboardData() {
-  // ✅ FASE 5c: Skeleton Loader (placeholders pulsantes) en vez del overlay de
-  // página completa. NO se pinta un render parcial desde LocalCache: la
-  // respuesta completa de getDashboardData() incluye filas de predios y el
-  // email del usuario, y LocalCache (localStorage) no está aislado por
-  // usuario/sesión — en un equipo compartido, un segundo usuario podría ver
-  // por un instante los datos cacheados del primero. Aislar correctamente
-  // requeriría que el servidor inyecte la identidad del usuario de forma
-  // síncrona en el HTML (fuera del alcance de este archivo) — ver TODOS.md.
-  showDashboardSkeleton();
+  // ✅ CONC-FE-05: UI optimista aislada por usuario (TODOS.md ítem 11, cierra el
+  // hueco dejado en FASE 5c). CURRENT_USER_EMAIL llega de forma SÍNCRONA desde
+  // Index.html (inyectado server-side en doGet()), a diferencia de `currentUser`
+  // (JS var de este archivo) que solo se puebla DESPUÉS de esta misma respuesta
+  // — por eso la cache-key usa CURRENT_USER_EMAIL y nunca `currentUser`.
+  //
+  // Si el email no llegó (Session.getActiveUser().getEmail() puede devolver
+  // '' en algunos contextos de auth), NO usamos LocalCache en absoluto —ni
+  // lectura ni escritura— en vez de caer en una llave 'anon' compartida, que
+  // filtraría datos entre usuarios distintos sin email en el mismo navegador.
+  const hasReliableIdentity = typeof CURRENT_USER_EMAIL !== 'undefined' && !!CURRENT_USER_EMAIL;
+  const cacheKey = hasReliableIdentity ? ('dashboardData_' + CURRENT_USER_EMAIL) : null;
+
+  const loadToken = ++_dashboardLoadToken;
+  let paintedFromCache = false;
+
+  if (cacheKey) {
+    try {
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && cached.response) {
+          onDataLoaded(cached.response);
+          paintedFromCache = true;
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ No se pudo leer el caché local del tablero:', e.message);
+    }
+  }
+
+  // El pintado desde caché (si ocurrió) es siempre síncrono y termina antes de
+  // que arranque esta llamada a red — la respuesta real del servidor solo puede
+  // llegar DESPUÉS y siempre gana como último pintado, sin ventana de carrera
+  // entre ambos renders.
+  if (paintedFromCache) {
+    showSyncingIndicator();
+  } else {
+    showDashboardSkeleton();
+  }
 
   google.script.run.withSuccessHandler(response => {
+    // Si otra llamada a loadDashboardData() arrancó después de esta, esta
+    // respuesta ya es obsoleta — descartarla evita pisar un render/caché más
+    // reciente con datos desordenados por latencia de red.
+    if (loadToken !== _dashboardLoadToken) return;
+
+    hideSyncingIndicator();
+
     if (!response.success) {
-      hideDashboardSkeleton();
+      if (!paintedFromCache) hideDashboardSkeleton();
       showAlert('Error: ' + response.message, 'warning');
       return;
     }
@@ -692,6 +774,14 @@ function loadDashboardData() {
       window.proyectosListaUnicaGlobal = response.allProyectos ? JSON.parse(response.allProyectos) : [];
 
       onDataLoaded(response);
+
+      if (cacheKey) {
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify({ response: response, savedAt: Date.now() }));
+        } catch (e) {
+          console.warn('⚠️ No se pudo escribir el caché local del tablero:', e.message);
+        }
+      }
 
       // Manejar visualmente el badge del Filtro Matriz
       const filtroActivo = window.filtroMatrizActivoGlobal;
@@ -708,7 +798,9 @@ function loadDashboardData() {
     }
 
   }).withFailureHandler(error => {
-    hideDashboardSkeleton();
+    if (loadToken !== _dashboardLoadToken) return;
+    hideSyncingIndicator();
+    if (!paintedFromCache) hideDashboardSkeleton();
     showAlert('Error cargando datos: ' + error, 'danger');
   }).getDashboardData();
 }
