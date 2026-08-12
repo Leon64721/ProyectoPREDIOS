@@ -1124,6 +1124,21 @@ Solicitud explícita del usuario para iniciar "Fase 5: Optimización de Rendimie
 - Cerrado en nivel técnico y documental.
 - Pendiente exclusivamente la validación visual final en runtime (WebApp publicada) usando `QA_SPRINT1_UIUX.md`.
 
+### 12.21 [2026-08-06] [CIERRE-SESION] Protocolo de cierre de sesión Copilot (jornada completa)
+
+**Entregable generado:**
+- `PROTOCOLO_CIERRE_SESION_2026-08-06_COPILOT.md`
+
+**Contenido del protocolo:**
+1. Resumen ejecutivo de la jornada (FASE 8b + Sprint 1 + cierre documental).
+2. Trazabilidad de cambios técnicos por archivo y por frente.
+3. Commits y despliegues ejecutados durante la sesión.
+4. Inventario de artefactos creados/actualizados (incluye `DESIGN.md`, `QA_SPRINT1_UIUX.md`, `ACTA_CIERRE_SPRINT1.md`).
+5. Estado de validaciones y pendientes de QA visual runtime.
+
+**Propósito de control:**
+Dejar cierre formal reproducible de sesión para continuidad multi-agente, auditoría técnica y transferencia de contexto sin depender del historial de chat.
+
 **Decisión de scope (`/plan-ceo-review`, Mega Plan Review, modo HOLD SCOPE):** Firestore u otra base de datos externa como reemplazo de Sheets, descartada por ROI negativo frente al costo/riesgo de reescritura dado el tamaño actual del sistema. Arquitectura aprobada: 2 capas de caché (`CacheService` en backend + IndexedDB en cliente) sobre el mismo origen Sheets, más separación física del spreadsheet de LOGS. En modo HOLD SCOPE el documento de plan CEO completo se omite (regla propia del skill) — el output formal es el dictamen de `/plan-eng-review` que sigue.
 
 **Arquitectura de componentes (Mermaid):**
