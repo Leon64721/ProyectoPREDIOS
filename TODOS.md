@@ -290,7 +290,7 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 **Objetivo:** convertir la normalización en un pipeline backend-first, trazable y validable antes del merge operativo.
 
-**Fase A — Core Backend:** reforzar lectura completa, normalización, unificación, validación de RT y esquema objetivo; mantener fuente de verdad centralizada y establecer trazabilidad de ejecución.
+**Fase A — Core Backend:** [COMPLETADO 2026-08-12] reforzar lectura completa, normalización, unificación, validación de RT y esquema objetivo; mantener fuente de verdad centralizada y establecer trazabilidad de ejecución. Implementación realizada en `normalizacion_script/ConfigNormalizacion.js` y `normalizacion_script/CoreNormalizacion.js` con diccionario maestro, sanitización V8 y detección de conflictos por lotes.
 
 **Fase B — UI de Mapeo:** crear una capa visual para revisar columnas, propuestas de mapeo, conflictos semánticos y resultados de previsualización antes de confirmar el merge.
 

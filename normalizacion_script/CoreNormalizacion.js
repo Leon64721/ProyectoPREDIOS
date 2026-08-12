@@ -8,6 +8,210 @@
  */
 
 // ═════════════════════════════════════════════════════════════
+// FASE 0 — Mapeo maestro y sanitización V8
+// ═════════════════════════════════════════════════════════════
+function obtenerAliasCanonico(nombreCampo) {
+  if (!nombreCampo && nombreCampo !== 0) return '';
+  var raw = nombreCampo.toString().trim();
+  if (raw === '') return '';
+
+  var normalizado = normalizarEncabezado(raw).toUpperCase();
+  var diccionario = CONFIG_NORMALIZACION && CONFIG_NORMALIZACION.diccionarioSinonimos ? CONFIG_NORMALIZACION.diccionarioSinonimos : {};
+  var claves = Object.keys(diccionario);
+
+  for (var i = 0; i < claves.length; i++) {
+    var key = claves[i];
+    var entrada = diccionario[key];
+    var aliases = entrada && entrada.aliases ? entrada.aliases : [];
+    for (var j = 0; j < aliases.length; j++) {
+      if (normalizarEncabezado(aliases[j]).toUpperCase() === normalizado) {
+        return entrada.canonico;
+      }
+    }
+  }
+
+  return normalizarEncabezado(raw).toUpperCase().replace(/\s+/g, '_');
+}
+
+function normalizarEncabezados(matrizCruda) {
+  if (!matrizCruda || !Array.isArray(matrizCruda) || matrizCruda.length === 0) {
+    return { columnas: [], filas: [] };
+  }
+
+  var filasResultado = [];
+  var columnasBase = [];
+  var primeraFila = matrizCruda[0];
+  var propiedades = Array.isArray(primeraFila) ? primeraFila.slice() : Object.keys(primeraFila || {});
+
+  for (var i = 0; i < propiedades.length; i++) {
+    var nombreOriginal = Array.isArray(primeraFila) ? propiedades[i] : propiedades[i].toString();
+    var nombreCanonico = obtenerAliasCanonico(nombreOriginal);
+    columnasBase.push(nombreCanonico);
+  }
+
+  for (var filaIndex = 0; filaIndex < matrizCruda.length; filaIndex++) {
+    var filaOriginal = matrizCruda[filaIndex];
+    var filaMapeada = {};
+    for (var colIndex = 0; colIndex < propiedades.length; colIndex++) {
+      var nombreOriginal = Array.isArray(primeraFila) ? propiedades[colIndex] : propiedades[colIndex].toString();
+      var valor = Array.isArray(filaOriginal) ? filaOriginal[colIndex] : filaOriginal[nombreOriginal];
+      var nombreCanonico = obtenerAliasCanonico(nombreOriginal);
+      filaMapeada[nombreCanonico] = valor;
+    }
+    filasResultado.push(filaMapeada);
+  }
+
+  return { columnas: columnasBase, filas: filasResultado };
+}
+
+function normalizarTextoBasico(valor) {
+  if (valor === null || valor === undefined) return '';
+  if (valor instanceof Date) {
+    return Utilities.formatDate(valor, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  var texto = valor.toString().trim();
+  return texto.replace(/\s+/g, ' ');
+}
+
+function convertirNumeroMonetario(valor) {
+  if (valor === null || valor === undefined || valor === '') return 0;
+  if (typeof valor === 'number' && !isNaN(valor)) return valor;
+
+  var texto = valor.toString().trim();
+  if (texto === '') return 0;
+
+  var limpio = texto.replace(/[$\.\s]/g, '').replace(/,/g, '.').replace(/[^0-9.\-]/g, '');
+  if (limpio === '' || limpio === '-' || limpio === '.') return 0;
+  var numero = parseFloat(limpio);
+  return isNaN(numero) ? 0 : numero;
+}
+
+function convertirFechaIso(valor) {
+  if (valor === null || valor === undefined || valor === '') return '';
+  if (valor instanceof Date) {
+    return Utilities.formatDate(valor, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+
+  var texto = valor.toString().trim();
+  if (texto === '') return '';
+
+  var fecha = new Date(texto);
+  if (!isNaN(fecha.getTime())) {
+    return Utilities.formatDate(fecha, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+
+  var patrones = [
+    [/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/, function(m) { return new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1])); }],
+    [/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/, function(m) { return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3])); }]
+  ];
+
+  for (var i = 0; i < patrones.length; i++) {
+    var match = texto.match(patrones[i][0]);
+    if (match) {
+      var fechaConvertida = patrones[i][1](match);
+      if (!isNaN(fechaConvertida.getTime())) {
+        return Utilities.formatDate(fechaConvertida, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      }
+    }
+  }
+
+  return texto;
+}
+
+function sanitizarTiposDatos(matrizMapeada) {
+  if (!matrizMapeada || !Array.isArray(matrizMapeada) || matrizMapeada.length === 0) {
+    return [];
+  }
+
+  var salida = [];
+  var loteSize = 1000;
+
+  for (var batchStart = 0; batchStart < matrizMapeada.length; batchStart += loteSize) {
+    var lote = matrizMapeada.slice(batchStart, batchStart + loteSize);
+    for (var i = 0; i < lote.length; i++) {
+      var fila = lote[i];
+      var filaSanitizada = {};
+      var claves = Object.keys(fila || {});
+      for (var j = 0; j < claves.length; j++) {
+        var clave = claves[j];
+        var valor = fila[clave];
+        var claveUpper = clave.toString().toUpperCase();
+
+        if (valor === null || valor === undefined) {
+          filaSanitizada[clave] = '';
+          continue;
+        }
+
+        if (typeof valor === 'string') {
+          valor = valor.trim();
+          valor = valor.replace(/\s+/g, ' ');
+        }
+
+        if (claveUpper.indexOf('MONTO') !== -1 || claveUpper.indexOf('VALOR') !== -1 || claveUpper.indexOf('ESTIMADO') !== -1) {
+          filaSanitizada[clave] = convertirNumeroMonetario(valor);
+        } else if (claveUpper.indexOf('FECHA') !== -1 || claveUpper.indexOf('FEC') !== -1) {
+          filaSanitizada[clave] = convertirFechaIso(valor);
+        } else if (typeof valor === 'string') {
+          filaSanitizada[clave] = valor;
+        } else {
+          filaSanitizada[clave] = valor;
+        }
+      }
+      salida.push(filaSanitizada);
+    }
+  }
+
+  return salida;
+}
+
+function identificarConflictos(matrizSanitizada) {
+  var reporte = [];
+  var vistos = {};
+  var camposObligatorios = CONFIG_NORMALIZACION && CONFIG_NORMALIZACION.camposObligatorios ? CONFIG_NORMALIZACION.camposObligatorios : ['RT_NORMALIZADO'];
+
+  for (var i = 0; i < matrizSanitizada.length; i++) {
+    var fila = matrizSanitizada[i] || {};
+    var rt = fila.RT_NORMALIZADO || fila.RT || fila['RT_NORMALIZADO'] || '';
+    var rtTexto = rt.toString().trim();
+    if (rtTexto !== '') {
+      if (vistos[rtTexto] !== undefined) {
+        reporte.push({
+          fila: i + 1,
+          filaOriginal: vistos[rtTexto] + 1,
+          rt: rtTexto,
+          tipo: 'RT_DUPLICADO',
+          detalle: 'El RT aparece más de una vez en la matriz.'
+        });
+      } else {
+        vistos[rtTexto] = i;
+      }
+    }
+
+    for (var j = 0; j < camposObligatorios.length; j++) {
+      var campo = camposObligatorios[j];
+      var valorCampo = fila[campo];
+      if (valorCampo === null || valorCampo === undefined || valorCampo === '' || valorCampo.toString().trim() === '') {
+        reporte.push({
+          fila: i + 1,
+          campo: campo,
+          tipo: 'CAMPO_OBLIGATORIO_NULO',
+          detalle: 'El campo obligatorio está vacío.'
+        });
+        break;
+      }
+    }
+  }
+
+  return {
+    conflictos: reporte,
+    resumen: {
+      filasConRTDuplicado: reporte.filter(function(item){ return item.tipo === 'RT_DUPLICADO'; }).length,
+      filasConCamposObligatoriosNulos: reporte.filter(function(item){ return item.tipo === 'CAMPO_OBLIGATORIO_NULO'; }).length
+    }
+  };
+}
+
+// ═════════════════════════════════════════════════════════════
 // FASE 2 — Normalización de encabezados
 // ═════════════════════════════════════════════════════════════
 function normalizarEncabezado(texto) {
