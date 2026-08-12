@@ -1618,6 +1618,80 @@ Fase 5b: desplegada al entorno de pruebas (ver arriba). Fase 5c: implementada y 
 
 **Impacto en Producción:** feature nueva desplegada (`b1351a7`, ya en `@HEAD` vía `clasp push`) — pintado instantáneo del tablero desde caché local aislado por usuario, con revalidación de red inmediata. Sin validación visual en runtime todavía (cubierto por el ítem 13 ya existente, no uno nuevo).
 
+### 12.26 [2026-08-12] [CIERRE-SESION-COPILOT] Cierre de sesión Copilot (reubicado desde encabezado mal numerado)
+
+**Nota de reubicación (Claude Code, misma jornada):** esta entrada vivía originalmente como un encabezado `## 17. Cierre de sesión — 2026-08-12` insertado entre la introducción de la Sección 12 y la entrada 12.1, duplicando el número de la Sección 17 real ("Guía de Exportación...") y cortando la cronología de intervenciones justo al empezar. Se reubica aquí sin quitar ni una palabra de su contenido original, solo corrigiendo numeración y posición — ver Sección 12.25 para el trabajo de Claude Code de esta misma jornada, y 12.27 para el cierre consolidado final.
+
+**Estado de la sesión (según Copilot):** cerrada con evidencia persistida y sin cambios pendientes por documentar en este repositorio.
+
+**Ubicación de los artefactos relevantes:**
+- Bitácora canónica: [DOCUMENTACION_TECNICA_VIVA.md](DOCUMENTACION_TECNICA_VIVA.md)
+- Protocolo de cierre: [PROTOCOLO_CIERRE_SESION_2026-08-06_COPILOT.md](PROTOCOLO_CIERRE_SESION_2026-08-06_COPILOT.md)
+- Entregables formales: [Documento_Tecnico_Aplicacion_Predios.pdf](Documento_Tecnico_Aplicacion_Predios.pdf) y [Documento_Tecnico_Aplicacion_Predios.docx](Documento_Tecnico_Aplicacion_Predios.docx)
+- Código entregado: [Index.html](Index.html), [app_herramientas_js.html](app_herramientas_js.html), [export_backend.js](export_backend.js), [Codigo.js](Codigo.js)
+- Estado de sesión y tareas: [TODOS.md](TODOS.md)
+
+**Evidencia de cierre registrada (Copilot):**
+- `git status --short` verificado.
+- `git log -1 --pretty=oneline` capturado con el commit actual del proyecto en ese momento.
+- `npx clasp push --force` ejecutado y confirmado por la salida del comando.
+- El contenido de la sesión actual quedó persistido en la documentación viva del proyecto y en el flujo de trabajo del repositorio.
+
+**Nota de acceso a la sesión de Claude (según Copilot):**
+- El repositorio y la documentación muestran el resultado del trabajo entregado por Claude cuando quedó persistido en archivos del proyecto.
+- No se puede acceder a la terminal de otra sesión desde este entorno directamente; si se quiere revisar el historial operativo exacto de Claude, debe abrirse ese terminal o consultarse la transcript/log local del agente que lo ejecutó.
+- La evidencia que sí queda accesible desde aquí es la que quedó escrita en el proyecto y en la documentación central.
+
+**Criterio de cierre aplicado (Copilot):**
+- Cambios relevantes documentados.
+- Estado y ubicaciones registrados.
+- Evidencia de despliegue y validación registrada.
+- Sesión cerrada con la trazabilidad mínima requerida por el protocolo.
+
+### 12.27 [2026-08-12, cierre consolidado] Handoff Claude Code → Copilot → Claude Code: syntax error resuelto, 10 commits de Sprint 2-4 integrados, cierre final de jornada
+
+**Contexto:** después de la Sección 12.25 (implementación del ítem 11 + hotfix defensivo `667fc63`), el usuario reportó en vivo (captura de pantalla real del navegador en incógnito, cuenta `idu.gov.co`) que la URL `/exec` de la implementación `AKfycbzFjxd44YO5VywGkELO7S66vD6eQDh-NkRpL1BW8AA` seguía mostrando `❌ Error al cargar la interfaz — Unexpected token ';'`, capturado por el `catch (templateError)` de `doGet()`. Se investigó la causa en esta sesión sin lograr reproducirla de forma determinista (ver razonamiento en el turno correspondiente del chat: ningún scriptlet de `Index.html` tenía un `;` dentro de `<?...?>` en ningún commit de esta sesión, `clasp push --force` confirmaba "Script is already up to date"). Ante la falta de una causa raíz confirmada desde este entorno, el usuario trabajó en paralelo con una sesión de GitHub Copilot, que sí logró avanzar y resolver el bloqueo.
+
+**Resolución real del error (commit `58533e5`, Copilot):** `fix(core): refactor GAS scriptlet injection to prevent template evaluate syntax error [CONC-FE-05-hotfix3]`. En vez de mantener lógica (ternario + `JSON.stringify`) dentro del scriptlet `<?!= ... ?>` de `Index.html`, Copilot movió ese cálculo al servidor:
+- `Codigo.js::doGet()`: `template.safeUserEmailJS = JSON.stringify(userEmail || '')` — computado y validado en el backend, antes de `evaluate()`.
+- `Index.html`: el scriptlet se redujo a una referencia de variable simple, `const CURRENT_USER_EMAIL = <?!= safeUserEmailJS ?>;`, sin ternarios ni llamadas a función dentro de las delimitadoras `<?!= ?>`.
+
+Nota de honestidad técnica: esta sesión (Claude Code) nunca confirmó una causa raíz mecánica para el `SyntaxError` original con el código que existía en el commit `667fc63` — el razonamiento estático indicaba que ese scriptlet debía ser válido. El fix de Copilot es correcto y sigue una práctica más segura para el motor de plantillas de GAS (evitar expresiones complejas dentro de scriptlets, delegar el cálculo al servidor) independientemente de si la causa exacta del error observado era esa expresión específica u otra variable de entorno/temporización no identificada. Se documenta así para no fabricar una causa raíz que nunca se verificó con evidencia directa (logs de Ejecuciones de Apps Script), solo con la corrección de que el error dejó de reproducirse tras este commit.
+
+**Resto del trabajo de Copilot integrado en este HEAD (10 commits adicionales, `9e5936b`..`21d1bff`), documentado en detalle por Copilot en la Sección 5 de este mismo documento (5.5 a 5.9+):**
+| Commit | Resumen |
+|---|---|
+| `9e5936b` | `perf(backend)`: perfilado y optimización de latencia de arranque en frío de `getDashboardData`, reducción de overhead de lectura de Sheets |
+| `50953cc` | `feat(perf)`: migración de caché de cliente a IndexedDB para evitar el límite de 5MB de `localStorage`; generación de `ARCHITECTURE_V3.md` (arquitectura Sprints 2-5) |
+| `4d7bfdc` | `feat(alerts)`: motor de reglas base y esquema de evaluación (backend) — Sprint 2 |
+| `7b70f24` | `feat(alerts)`: UI de resumen de alertas tempranas, badges de severidad, caché IndexedDB (frontend) — Sprint 2 |
+| `7094284` | `fix(alerts)`: render de estado vacío, límites de payload, cierre de Sprint 2 |
+| `eb41b6b` | `docs(roadmap)`: planificación de Sprint 3, spec de producto (office-hours), revisión de ingeniería |
+| `ca4072f` | `feat(normalization)`: diccionario de mapeo backend, sanitización de tipos V8, procesador por lotes — Sprint 3 |
+| `2574879` | `feat(normalization)`: UI visual de mapeo de columnas y panel de resolución de conflictos — Sprint 3 |
+| `6f3aef1` | `docs(normalization)`: fase de mapeo UI de Sprint 3 y evidencia de despliegue |
+| `b9d3b40` | `feat(normalization)`: flujo operativo de merge, integración UI, cierre de Sprint 3 |
+| `21d1bff` | `feat(reports)`: UX de exportación institucional, streaming async vía IndexedDB, cierre de Sprint 4 Fase A |
+
+Diffstat total de estos 11 commits (`667fc63..HEAD`, incluye el hotfix3): 16 archivos, +2268/-143 líneas. Archivos nuevos: `app_herramientas_js.html`, `app_normalizacion_js.html`, `ARCHITECTURE_V3.md`, `.claude/settings.json`.
+
+**Validación ejecutada por esta sesión (Claude Code) sobre el HEAD final `21d1bff`, no asumida:**
+- [x] `git log --oneline -15` y `git merge-base --is-ancestor 667fc63 HEAD` — confirmado que el trabajo de esta sesión (hasta `667fc63`) es ancestro directo de todo lo anterior, sin reescritura de historia ni pérdida de commits.
+- [x] `node --check` sobre los 8 archivos `.js` backend tocados en estos commits (`Codigo.js`, `datos.js`, `export_backend.js`, `evaluador_alertas.js`, `motor_reglas.js`, `normalizacion_script/ConfigNormalizacion.js`, `normalizacion_script/CoreNormalizacion.js`, `normalizacion_script/MenuNormalizacion.js`) — 8/8 OK.
+- [x] Extracción + `node --check` del `<script>` de los 4 archivos `.html` con lógica de front modificados/nuevos (`app_core_js.html`, `app_alertas_js.html`, `app_herramientas_js.html`, `app_normalizacion_js.html`) — 4/4 OK.
+- [x] Confirmado que `app_herramientas_js` y `app_normalizacion_js` están correctamente enlazados en `Index.html` (`<?!= include('app_herramientas_js') ?>` línea 1677, `<?!= include('app_normalizacion_js') ?>` línea 1678) — no quedaron huérfanos sin incluir.
+- [x] `npx clasp push --force` → `Script is already up to date` — confirma que el `@HEAD` de Apps Script (`AKfycbzFjxd44YO5VywGkELO7S66vD6eQDh-NkRpL1BW8AA`) ya refleja exactamente este commit `21d1bff`, sin drift.
+- [x] Corrección estructural de esta misma bitácora: reubicado el encabezado `## 17. Cierre de sesión — 2026-08-12` (que colisionaba con la Sección 17 real y cortaba la Sección 12 en su primera línea) a esta posición, renumerado como 12.26, contenido íntegro preservado.
+
+**Hallazgo pendiente de verificación (no bloqueante, registrado para no perderlo):** no se confirmó con logs reales de Ejecuciones de Apps Script cuál fue la causa exacta del `SyntaxError` que motivó el hotfix3 — solo se confirmó que el síntoma dejó de reproducirse después de ese commit. Si el error reaparece bajo otra forma, revisar primero si la causa real era distinta a "expresión compleja dentro de scriptlet" (ver nota de honestidad técnica arriba).
+
+**Estado de cierre de la jornada 2026-08-12 (ambas sesiones consolidadas):**
+- Ítem 11 de `TODOS.md` (LocalCache aislado por usuario): completado y desplegado (12.25).
+- Incidente de pantalla blanca en producción: resuelto (`58533e5`), causa raíz no confirmada con evidencia de logs pero síntoma no reproducido tras el fix.
+- Sprints 2 (Alertas), 3 (Normalización) y 4 Fase A (Exportación): implementados y desplegados por la sesión de Copilot, documentados en Sección 5.
+- `@HEAD` de Apps Script confirmado sincronizado con `21d1bff` mediante `clasp push --force` real (no asumido).
+- Pendiente real que persiste sin cambios: ítem 13 de `TODOS.md` (validación visual en runtime) — ninguna de las dos sesiones de hoy pudo ejecutar QA manual en navegador autenticado contra la app real: esta sesión no tiene credenciales del dominio `idu.gov.co`.
+
 ## 13. Inventario Exhaustivo del Repositorio
 
 Inventario factual archivo por archivo de los 23 archivos que componen el nucleo del backend, el frontend y los subproyectos auxiliares. Elaborado el 2026-08-05 leyendo directamente el codigo fuente (no inferido de nombres de archivo). Los archivos de los subproyectos `MatrizSeguimiento_script/` y `normalizacion_script/` se confirmaron 100% independientes del backend principal: cero referencias a `getConfig(`, `GestorDatos`, `GestorPermisos` o `GestorAuditoria` en ninguno de sus 11 archivos.

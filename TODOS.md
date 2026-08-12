@@ -2,6 +2,32 @@
 
 Backlog de deuda técnica identificada en la auditoría arquitectónica (`/plan-eng-review`) y de código (`/review`) del 2026-08-04. Ninguno de estos ítems bloquea producción por sí solo; se documentan aquí para no perderlos mientras se prioriza `ARCHITECTURE_V2.md`.
 
+## Cierre de sesión — 2026-08-12
+
+**Estado general:** sesión finalizada y documentada.
+
+**Evidencia guardada en repo:**
+- [DOCUMENTACION_TECNICA_VIVA.md](DOCUMENTACION_TECNICA_VIVA.md) como bitácora canónica de cambios y validaciones.
+- [PROTOCOLO_CIERRE_SESION_2026-08-06_COPILOT.md](PROTOCOLO_CIERRE_SESION_2026-08-06_COPILOT.md) como protocolo formal de cierre de la sesión previa.
+- [Documento_Tecnico_Aplicacion_Predios.pdf](Documento_Tecnico_Aplicacion_Predios.pdf) y [Documento_Tecnico_Aplicacion_Predios.docx](Documento_Tecnico_Aplicacion_Predios.docx) como entregables formales.
+- [Index.html](Index.html), [app_herramientas_js.html](app_herramientas_js.html) y [export_backend.js](export_backend.js) quedan en la raíz del proyecto con la versión publicada por el último push.
+
+**Verificación ejecutada:**
+- [x] `git status --short` revisado.
+- [x] `npx clasp push --force` ejecutado y confirmado en la salida.
+- [x] `git log -1 --pretty=oneline` capturado.
+- [x] Se documentó la evidencia del cierre y el estado de la sesión actual.
+
+**Nota de acceso a lo hecho por Claude:**
+- El trabajo de Claude quedó visible a nivel de repo en archivos y documentación del proyecto; no hay un terminal paralelo accesible desde este entorno para ejecutar comandos ajenos a esta sesión.
+- Si se quiere revisar el trabajo de la sesión de Claude desde la terminal, debe abrirse ese terminal o leerse la sesión/transcript local del VS Code de ese agente; desde este entorno solo podemos consultar el resultado visible en el proyecto y la evidencia persistida.
+
+**Complemento (Claude Code, mismo cierre de jornada — no reemplaza lo anterior, lo completa):**
+- Detalle completo del handoff Claude → Copilot → Claude (incluyendo por qué el `SyntaxError` no se pudo reproducir desde esta sesión y cómo lo resolvió Copilot en `58533e5`) en `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.27.
+- Verificado directamente (no asumido) sobre el HEAD final `21d1bff`: `node --check` en los 8 archivos backend tocados hoy + extracción de `<script>` en los 4 partials frontend tocados/nuevos — 12/12 OK. `npx clasp push --force` → `Script is already up to date` (el `@HEAD` de Apps Script ya refleja este commit).
+- Ítem 11 de este mismo backlog (LocalCache aislado por usuario) — completado y desplegado por Claude Code antes del handoff; ver marca `[COMPLETADO 2026-08-12]` más abajo.
+- Sigue sin cambios el ítem 13 (validación visual en runtime): ninguna de las dos sesiones de hoy tuvo acceso a un navegador autenticado contra el dominio `idu.gov.co` para confirmarlo.
+
 ---
 
 ## 1. Implementar LockService en motores de reglas — [COMPLETADO 2026-08-04]
