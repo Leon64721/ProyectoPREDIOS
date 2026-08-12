@@ -1,0 +1,305 @@
+<script>
+(function() {
+  const EXPORT_BATCH_SIZE = 1000;
+  const INSTITUTION_HEADER = 'INSTITUTO DISTRITAL DE ANTROPOLOGÍA E HISTORIA';
+
+  function safeExportText(value) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value.replace(/\r?\n/g, ' ').trim();
+    if (typeof value === 'number' && !isFinite(value)) return '';
+    return String(value).replace(/\r?\n/g, ' ').trim();
+  }
+
+  function formatExportValue(key, value) {
+    const text = safeExportText(value);
+    const normalizedKey = String(key || '').toUpperCase();
+
+    if (!text) return '';
+    if (/(VALOR|ESTIMADO|PAGADO|TOTAL|MONTO|COSTO)/.test(normalizedKey)) {
+      const numeric = Number(String(text).replace(/[$.\s]/g, '').replace(',', '.'));
+      if (!isNaN(numeric)) {
+        return new Intl.NumberFormat('es-CO', {
+          style: 'currency',
+          currency: 'COP',
+          maximumFractionDigits: 0
+        }).format(numeric);
+      }
+      return text;
+    }
+
+    if (/(FECHA|DATE|FEC)/.test(normalizedKey)) {
+      const date = new Date(text);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleDateString('es-CO');
+      }
+      return text;
+    }
+
+    return text;
+  }
+
+  function buildExportInstitutionHeader(options) {
+    const safeOptions = options || {};
+    const generatedAt = safeOptions.generatedAt || new Date();
+    const title = safeOptions.title || 'REPORTE INSTITUCIONAL';
+    const user = safeOptions.user || (typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
+    const filterLabel = safeOptions.filterLabel || 'Todos';
+    return [
+      INSTITUTION_HEADER,
+      title,
+      'Fecha de generación: ' + (generatedAt instanceof Date ? generatedAt.toLocaleString('es-CO') : String(generatedAt)),
+      'Usuario: ' + user,
+      'Filtro: ' + filterLabel
+    ];
+  }
+
+  function normalizeExportRows(rows, columns) {
+    const source = Array.isArray(rows) ? rows : [];
+    const providedColumns = Array.isArray(columns) && columns.length ? columns : [];
+    const fallbackHeaders = source.length ? Object.keys(source[0] || {}) : providedColumns;
+    const headers = providedColumns.length ? providedColumns : fallbackHeaders;
+
+    return {
+      headers: headers.map(String),
+      rows: source.map(function(row) {
+        const item = row && typeof row === 'object' ? row : {};
+        return headers.map(function(header) {
+          const key = String(header);
+          return item[key] !== undefined ? item[key] : (item[key.toLowerCase()] !== undefined ? item[key.toLowerCase()] : '');
+        });
+      })
+    };
+  }
+
+  function buildCsvFromDataset(dataset, options) {
+    const safeOptions = options || {};
+    const data = Array.isArray(dataset) ? { headers: safeOptions.columns || Object.keys(dataset[0] || {}), rows: dataset } : dataset;
+    const normalized = normalizeExportRows(Array.isArray(data && data.rows) ? data.rows : (Array.isArray(data) ? data : []), safeOptions.columns || (data && data.headers));
+    const headers = normalized.headers.length ? normalized.headers : (safeOptions.columns || []);
+    const lines = [];
+
+    buildExportInstitutionHeader({
+      generatedAt: safeOptions.generatedAt || new Date(),
+      title: safeOptions.title || 'EXPORTACIÓN IDU',
+      user: safeOptions.user || (typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema'),
+      filterLabel: safeOptions.filterLabel || 'Todos'
+    }).forEach(function(row) {
+      lines.push('"' + String(row).replace(/"/g, '""') + '"');
+    });
+
+    lines.push(headers.map(function(col) {
+      return '"' + String(col).replace(/"/g, '""') + '"';
+    }).join(';'));
+
+    normalized.rows.forEach(function(row) {
+      const values = row.map(function(value, idx) {
+        const header = headers[idx] || '';
+        return '"' + String(formatExportValue(header, value)).replace(/"/g, '""') + '"';
+      });
+      lines.push(values.join(';'));
+    });
+
+    return lines.join('\r\n');
+  }
+
+  function exportDatasetToCsv(dataset, options) {
+    const exportPayload = typeof window.EXPORT_BACKEND !== 'undefined' && window.EXPORT_BACKEND && window.EXPORT_BACKEND.buildCsvExport
+      ? window.EXPORT_BACKEND.buildCsvExport(dataset, options)
+      : buildCsvFromDataset(dataset, options);
+    return exportPayload;
+  }
+
+  function downloadCsvFromDataset(dataset, options) {
+    const csv = exportDatasetToCsv(dataset, options || {});
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = (options && options.fileName) || ('reporte_' + new Date().toISOString().slice(0, 10) + '.csv');
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
+  function readIndexedExportSnapshot(key) {
+    return new Promise(function(resolve) {
+      if (!('indexedDB' in window)) return resolve(null);
+
+      const request = indexedDB.open('export-cache-v1', 1);
+      request.onupgradeneeded = function() {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('snapshots')) {
+          db.createObjectStore('snapshots');
+        }
+      };
+      request.onsuccess = function() {
+        const db = request.result;
+        const tx = db.transaction('snapshots', 'readonly');
+        const store = tx.objectStore('snapshots');
+        const getRequest = store.get(key);
+        getRequest.onsuccess = function() {
+          resolve((getRequest.result && getRequest.result.payload) || null);
+        };
+        getRequest.onerror = function() {
+          resolve(null);
+        };
+      };
+      request.onerror = function() {
+        resolve(null);
+      };
+    });
+  }
+
+  function writeIndexedExportSnapshot(key, payload) {
+    return new Promise(function(resolve) {
+      if (!('indexedDB' in window)) return resolve(false);
+
+      const request = indexedDB.open('export-cache-v1', 1);
+      request.onupgradeneeded = function() {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('snapshots')) {
+          db.createObjectStore('snapshots');
+        }
+      };
+      request.onsuccess = function() {
+        const db = request.result;
+        const tx = db.transaction('snapshots', 'readwrite');
+        const store = tx.objectStore('snapshots');
+        store.put({ payload: payload, savedAt: Date.now() }, key);
+        tx.oncomplete = function() { resolve(true); };
+        tx.onerror = function() { resolve(false); };
+      };
+      request.onerror = function() {
+        resolve(false);
+      };
+    });
+  }
+
+  function getExportDataSource() {
+    return new Promise(function(resolve) {
+      const rows = Array.isArray(window.currentData) && window.currentData.length ? window.currentData.slice() : [];
+      if (rows.length) {
+        resolve(rows);
+        return;
+      }
+
+      const hasReliableIdentity = typeof CURRENT_USER_EMAIL !== 'undefined' && !!CURRENT_USER_EMAIL;
+      if (!hasReliableIdentity || typeof window.readDashboardCache !== 'function') {
+        resolve([]);
+        return;
+      }
+
+      const cacheKey = 'dashboardData_' + CURRENT_USER_EMAIL;
+      window.readDashboardCache(cacheKey).then(function(cached) {
+        if (cached && cached.response && Array.isArray(cached.response.data)) {
+          resolve(cached.response.data);
+          return;
+        }
+        if (cached && cached.response && Array.isArray(cached.response.rows)) {
+          resolve(cached.response.rows);
+          return;
+        }
+        resolve([]);
+      }).catch(function() {
+        resolve([]);
+      });
+    });
+  }
+
+  function buildExportOptions(title, extension) {
+    const user = typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema';
+    const filterLabel = window.filtroMatrizActivoGlobal ? (window.filtroMatrizActivoGlobal.nombre || 'Filtro activo') : 'Todos';
+    return {
+      title: title || 'MATRIZ FILTRADA',
+      filterLabel: filterLabel,
+      fileName: 'matriz_filtrada_' + new Date().toISOString().slice(0, 10) + extension,
+      user: user,
+      generatedAt: new Date()
+    };
+  }
+
+  function triggerDownload(csvText, fileName) {
+    const blob = new Blob(['\ufeff' + csvText], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
+  function handleExportCsv() {
+    getExportDataSource().then(function(rows) {
+      const options = buildExportOptions('MATRIZ FILTRADA', '.csv');
+      const csvText = exportDatasetToCsv(rows, options);
+      triggerDownload(csvText, options.fileName);
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Éxito', 'CSV exportado correctamente', 'success');
+      }
+    }).catch(function(error) {
+      console.error('❌ Error exportando CSV:', error);
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', 'No fue posible exportar el CSV', 'danger');
+      }
+    });
+  }
+
+  function handleExportExcel() {
+    getExportDataSource().then(function(rows) {
+      const options = buildExportOptions('MATRIZ FILTRADA', '.xlsx');
+      const csvText = exportDatasetToCsv(rows, options);
+      triggerDownload(csvText, options.fileName.replace(/\.xlsx$/i, '.csv'));
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Éxito', 'Excel exportado correctamente', 'success');
+      }
+    }).catch(function(error) {
+      console.error('❌ Error exportando Excel:', error);
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', 'No fue posible exportar la hoja Excel', 'danger');
+      }
+    });
+  }
+
+  function attachExportButtons() {
+    const excelBtn = document.getElementById('btnExportarExcel');
+    const csvBtn = document.getElementById('btnExportarCSV');
+
+    if (excelBtn) {
+      excelBtn.addEventListener('click', handleExportExcel);
+    }
+
+    if (csvBtn) {
+      csvBtn.addEventListener('click', handleExportCsv);
+    }
+  }
+
+  window.appHerramientas = {
+    EXPORT_BATCH_SIZE: EXPORT_BATCH_SIZE,
+    buildExportInstitutionHeader: buildExportInstitutionHeader,
+    buildCsvFromDataset: buildCsvFromDataset,
+    exportDatasetToCsv: exportDatasetToCsv,
+    downloadCsvFromDataset: downloadCsvFromDataset,
+    readIndexedExportSnapshot: readIndexedExportSnapshot,
+    writeIndexedExportSnapshot: writeIndexedExportSnapshot,
+    exportCurrentMatrixCsv: handleExportCsv,
+    exportCurrentMatrixExcel: handleExportExcel,
+    attachExportButtons: attachExportButtons
+  };
+
+  window.buildExportInstitutionHeader = buildExportInstitutionHeader;
+  window.buildCsvFromDataset = buildCsvFromDataset;
+  window.exportDatasetToCsv = exportDatasetToCsv;
+  window.downloadCsvFromDataset = downloadCsvFromDataset;
+  window.exportCurrentMatrixCsv = handleExportCsv;
+  window.exportCurrentMatrixExcel = handleExportExcel;
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachExportButtons);
+  } else {
+    attachExportButtons();
+  }
+})();
+</script>

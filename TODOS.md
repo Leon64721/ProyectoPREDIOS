@@ -210,7 +210,25 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 ---
 
-## 11. Render parcial del tablero desde caché local (LocalCache) — deshabilitado por riesgo de fuga entre usuarios — [COMPLETADO 2026-08-12]
+## 11. Exportación institucional y herramientas de datos — [COMPLETADO 2026-08-12]
+
+**Completado:** se integró el partial de herramientas y exportación en [Index.html](Index.html), se creó el backend base [export_backend.js](export_backend.js) y se validó la sintaxis del script extraído del partial [app_herramientas_js.html](app_herramientas_js.html) sin errores.
+
+**What:** dejar una capa reutilizable para CSV, headers institucionales, serialización segura y chunks de exportación sin bloquear la UI principal.
+
+**Why:** el proyecto necesitaba una base de exportación que pudiera reutilizarse en matriz, alertas y PAC sin depender de procesos pesados en el navegador ni de duplicación de lógica.
+
+**Pros:** reduce riesgo de errores por delimitadores y texto multilínea, centraliza metadata del IDU y prepara el camino para exportaciones PDF/Excel/CSV.
+
+**Cons:** el flujo aún requiere integración funcional específica del botón de exportación en la UI y validación de QA real con datos de la app.
+
+**Context:** corresponde a la fase inicial de Sprint 4 para reportes avanzados y exportación formal.
+
+**Depends on / blocked by:** nada bloqueante para la base técnica; la validación de UX/QA real en runtime sigue pendiente.
+
+---
+
+## 12. Render parcial del tablero desde caché local (LocalCache) — deshabilitado por riesgo de fuga entre usuarios — [COMPLETADO 2026-08-12]
 
 **Completado:** Implementado exactamente según el diseño de la sección "Why" de abajo, más 3 hallazgos de una revisión adversarial post-implementación que no estaban previstos en el diseño original:
 - `Codigo.js::doGet()` (~línea 192): `template.userEmail = userEmail;` — email disponible de forma síncrona en el template.

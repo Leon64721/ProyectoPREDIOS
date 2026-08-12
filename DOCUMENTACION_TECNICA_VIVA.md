@@ -314,6 +314,37 @@ Conectar la confirmacion del mapeo visual con la ejecucion operativa del pipelin
 - [x] `node --check normalizacion_script/CoreNormalizacion.js` ejecutado con salida `CoreNormalizacion OK`.
 - [x] Revisiones del editor sobre [app_normalizacion_js.html](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\app_normalizacion_js.html), [normalizacion_script/MenuNormalizacion.js](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\normalizacion_script\MenuNormalizacion.js) y [normalizacion_script/CoreNormalizacion.js](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\normalizacion_script\CoreNormalizacion.js) sin errores de sintaxis.
 
+### 5.9 Exportacion institucional y herramientas de datos
+
+**Objetivo funcional**
+
+Preparar una capa de exportacion reutilizable para reportes institucionales, matices del tablero y descargas CSV con metadata de usuario, filtro y marca temporal, sin bloquear la UI principal ni depender de un flujo de datos pesado en el navegador.
+
+**Archivo(s) intervenido(s):**
+
+- [Index.html](Index.html)
+- [app_herramientas_js.html](app_herramientas_js.html)
+- [export_backend.js](export_backend.js)
+
+**Cambios realizados**
+
+- Se agrego el partial [app_herramientas_js.html](app_herramientas_js.html) con utilidades para headers institucionales, sanitizacion de valores, CSV y snapshots en IndexedDB.
+- Se conecto el archivo en la carga principal de [Index.html](Index.html) para que quede disponible en la app sin depender de orden de ejecucion manual.
+- Se creo [export_backend.js](export_backend.js) con funciones de normalizacion, generacion de CSV, payloads de libro y exportacion por lotes para evitar carga masiva en una sola pasada.
+- El backend de exportacion propone una ruta segura para exportar datasets grandes con paginacion por chunks y cabeceras comunes del IDU.
+
+**Impacto tecnico**
+
+- La capa de reportes queda centralizada y reutilizable para futuros flujos PDF/Excel/CSV.
+- Se reduce el riesgo de errores de serializacion por cadenas largas, saltos de linea o columnas con delimitadores.
+- Se deja una base para integrar exportaciones desde matriz, alertas y PAC con el mismo contrato de metadata.
+
+**Validacion ejecutada despues del cambio:**
+
+- [x] Extraccion del script del partial y validacion con `node --check` sobre el contenido JS del archivo, sin errores.
+- [x] Validacion de [export_backend.js](export_backend.js) con `node --check` sin errores.
+- [x] Integracion del partial en [Index.html](Index.html) verificada en el codigo fuente.
+
 ## 6. Agentes, herramientas y skills utilizados o definidos para este proceso
 
 ### 6.1 Agente principal de implementacion

@@ -181,8 +181,11 @@
                         <button class="btn-primary-custom" onclick="generatePdfReport()">
                             <i class="fas fa-file-pdf"></i> Generar PDF
                         </button>
-                        <button class="btn-secondary-custom" onclick="exportToExcel()">
+                        <button id="btnExportarExcel" class="btn-secondary-custom" type="button">
                             <i class="fas fa-download"></i> Exportar Excel
+                        </button>
+                        <button id="btnExportarCSV" class="btn-secondary-custom" type="button">
+                            <i class="fas fa-file-csv"></i> Exportar CSV
                         </button>
                         <button class="btn-secondary-custom" onclick="refreshData()">
                             <i class="fas fa-rotate"></i> Recargar
@@ -1670,6 +1673,8 @@
     <?!= include('app_core_js') ?>
     <?!= include('app_alertas_js') ?>
     <?!= include('app_permisos_js') ?>
+    <?!= include('export_backend') ?>
+    <?!= include('app_herramientas_js') ?>
     <?!= include('app_normalizacion_js') ?>
     <?!= include('app_matriz_js') ?>
               <!-- ✅ MODAL: NUEVO FILTRO MATRIZ -->
