@@ -150,7 +150,10 @@ function doGet(e) {
     }
 
     // 2️⃣ OBTENER USUARIO
-    const userEmail = Session.getActiveUser().getEmail();
+    // ✅ CONC-FE-05-hotfix: fallback defensivo — getEmail() ya devuelve string
+    // por contrato de la API (nunca null/undefined), pero el || '' deja el
+    // invariante explícito para quien lea/toque este valor más adelante.
+    const userEmail = Session.getActiveUser().getEmail() || '';
     console.log(`👤 Usuario: ${userEmail}`);
 
     // 3️⃣ OBTENER ROL (CON MANEJO DE ERRORES)

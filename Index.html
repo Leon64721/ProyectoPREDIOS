@@ -1669,7 +1669,13 @@
       // no es lo mismo que escape de string JS — un apóstrofe legal en el
       // local-part del correo (ej. o'brien@dominio.com) rompería silenciosamente
       // el namespacing de la cache-key si se interpolara con comillas simples.
-      const CURRENT_USER_EMAIL = <?!= JSON.stringify(userEmail) ?>;
+      // Hardening defensivo (no reproducido como bug real — Session.getActiveUser()
+      // .getEmail() siempre devuelve string, nunca null/undefined, y
+      // template.userEmail se asigna incondicionalmente antes de evaluate() en
+      // Codigo.js::doGet() — ver commit de este hotfix): si en algún futuro
+      // refactor userEmail llegara vacío/undefined al scriptlet, evita emitir
+      // `const CURRENT_USER_EMAIL = ;` en vez de un string JS válido.
+      const CURRENT_USER_EMAIL = <?!= userEmail ? JSON.stringify(userEmail) : '""' ?>;
     </script>
     <?!= include('app_core_js') ?>
     <?!= include('app_alertas_js') ?>
