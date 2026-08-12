@@ -192,9 +192,11 @@ function doGet(e) {
       const template = HtmlService.createTemplateFromFile('Index');
       template.currentUser = userEmail;
       template.currentRole = role;
-      // ✅ CONC-FE-05: email disponible de forma SÍNCRONA en el HTML servido,
-      // para namespacing de caché de cliente por usuario (ver TODOS.md ítem 11)
+      // ✅ CONC-FE-05-hotfix3: modo seguro GAS. Generamos un literal JS válido
+      // en el backend para evitar que el motor de plantillas falle al evaluar
+      // expresiones complejas dentro de <?!= ... ?>.
       template.userEmail = userEmail;
+      template.safeUserEmailJS = JSON.stringify(userEmail || '');
 
       return template.evaluate()
         .setTitle('Tablero de Gestión Predial - Enterprise Modular')

@@ -217,6 +217,39 @@ Crear una capa de integracion mas segura entre el frontend y Apps Script para ro
 - Invalidacion de cache: [cache_backend.gs](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\cache_backend.gs#L90)
 - Sugerencias de busqueda: [cache_backend.gs](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\cache_backend.gs#L251)
 
+### 5.6 Correccion de bloqueo en render del HTML por scriptlet GAS invalido
+
+**Objetivo funcional**
+
+Eliminar el fallo critico de render en produccion al cargar la interfaz principal, donde el motor de plantillas de Google Apps Script fallaba con `Unexpected token ';'` durante `template.evaluate()`.
+
+**Archivo(s) intervenido(s):**
+
+- [Codigo.js](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\Codigo.js#L145-L170)
+- [Index.html](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\Index.html#L1669-L1678)
+
+**Motivo de la intervencion:**
+
+Se intento inyectar el email del usuario con una expresion compleja dentro de un scriptlet `<?!= ... ?>` en el HTML. El motor de plantillas de GAS es muy restrictivo y falla cuando hay operadores ternarios o `;` dentro del bloque, provocando la pantalla blanca en `/dev`.
+
+**Cambios tecnicos realizados:**
+
+- En [Codigo.js](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\Codigo.js#L167-L179) se agrego `template.safeUserEmailJS = JSON.stringify(userEmail || '')` antes de `evaluate()`.
+- En [Index.html](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\Index.html#L1674-L1678) se simplifico la inyeccion a `const CURRENT_USER_EMAIL = <?!= safeUserEmailJS ?>;` sin logica ni ternarios.
+- Se preserva el valor JS seguro y validado para el namespacing de cache por usuario.
+
+**Impacto tecnico:**
+
+- Se elimina la falla de sintaxis en la plantilla.
+- La aplicacion vuelve a cargar sin error en el paso `template.evaluate()`.
+- Se reduce el riesgo de regresiones futuras en inyecciones inline de datos sensibles o dinamicos dentro de `Index.html`.
+
+**Validacion ejecutada despues del cambio:**
+
+- [x] `node --check Codigo.js` ejecutado con respuesta exitosa.
+- [x] Refactor de injection verificado por revision del codigo.
+- [x] Listo para despliegue a Apps Script con `clasp push --force`.
+
 ## 6. Agentes, herramientas y skills utilizados o definidos para este proceso
 
 ### 6.1 Agente principal de implementacion

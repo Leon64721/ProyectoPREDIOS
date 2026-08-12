@@ -1662,20 +1662,10 @@
     <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.html5.min.js"></script>
     <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js"></script>
 
-    <!-- ✅ CONC-FE-05: identidad inyectada de forma síncrona, antes de cualquier
-         partial de negocio, para namespacing de LocalCache por usuario -->
+    <!-- ✅ CONC-FE-05-hotfix3: identidad inyectada como literal JS seguro,
+         sin lógica compleja ni scriptlet ternario dentro de la plantilla -->
     <script>
-      // JSON.stringify (no <?= ?> + comillas manuales): el escape HTML de <?= ?>
-      // no es lo mismo que escape de string JS — un apóstrofe legal en el
-      // local-part del correo (ej. o'brien@dominio.com) rompería silenciosamente
-      // el namespacing de la cache-key si se interpolara con comillas simples.
-      // Hardening defensivo (no reproducido como bug real — Session.getActiveUser()
-      // .getEmail() siempre devuelve string, nunca null/undefined, y
-      // template.userEmail se asigna incondicionalmente antes de evaluate() en
-      // Codigo.js::doGet() — ver commit de este hotfix): si en algún futuro
-      // refactor userEmail llegara vacío/undefined al scriptlet, evita emitir
-      // `const CURRENT_USER_EMAIL = ;` en vez de un string JS válido.
-      const CURRENT_USER_EMAIL = <?!= userEmail ? JSON.stringify(userEmail) : '""' ?>;
+      const CURRENT_USER_EMAIL = <?!= safeUserEmailJS ?>;
     </script>
     <?!= include('app_core_js') ?>
     <?!= include('app_alertas_js') ?>
