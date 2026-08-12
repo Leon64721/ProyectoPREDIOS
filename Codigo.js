@@ -331,35 +331,24 @@ function getRtFollowupTimeline(rt, filterType = 'ALL') {
 function getDashboardData() {
   try {
     console.log('🔍 Iniciando getDashboardData...');
-    // ✅ NUEVO: BLOQUEO TRASERO EN TIEMPO REAL
+    console.time('dashboard:total');
+
     const enMantenimiento = PropertiesService.getScriptProperties().getProperty('MODO_MANTENIMIENTO') === 'true';
     if (enMantenimiento) {
       console.log('⛔ Petición bloqueada: Sistema en mantenimiento');
+      console.timeEnd('dashboard:total');
       return { success: false, mantenimiento: true, message: "Sistema en mantenimiento" };
     }
 
-    // ✅ FASE 8 (perf, restaurado): CacheService — el check de mantenimiento de
-    // arriba SIEMPRE corre antes de esta lectura, y su resultado nunca se
-    // cachea. `user` es un dato POR-SESIÓN (Session.getActiveUser()) —
-    // CacheService.getScriptCache() es COMPARTIDO entre todas las ejecuciones
-    // del script para todos los usuarios, así que `user` NUNCA se guarda en el
-    // blob cacheado: se recalcula en vivo en cada retorno, cache-hit o
-    // cache-miss (evita filtrar el email de quien pobló el caché a otro
-    // usuario — el frontend usa ese valor como identidad para auditoría y
-    // llamadas de permisos/filtro, no es solo cosmético).
-    // Nota de alcance: este caché acelera cargas REPETIDAS dentro del TTL; no
-    // reduce el costo de la primera carga en frío, que depende del tamaño real
-    // de las hojas Datos/Seguimiento — ver DOCUMENTACION_TECNICA_VIVA.md Fase 8
-    // para el análisis completo de por qué getDisplayValues() no se reemplazó
-    // por getValues() en este mismo pase (riesgo de romper el formato de
-    // fechas/porcentajes que el cliente espera, sin poder verificar en
-    // navegador).
     const cache = CacheService.getScriptCache();
+    console.time('dashboard:cacheRead');
     const cached = getDashboardCachePayload(cache);
+    console.timeEnd('dashboard:cacheRead');
     if (cached) {
       try {
         const cachedResponse = JSON.parse(cached);
         cachedResponse.user = Session.getActiveUser().getEmail();
+        console.timeEnd('dashboard:total');
         return cachedResponse;
       } catch (e) {
         console.warn('⚠️ Caché de dashboard corrupto, recalculando: ' + e.message);
@@ -367,15 +356,13 @@ function getDashboardData() {
     }
 
     const allRecords = [];
-    const allProyectosSet = new Set(); // Guardará TODOS los proyectos reales
+    const allProyectosSet = new Set();
     let headers = [];
     let headersFound = false;
     const seguimientoRecords = [];
 
-    // ✅ OBTENER IDs DE ARCHIVOS
     const dataFilesIds = getDataFilesIds();
-    
-    // ✅ OBTENER FILTRO ACTIVO DE LA BASE DE DATOS
+
     let filtroActivo = null;
     try {
       const gestorFiltro = new GestorFiltroMatriz();
@@ -384,110 +371,115 @@ function getDashboardData() {
 
     let proyectosVisibles = { todos: true, proyectos: [], excluidos: [] };
     if (filtroActivo) {
-        if (filtroActivo.proyectosIncluidos && filtroActivo.proyectosIncluidos.length > 0) {
-            proyectosVisibles = { todos: false, proyectos: filtroActivo.proyectosIncluidos, excluidos: [] };
-        } else if (filtroActivo.proyectosExcluidos && filtroActivo.proyectosExcluidos.length > 0) {
-            proyectosVisibles = { todos: false, proyectos: [], excluidos: filtroActivo.proyectosExcluidos };
-        }
+      if (filtroActivo.proyectosIncluidos && filtroActivo.proyectosIncluidos.length > 0) {
+        proyectosVisibles = { todos: false, proyectos: filtroActivo.proyectosIncluidos, excluidos: [] };
+      } else if (filtroActivo.proyectosExcluidos && filtroActivo.proyectosExcluidos.length > 0) {
+        proyectosVisibles = { todos: false, proyectos: [], excluidos: filtroActivo.proyectosExcluidos };
+      }
     }
 
-    // ✅ LEER DATOS
+    console.time('dashboard:sheetRead');
     dataFilesIds.forEach((id) => {
       try {
         const ss = SpreadsheetApp.openById(id);
         const ws = ss.getSheetByName(getConfig('SHEETS.DATOS', 'Datos'));
         if (!ws) return;
-        
-        const data = ws.getDataRange().getDisplayValues();
-        if (data.length > 1) {
-          if (!headersFound) {
-            headers = data[0].map(h => h.toString().toUpperCase().trim());
-            headersFound = true;
-          }
-          
-          const proyectoIndex = headers.findIndex(h => h.includes("PROYECTO"));
-          
-          for (let i = 1; i < data.length; i++) {
-            const proyecto = data[i][proyectoIndex];
-            
-            // 1. Guardar el proyecto en la lista global (para los checkboxes del admin)
-            if (proyecto && proyecto.trim() !== '') {
-                allProyectosSet.add(proyecto);
-            }
-            
-            // 2. Aplicar filtro matriz del servidor
-            let incluirRegistro = true;
-            if (!proyectosVisibles.todos) {
-              if (proyectosVisibles.proyectos.length > 0) {
-                incluirRegistro = proyectosVisibles.proyectos.includes(proyecto);
-              } else if (proyectosVisibles.excluidos.length > 0) {
-                incluirRegistro = !proyectosVisibles.excluidos.includes(proyecto);
-              }
-            }
-            
-            // Si no está incluido, saltarlo (no se envía al cliente)
-            if (!incluirRegistro) continue;
 
-            let row = {};
-            row['_FILE_ID'] = id;
-            for (let j = 0; j < headers.length; j++) {
-              let cellVal = data[i][j];
-              let colName = headers[j];
-              if(colName.includes("VALOR") || colName.includes("PAGADO") || 
-                 colName.includes("ESTIMADO") || colName.includes("SALDO")) {
-                row[colName] = parseMoneyRobust(cellVal);
-              } else {
-                row[colName] = cellVal;
-              }
-            }
-            allRecords.push(row);
-          }
+        const lastRow = ws.getLastRow();
+        const lastCol = ws.getLastColumn();
+        if (lastRow < 2 || lastCol < 1) return;
+
+        const data = ws.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+        const usableRows = data.filter(row => row && row.some(cell => String(cell || '').trim() !== ''));
+        if (usableRows.length <= 1) return;
+
+        if (!headersFound) {
+          headers = usableRows[0].map(h => String(h || '').toUpperCase().trim());
+          headersFound = true;
         }
 
-        // Leer Seguimiento
+        const proyectoIndex = headers.findIndex(h => h.includes('PROYECTO'));
+
+        for (let i = 1; i < usableRows.length; i++) {
+          const row = usableRows[i];
+          const proyecto = String(row[proyectoIndex] || '').trim();
+
+          if (proyecto) {
+            allProyectosSet.add(proyecto);
+          }
+
+          let incluirRegistro = true;
+          if (!proyectosVisibles.todos) {
+            if (proyectosVisibles.proyectos.length > 0) {
+              incluirRegistro = proyectosVisibles.proyectos.includes(proyecto);
+            } else if (proyectosVisibles.excluidos.length > 0) {
+              incluirRegistro = !proyectosVisibles.excluidos.includes(proyecto);
+            }
+          }
+
+          if (!incluirRegistro) continue;
+
+          const rowObject = { _FILE_ID: id };
+          for (let j = 0; j < headers.length; j++) {
+            const cellVal = row[j];
+            const colName = headers[j];
+            if (colName.includes('VALOR') || colName.includes('PAGADO') || colName.includes('ESTIMADO') || colName.includes('SALDO')) {
+              rowObject[colName] = parseMoneyRobust(cellVal);
+            } else {
+              rowObject[colName] = cellVal || '';
+            }
+          }
+          allRecords.push(rowObject);
+        }
+
         const wsSeg = ss.getSheetByName(getConfig('SHEETS.SEGUIMIENTO', 'Seguimiento'));
         if (wsSeg) {
-          const segData = wsSeg.getDataRange().getDisplayValues();
-          if (segData.length > 1) {
-            const segHeaders = segData[0].map(h => h.toString().toUpperCase().trim());
-            for (let i = 1; i < segData.length; i++) {
-              let segRow = {};
-              for (let j = 0; j < segHeaders.length; j++) segRow[segHeaders[j]] = segData[i][j];
-              if (segRow['RT']) seguimientoRecords.push(segRow);
+          const segLastRow = wsSeg.getLastRow();
+          const segLastCol = wsSeg.getLastColumn();
+          if (segLastRow > 1 && segLastCol > 0) {
+            const segData = wsSeg.getRange(1, 1, segLastRow, segLastCol).getDisplayValues();
+            const segUsableRows = segData.filter(row => row && row.some(cell => String(cell || '').trim() !== ''));
+            if (segUsableRows.length > 1) {
+              const segHeaders = segUsableRows[0].map(h => String(h || '').toUpperCase().trim());
+              for (let i = 1; i < segUsableRows.length; i++) {
+                const segRow = {};
+                for (let j = 0; j < segHeaders.length; j++) segRow[segHeaders[j]] = segUsableRows[i][j] || '';
+                if (segRow['RT']) seguimientoRecords.push(segRow);
+              }
             }
           }
         }
-      } catch (e) { console.error(`❌ Error archivo ${id}:`, e.message); }
+      } catch (e) {
+        console.error(`❌ Error archivo ${id}:`, e.message);
+      }
     });
-    
-    // ✅ FASE 8: `user` queda FUERA del objeto cacheable a propósito (ver comentario
-    // arriba) — se agrega al final, en vivo, después del cache.put().
+    console.timeEnd('dashboard:sheetRead');
+
+    console.time('dashboard:serialize');
     const cacheableResponse = {
       success: true,
       records: JSON.stringify(allRecords),
       columns: JSON.stringify(headers),
       seguimiento: JSON.stringify(seguimientoRecords),
-      allProyectos: JSON.stringify(Array.from(allProyectosSet).sort()), // ✅ ENVIAMOS LA LISTA COMPLETA AL ADMIN
+      allProyectos: JSON.stringify(Array.from(allProyectosSet).sort()),
       filtroMatrizActivo: JSON.stringify(filtroActivo || {})
     };
 
-    // ✅ CacheService.put() lanza síncronamente si el payload supera 100KB —
-    // fallback a no-cachear (fail-open), la respuesta en vivo ya se calculó y
-    // se retorna igual. Esta es la única forma en que el límite de 100KB de
-    // CacheService puede afectar esta función: nunca como un crash, siempre
-    // como "no se pudo cachear esta vez".
     try {
       const serializedResponse = JSON.stringify(cacheableResponse);
-      const writeInfo = putDashboardCachePayload(cache, serializedResponse, 1800); // 30 min TTL
+      const writeInfo = putDashboardCachePayload(cache, serializedResponse, 1800);
       console.log('✅ Cache dashboard actualizado: ' + writeInfo.payloadSize + ' chars en ' + writeInfo.chunkCount + ' chunk(s)');
     } catch (e) {
       console.warn('⚠️ No se pudo cachear getDashboardData (posible overflow 100KB de CacheService): ' + e.message);
     }
+    console.timeEnd('dashboard:serialize');
 
     cacheableResponse.user = Session.getActiveUser().getEmail();
+    console.timeEnd('dashboard:total');
     return cacheableResponse;
-
   } catch (e) {
+    console.error('❌ Error crítico en getDashboardData:', e.message);
+    console.timeEnd('dashboard:total');
     return { success: false, message: e.message, records: '[]', columns: '[]', seguimiento: '[]', allProyectos: '[]' };
   }
 }

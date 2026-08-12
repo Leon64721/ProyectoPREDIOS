@@ -50,31 +50,38 @@ class GestorDatos {
   leerDatos(sheetName) {
     try {
       const sheet = this.getSheet(sheetName);
-      const data = sheet.getDataRange().getDisplayValues();
-      
-      if (!data || data.length < 1) {
+      const lastRow = sheet.getLastRow();
+      const lastCol = sheet.getLastColumn();
+
+      if (lastRow < 1 || lastCol < 1) {
         console.warn(`⚠️ Hoja ${sheetName} vacía o sin datos`);
         return { headers: [], rows: [] };
       }
-      
-      const headers = data[0].map(h => {
+
+      const data = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+      const filteredData = data.filter(row => row && row.some(cell => String(cell || '').trim() !== ''));
+
+      if (!filteredData || filteredData.length < 1) {
+        console.warn(`⚠️ Hoja ${sheetName} sin filas útiles`);
+        return { headers: [], rows: [] };
+      }
+
+      const headers = filteredData[0].map(h => {
         if (h === null || h === undefined) return '';
         return String(h).toUpperCase().trim().replace(/\n/g, ' ');
       });
-      
+
       const rows = [];
-      if (data.length > 1) {
-        for (let i = 1; i < data.length; i++) {
-          const row = data[i];
-          const obj = {};
-          headers.forEach((header, idx) => {
-            obj[header] = (row[idx] !== null && row[idx] !== undefined) ? row[idx] : '';
-          });
-          rows.push(obj);
-        }
+      for (let i = 1; i < filteredData.length; i++) {
+        const row = filteredData[i];
+        const obj = {};
+        headers.forEach((header, idx) => {
+          obj[header] = (row[idx] !== null && row[idx] !== undefined) ? row[idx] : '';
+        });
+        rows.push(obj);
       }
-      
-      console.log(`✅ Datos leídos: ${rows.length} filas, ${headers.length} columnas`);
+
+      console.log(`✅ Datos leídos: ${rows.length} filas útiles, ${headers.length} columnas`);
       return { headers, rows };
     } catch (e) {
       console.error(`Error en leerDatos: ${e.message}`);
