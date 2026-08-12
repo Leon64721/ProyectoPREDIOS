@@ -294,9 +294,11 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 **Fase B — UI de Mapeo:** [COMPLETADO 2026-08-12] crear una capa visual para revisar columnas, propuestas de mapeo, conflictos semánticos y resultados de previsualización antes de confirmar el merge. Incluye modal `#modalMapeoNormalizacion`, reporte visual de conflictos y persistencia intermedia en IndexedDB bajo la clave `normalizacion_map_<USER_EMAIL>`.
 
-**Fase C — Validación y Merge:** ejecutar validación final de filas, columnas críticas y estructura objetivo; materializar el resultado final y dejarlo listo para consolidación operativa con los módulos principales.
+**Fase C — Validación y Merge:** [COMPLETADO 2026-08-12] ejecutar validación final de filas, columnas críticas y estructura objetivo; materializar el resultado final y dejarlo listo para consolidación operativa con los módulos principales. Queda integrada la confirmación del modal de mapeo con la ejecución operativa de `ejecutarNormalizacionCompleta(payload)`, la persistencia del mapeo en IndexedDB y el refresco del tablero tras la normalización.
 
 **Why:** la lógica ya existe en `normalizacion_script/CoreNormalizacion.js`, `ConfigNormalizacion.js` y `MenuNormalizacion.js`, pero necesita pasar de ejecución manual aislada a pipeline operativo con intermedios persistidos y validación de negocio. El enfoque debe priorizar procesamiento backend, no render del navegador.
+
+**Verificación ejecutada:** `node --check normalizacion_script/MenuNormalizacion.js`, `node --check normalizacion_script/CoreNormalizacion.js` y validación del bloque JS del modal `app_normalizacion_js.html` sin errores reportados por el editor.
 
 **Contexto de arquitectura:** gráfo validado con `graphify query "Normalizacion"`; núcleo funcional detectado y documentado en `ARCHITECTURE_V3.md`.
 

@@ -283,6 +283,37 @@ Permitir decidir, revisar y confirmar el mapeo entre columnas crudas y campos ca
 - [x] `node --check normalizacion_script/ConfigNormalizacion.js` y `node --check normalizacion_script/CoreNormalizacion.js` ejecutados previamente con salida exitosa (sin errores).
 - [x] `TODOS.md` actualizado marcando la Fase B como completada.
 
+### 5.8 Fase C — Merge operativo y cierre del Sprint 3
+
+**Objetivo funcional**
+
+Conectar la confirmacion del mapeo visual con la ejecucion operativa del pipeline de normalizacion, asegurar que la materializacion final se haga con validacion de negocio y dejar trazabilidad del resultado para la siguiente etapa de consolidacion del tablero.
+
+**Archivo(s) intervenido(s):**
+
+- [app_normalizacion_js.html](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\app_normalizacion_js.html)
+- [TODOS.md](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\TODOS.md)
+- [DOCUMENTACION_TECNICA_VIVA.md](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\DOCUMENTACION_TECNICA_VIVA.md)
+
+**Cambios realizados**
+
+- Se conecto el boton `Guardar mapeo` con la ejecucion de `ejecutarNormalizacionCompleta(payload)` mediante `google.script.run`.
+- Se conserva el payload de mapeo y las columnas seleccionadas en IndexedDB antes de cerrar el modal.
+- Se persiste el dataset normalizado en la caché del tablero (`writeDashboardCache`) para mantener la UI consistente tras la validacion y el re-render inmediato.
+- Se deja la ruta de re-render del matrix y la limpieza del modal en una sola accion, sin depender de `localStorage`.
+
+**Impacto tecnico**
+
+- El flujo de normalizacion pasa de ser visual y manual a un pipeline operativo con confirmacion de usuario y registro de estado intermedio.
+- Se reduce el riesgo de perder la configuracion del mapeo por recarga o por cambios de contexto del usuario.
+- La primera vista del tablero queda sincronizada con la respuesta del merge, sin abrir una segunda ventana de inconsistencia frente a la caché local.
+
+**Validacion ejecutada despues del cambio:**
+
+- [x] `node --check normalizacion_script/MenuNormalizacion.js` ejecutado con salida `MenuNormalizacion OK`.
+- [x] `node --check normalizacion_script/CoreNormalizacion.js` ejecutado con salida `CoreNormalizacion OK`.
+- [x] Revisiones del editor sobre [app_normalizacion_js.html](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\app_normalizacion_js.html), [normalizacion_script/MenuNormalizacion.js](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\normalizacion_script\MenuNormalizacion.js) y [normalizacion_script/CoreNormalizacion.js](e:\PROYECTOS\CLAUDE CODE\CREACIÓN APK\Aplicación de Predios\normalizacion_script\CoreNormalizacion.js) sin errores de sintaxis.
+
 ## 6. Agentes, herramientas y skills utilizados o definidos para este proceso
 
 ### 6.1 Agente principal de implementacion

@@ -338,18 +338,55 @@
           }
         });
 
-        guardarMapeoNormalizacion({
+        const payload = {
           key: getNormalizacionMapKey(),
           mapping: selectedMap,
+          columnas: Array.from(rows).map(function(select) {
+            return select.dataset.columnName || '';
+          }).filter(Boolean),
           updatedAt: Date.now()
-        }).then(function() {
-          if (window.bootstrap && window.bootstrap.Modal) {
-            const modalInstance = window.bootstrap.Modal.getInstance(modal) || new window.bootstrap.Modal(modal);
-            modalInstance.hide();
-          }
-        }).catch(function(error) {
-          console.warn('⚠️ No se pudo guardar:', error.message);
-        });
+        };
+
+        guardarMapeoNormalizacion(payload)
+          .then(function() {
+            if (window.google && window.google.script && window.google.script.run) {
+              window.google.script.run.withSuccessHandler(function(response) {
+                const resultado = response || {};
+                if (resultado && resultado.success !== false) {
+                  const dataset = resultado.dataset || payload.mapping;
+                  if (dataset && typeof dataset === 'object' && typeof window.writeDashboardCache === 'function') {
+                    const cacheKey = getNormalizacionMapKey();
+                    window.writeDashboardCache(cacheKey, dataset).catch(function(error) {
+                      console.warn('⚠️ No se pudo guardar dataset normalizado en IndexedDB:', error.message);
+                    });
+                  }
+
+                  if (typeof window.renderMatrix === 'function') {
+                    window.renderMatrix();
+                  }
+
+                  if (window.bootstrap && window.bootstrap.Modal) {
+                    const modalInstance = window.bootstrap.Modal.getInstance(modal) || new window.bootstrap.Modal(modal);
+                    modalInstance.hide();
+                  }
+                  return;
+                }
+
+                console.warn('⚠️ La normalización operativa respondió con error:', resultado && resultado.message ? resultado.message : 'sin detalle');
+              }).withFailureHandler(function(error) {
+                console.warn('⚠️ Error ejecutando normalización operativa:', error && error.message ? error.message : String(error));
+              }).ejecutarNormalizacionCompleta(payload);
+              return;
+            }
+
+            if (window.bootstrap && window.bootstrap.Modal) {
+              const modalInstance = window.bootstrap.Modal.getInstance(modal) || new window.bootstrap.Modal(modal);
+              modalInstance.hide();
+            }
+          })
+          .catch(function(error) {
+            console.warn('⚠️ No se pudo guardar:', error.message);
+          });
       };
     }
 
