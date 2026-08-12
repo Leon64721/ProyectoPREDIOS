@@ -473,6 +473,8 @@ class MotorEvaluadorReglas {
   }
 }
 
+const MAX_ALERTAS_PAYLOAD = 100;
+
 function _normalizarSeveridadAlertas(valor) {
   const nivel = String(valor || '').toUpperCase();
   if (['CRITICA', 'ALERTA', 'ADVERTENCIA', 'INFO'].includes(nivel)) return nivel;
@@ -532,7 +534,7 @@ function evaluarAlertasDataset(dataset) {
     const pesoNivel = { CRITICA: 1, ALERTA: 2, ADVERTENCIA: 3, INFO: 4 };
     const alertasOrdenadas = alertas
       .sort((a, b) => (pesoNivel[a.NIVEL] || 99) - (pesoNivel[b.NIVEL] || 99))
-      .slice(0, 25);
+      .slice(0, MAX_ALERTAS_PAYLOAD);
 
     const resumen = {
       success: true,

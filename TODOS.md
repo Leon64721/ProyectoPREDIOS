@@ -276,7 +276,15 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 ---
 
-## 15. Fase 9 (`DESIGN.md`) — Sprints 2 a 5: consistencia de filtros, layout/legibilidad, microinteracciones y accesibilidad — [PLANIFICADO, no iniciado]
+## 15. Sprint 2 — Endurecimiento y cierre de alertas (Fase D) — [COMPLETADO 100% 2026-08-12]
+
+**Cierre operativo:** se implementaron los estados vacíos del resumen, se añadió el tope `MAX_ALERTAS_PAYLOAD = 100` para evitar degradación del payload en picos masivos, y se validó el flujo de alertas en backend y UI sin introducir regresiones.
+
+**Cobertura:** batch backend, render seguro, caché cliente y cierre documental del Sprint 2.
+
+---
+
+## 16. Fase 9 (`DESIGN.md`) — Sprints 2 a 5: consistencia de filtros, layout/legibilidad, microinteracciones y accesibilidad — [PLANIFICADO, no iniciado]
 
 **What:** Ejecutar los Sprints 2-5 definidos en `DESIGN.md` Sección 5: (2) migrar todos los selects de filtros restantes a `SearchableDropdown` con contador de coincidencias y QA responsive; (3) normalizar spacing vertical global, corregir overflow/word-break restante, revisar contraste AA; (4) estandarizar toasts y animaciones de apertura/cierre; (5) navegación por teclado, atributos ARIA y pruebas de regresión visual por captura.
 

@@ -215,16 +215,44 @@ function renderizarResumenAlertas(alertasResumen) {
     ensureAlertSummaryDom();
 
     const resumen = (() => {
-        if (!alertasResumen) return { success: true, totalAlertas: 0, severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 }, alertas: [] };
+        if (!alertasResumen) {
+            return {
+                success: true,
+                totalAlertas: 0,
+                severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+                alertas: []
+            };
+        }
         if (typeof alertasResumen === 'string') {
             try {
-                return JSON.parse(alertasResumen);
+                const parsed = JSON.parse(alertasResumen);
+                if (!parsed || !Array.isArray(parsed.alertas) || !parsed.alertas.length) {
+                    return {
+                        success: true,
+                        totalAlertas: 0,
+                        severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+                        alertas: []
+                    };
+                }
+                return parsed;
             } catch (e) {
                 console.warn('⚠️ No se pudo parsear alertasResumen:', e.message);
-                return { success: true, totalAlertas: 0, severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 }, alertas: [] };
+                return {
+                    success: true,
+                    totalAlertas: 0,
+                    severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+                    alertas: []
+                };
             }
         }
-        return alertasResumen;
+        const safeResumen = alertasResumen || {};
+        const safeAlertas = Array.isArray(safeResumen.alertas) ? safeResumen.alertas : [];
+        return {
+            success: true,
+            totalAlertas: Number(safeResumen.totalAlertas) || safeAlertas.length || 0,
+            severidades: safeResumen.severidades || { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+            alertas: safeAlertas
+        };
     })();
 
     const criticas = Number((resumen && resumen.severidades && resumen.severidades.CRITICA) || 0);
@@ -268,7 +296,7 @@ function renderizarResumenAlertas(alertasResumen) {
             if (!detalleBody) return;
 
             if (!items.length) {
-                detalleBody.innerHTML = '<div class="text-center text-muted py-4"><i class="fas fa-check-circle text-success"></i><div class="mt-2">No hay alertas activas para mostrar.</div></div>';
+                detalleBody.innerHTML = '<div class="text-center text-muted py-4"><i class="fas fa-check-circle text-success"></i><div class="mt-2">Estado limpio: no hay alertas activas para mostrar.</div></div>';
             } else {
                 detalleBody.innerHTML = items.map(item => {
                     const nivel = String(item.NIVEL || item.severidad || 'INFO').toUpperCase();
