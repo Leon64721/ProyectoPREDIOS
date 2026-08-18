@@ -194,6 +194,35 @@ function _leerFilasVisiblesRBACEquipos() {
 }
 
 /**
+ * ✅ [CONC-FE-13]: endpoint público que alimenta los selectores reactivos del modal de
+ * Asignación Granular (Articulador -> Gestor en cascada, ver app_equipos_js.html). Reutiliza
+ * el mismo lector de USUARIOS que ya usa el motor de homologación (_leerDirectorioUsuariosSheet()
+ * / _esActivo(), homologacion_usuarios.js — funciones globales, mismo scope de Apps Script),
+ * filtrado a solo usuarios activos con rol Articulador o Gestor. Separado de getUserRoles()/
+ * getDashboardData() porque este roster es un catálogo estático para poblar <select>, no datos
+ * operativos filtrados por RBAC del usuario que lo pide.
+ */
+function getUsuariosParaAsignacionEquipos() {
+  try {
+    const directorio = _leerDirectorioUsuariosSheet();
+    const rolArticulador = getConfig('ROLES.ARTICULADOR');
+    const rolGestor = getConfig('ROLES.GESTOR');
+    const activos = directorio.filter(_esActivo);
+
+    function porNombre(a, b) { return a.nombre.localeCompare(b.nombre); }
+    function proyectarUsuario(u) { return { email: u.email, nombre: u.nombre, componente: u.componente }; }
+
+    const articuladores = activos.filter(function(u) { return u.rol === rolArticulador; }).map(proyectarUsuario).sort(porNombre);
+    const gestores = activos.filter(function(u) { return u.rol === rolGestor; }).map(proyectarUsuario).sort(porNombre);
+
+    return { success: true, articuladores: articuladores, gestores: gestores };
+  } catch (e) {
+    console.error('❌ Error en getUsuariosParaAsignacionEquipos: ' + e.message);
+    return { success: false, error: e.message, articuladores: [], gestores: [] };
+  }
+}
+
+/**
  * KPIs del tablero de carga: Total RTs, RTs por Asignar (regla estricta: falta Articulador
  * O Gestor), distribución por Articulador/Gestor. `userContext` es solo un hint del cliente —
  * el rol/email real se resuelve SIEMPRE server-side.
