@@ -468,6 +468,86 @@ function getRTsPorTramo(proyecto, tramo) {
   }
 }
 
+/**
+ * ✅ [CONC-FE-15]: índice inverso RT -> ubicación+asignación, para lookup O(1) en el
+ * cliente tras una sola carga (buscador directo de RT en el modal de Asignación Granular,
+ * ver handleRTSelectionDirecta() en app_equipos_js.html) — evita un round-trip por cada RT
+ * que el usuario escribe/selecciona. Misma fuente fusionada y mismo alcance RBAC que el
+ * resto del módulo (_leerFilasVisiblesRBACEquipos()), reutilizada tal cual.
+ */
+function getIndiceInversoRTs() {
+  try {
+    const filas = _leerFilasVisiblesRBACEquipos();
+    const indice = {};
+
+    filas.forEach(function(f) {
+      indice[f.rt] = {
+        proyecto: f.proyecto,
+        tramo: f.tramo,
+        articulador: f.articuladorEsEmail ? f.articulador : '',
+        gestor: f.gestorEsEmail ? f.gestor : ''
+      };
+    });
+
+    return { success: true, indice: indice, totalRTs: Object.keys(indice).length };
+  } catch (e) {
+    console.error('❌ Error en getIndiceInversoRTs: ' + e.message);
+    return { success: false, error: e.message, indice: {}, totalRTs: 0 };
+  }
+}
+
+/**
+ * ✅ [CONC-FE-15]: jerarquía consolidada Articulador -> Gestores con conteos, para el panel
+ * "Equipos de Trabajo" del módulo (reemplaza las 2 tablas planas de distribución previas).
+ * Solo agrupa RTs cuyo Articulador ya está homologado a un email real — un RT sin
+ * Articulador no tiene bajo cuál cabecera colgarse; esos ya se reflejan en el KPI "RTs por
+ * Asignar" de getEstadisticasCargaEquipos(). Dentro de cada Articulador, un Gestor sin
+ * homologar (o ausente) se agrupa bajo la clave literal "Sin asignar", listada al final.
+ */
+function getEquiposConsolidados() {
+  try {
+    const filas = _leerFilasVisiblesRBACEquipos();
+    const conteosPorArticulador = {}; // { emailArticulador: { claveGestor: count } }
+    const ordenArticuladores = [];
+    const ordenGestoresPorArticulador = {};
+
+    filas.forEach(function(f) {
+      if (!f.articuladorEsEmail) return;
+      const art = f.articulador;
+      if (!conteosPorArticulador[art]) {
+        conteosPorArticulador[art] = {};
+        ordenArticuladores.push(art);
+        ordenGestoresPorArticulador[art] = [];
+      }
+      const claveGestor = f.gestorEsEmail ? f.gestor : 'Sin asignar';
+      if (conteosPorArticulador[art][claveGestor] === undefined) {
+        conteosPorArticulador[art][claveGestor] = 0;
+        ordenGestoresPorArticulador[art].push(claveGestor);
+      }
+      conteosPorArticulador[art][claveGestor]++;
+    });
+
+    const equipos = ordenArticuladores.sort().map(function(art) {
+      const gestoresOrdenados = ordenGestoresPorArticulador[art].slice().sort(function(a, b) {
+        if (a === 'Sin asignar') return 1;
+        if (b === 'Sin asignar') return -1;
+        return a.localeCompare(b);
+      });
+      return {
+        articuladorEmail: art,
+        gestores: gestoresOrdenados.map(function(g) {
+          return { email: g, rtsAsignados: conteosPorArticulador[art][g] };
+        })
+      };
+    });
+
+    return { success: true, equipos: equipos };
+  } catch (e) {
+    console.error('❌ Error en getEquiposConsolidados: ' + e.message);
+    return { success: false, error: e.message, equipos: [] };
+  }
+}
+
 function _invalidarCacheDatosSiExiste() {
   try {
     if (typeof invalidateDataCache === 'function') invalidateDataCache();

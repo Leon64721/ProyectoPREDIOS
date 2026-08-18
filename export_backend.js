@@ -164,6 +164,78 @@
     });
   }
 
+  // ✅ [CONC-FE-15]: plantilla CSV plana (SIN el banner institucional de buildCsvExport) —
+  // este archivo debe poder reimportarse tal cual con procesarArchivoAsignacionCSV() en
+  // app_equipos_js.html, así que la primera línea tiene que ser el encabezado real, no un
+  // renglón informativo. Mismo separador ';' que EXPORT_ENGINE para que el parser cliente
+  // (que asume el mismo delimitador) lea el archivo sin ambigüedad.
+  function buildCsvPlano(rows, headers, separator) {
+    const sep = separator || EXPORT_ENGINE.separator;
+    const lines = [headers.map(function(h) { return csvEscape(h, sep); }).join(sep)];
+    rows.forEach(function(row) {
+      lines.push(headers.map(function(h) { return csvEscape(row[h], sep); }).join(sep));
+    });
+    return lines.join('\r\n');
+  }
+
+  /**
+   * ✅ [CONC-FE-15]: plantilla de asignación masiva — filtra los RTs visibles (RBAC) por
+   * nivel/idTarget cruzando con el overlay vigente (Datos + ASIGNACIONES_EQUIPOS fusionados
+   * vía _leerFilasVisiblesRBACEquipos(), función global de gestion_equipos_backend.js —
+   * mismo scope compartido de Apps Script, sin imports) y devuelve un CSV con columnas
+   * estrictas RT;PROYECTO;TRAMO;ARTICULADOR_EMAIL;GESTOR_EMAIL. Los RTs sin email
+   * homologado quedan con esas dos columnas vacías a propósito, para que el usuario las
+   * llene en Excel y vuelva a subir el archivo.
+   *
+   * `nivel`: 'PROYECTO' | 'TRAMO' | 'RT' | '' (vacío = sin filtro, exporta todo lo
+   * visible para el usuario). `proyectoContexto` (opcional, solo relevante para nivel
+   * TRAMO): el nombre de tramo por sí solo es ambiguo entre proyectos distintos (mismo
+   * problema resuelto con clave compuesta en getProyectosYListaUsuarios(), CONC-FE-14) — se
+   * pasa el proyecto actualmente seleccionado en el cliente para desambiguar.
+   */
+  function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {
+    try {
+      if (typeof _leerFilasVisiblesRBACEquipos !== 'function') {
+        throw new Error('_leerFilasVisiblesRBACEquipos no está disponible (gestion_equipos_backend.js no cargado)');
+      }
+
+      const nivelUpper = String(nivel || '').toUpperCase();
+      const filas = _leerFilasVisiblesRBACEquipos();
+
+      let filtradas;
+      if (nivelUpper === 'PROYECTO') {
+        filtradas = filas.filter(function(f) { return f.proyecto === idTarget; });
+      } else if (nivelUpper === 'TRAMO') {
+        filtradas = filas.filter(function(f) {
+          return f.tramo === idTarget && (!proyectoContexto || f.proyecto === proyectoContexto);
+        });
+      } else if (nivelUpper === 'RT') {
+        filtradas = filas.filter(function(f) { return f.rt === idTarget; });
+      } else {
+        filtradas = filas; // sin filtro: todo lo visible para el usuario (uso administrativo)
+      }
+
+      filtradas = filtradas.slice().sort(function(a, b) { return String(a.rt).localeCompare(String(b.rt)); });
+
+      const columnas = ['RT', 'PROYECTO', 'TRAMO', 'ARTICULADOR_EMAIL', 'GESTOR_EMAIL'];
+      const dataset = filtradas.map(function(f) {
+        return {
+          RT: f.rt,
+          PROYECTO: f.proyecto,
+          TRAMO: f.tramo,
+          ARTICULADOR_EMAIL: f.articuladorEsEmail ? f.articulador : '',
+          GESTOR_EMAIL: f.gestorEsEmail ? f.gestor : ''
+        };
+      });
+
+      const csv = buildCsvPlano(dataset, columnas, EXPORT_ENGINE.separator);
+      return { success: true, csv: csv, totalFilas: dataset.length };
+    } catch (e) {
+      console.error('❌ Error en generarPlantillaAsignacionCSV: ' + e.message);
+      return { success: false, error: e.message, csv: '', totalFilas: 0 };
+    }
+  }
+
   global.EXPORT_BACKEND = {
     ENGINE: EXPORT_ENGINE,
     sanitizeExportValue: sanitizeExportValue,
@@ -172,11 +244,14 @@
     buildCsvExport: buildCsvExport,
     buildWorkbookPayload: buildWorkbookPayload,
     chunkRows: chunkRows,
-    exportInBatches: exportInBatches
+    exportInBatches: exportInBatches,
+    buildCsvPlano: buildCsvPlano,
+    generarPlantillaAsignacionCSV: generarPlantillaAsignacionCSV
   };
 
   global.buildCsvExport = buildCsvExport;
   global.buildWorkbookPayload = buildWorkbookPayload;
   global.exportInBatches = exportInBatches;
   global.buildInstitutionHeader = buildInstitutionHeader;
+  global.generarPlantillaAsignacionCSV = generarPlantillaAsignacionCSV;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

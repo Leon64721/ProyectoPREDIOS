@@ -654,12 +654,23 @@
                         <i class="fas fa-users-gear"></i>
                         Gestión de Equipos y Jerarquía RBAC
                     </h2>
-                    <div class="page-actions">
+                    <div class="page-actions flex-wrap align-items-center">
                         <button class="btn-secondary-custom" onclick="cargarModuloEquipos()"><i class="fas fa-rotate"></i> Recargar</button>
                         <button class="btn btn-warning" onclick="handleCargaLineaCero()"><i class="fas fa-flag-checkered"></i> Cargar Línea Cero (Asignación Inicial)</button>
                         <button class="btn-primary-custom" onclick="abrirModalHomologacionEquipos()"><i class="fas fa-user-check"></i> Homologación de Usuarios</button>
                         <button class="btn-primary-custom" onclick="abrirModalAsignacionGranular('PROYECTO', '', {})"><i class="fas fa-diagram-project"></i> Asignación Granular</button>
                         <button class="btn-secondary-custom bg-danger text-white border-0" onclick="abrirModalHandover()"><i class="fas fa-right-left"></i> Handover 1-Click</button>
+                        <!-- ✅ [CONC-FE-15]: ámbito de exportación — "Todos" por defecto (sin selección),
+                             se puede acotar a un Proyecto/Tramo puntual antes de descargar la plantilla. -->
+                        <select id="exportAsignacionProyecto" class="form-select form-select-sm" style="width:auto;" onchange="onExportAsignacionProyectoChange()">
+                            <option value="">Todos los proyectos</option>
+                        </select>
+                        <select id="exportAsignacionTramo" class="form-select form-select-sm" style="width:auto;">
+                            <option value="">Todos los tramos</option>
+                        </select>
+                        <button class="btn-secondary-custom" onclick="handleDescargarPlantillaAsignacion()"><i class="fas fa-file-csv"></i> Descargar Plantilla Asignación</button>
+                        <button class="btn-secondary-custom" onclick="document.getElementById('inputAsignacionMasivaCSV').click()"><i class="fas fa-file-arrow-up"></i> Subir Asignación Masiva (CSV)</button>
+                        <input type="file" id="inputAsignacionMasivaCSV" accept=".csv" class="d-none" onchange="handleArchivoAsignacionSeleccionado(this.files[0])">
                     </div>
                 </div>
 
@@ -683,31 +694,15 @@
                     </div>
                 </div>
 
-                <div class="row g-3">
-                    <div class="col-lg-6">
-                        <div class="card shadow-sm">
-                            <div class="card-header bg-dark text-white"><i class="fas fa-user-tie"></i> Distribución por Articulador</div>
-                            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
-                                <table class="table table-striped table-sm mb-0">
-                                    <thead><tr><th>Email</th><th class="text-end">RTs</th></tr></thead>
-                                    <tbody id="tablaDistribucionArticulador">
-                                        <tr><td colspan="2" class="text-center text-muted py-3">Cargando...</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-lg-6">
-                        <div class="card shadow-sm">
-                            <div class="card-header bg-dark text-white"><i class="fas fa-user-gear"></i> Distribución por Gestor</div>
-                            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
-                                <table class="table table-striped table-sm mb-0">
-                                    <thead><tr><th>Email</th><th class="text-end">RTs</th></tr></thead>
-                                    <tbody id="tablaDistribucionGestor">
-                                        <tr><td colspan="2" class="text-center text-muted py-3">Cargando...</td></tr>
-                                    </tbody>
-                                </table>
-                            </div>
+                <!-- ✅ [CONC-FE-15]: Panel "Equipos de Trabajo" — reemplaza las 2 tablas planas de
+                     distribución (Articulador y Gestor por separado, sin relación visible entre
+                     ambas) por una jerarquía real: Articulador como cabecera de acordeón, sus
+                     Gestores como filas hijas con su propio conteo de RTs. -->
+                <div class="card shadow-sm">
+                    <div class="card-header bg-dark text-white"><i class="fas fa-people-group"></i> Equipos de Trabajo (Articulador → Gestores)</div>
+                    <div class="card-body p-0" style="max-height: 450px; overflow-y: auto;">
+                        <div class="accordion accordion-flush" id="acordeonEquiposTrabajo">
+                            <div class="text-center text-muted py-3">Cargando...</div>
                         </div>
                     </div>
                 </div>
@@ -745,6 +740,18 @@
                                         <option value="TRAMO">Tramo</option>
                                         <option value="RT">RT</option>
                                     </select>
+                                </div>
+                                <!-- ✅ [CONC-FE-15]: buscador directo de RT — solo visible con Nivel=RT. Al
+                                     seleccionar un RT, Proyecto/Tramo/RT se autocompletan y se bloquean
+                                     (ya no se editan a mano) y #infoAsignacionActual muestra el estado vigente. -->
+                                <div class="col-12 d-none position-relative" id="grupoAsignacionBuscadorRT">
+                                    <label class="form-label"><i class="fas fa-magnifying-glass"></i> Buscar RT</label>
+                                    <input type="text" id="asignacionBuscadorRT" class="form-control" autocomplete="off"
+                                           placeholder="Escribe el número de RT..."
+                                           oninput="handleBuscadorRTInput(this.value)"
+                                           onblur="ocultarSugerenciasBuscadorRT()">
+                                    <div id="asignacionBuscadorRTSugerencias" class="list-group position-absolute d-none shadow-sm" style="z-index:1060; width:100%;"></div>
+                                    <div id="infoAsignacionActual" class="mt-2"></div>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label">Proyecto</label>

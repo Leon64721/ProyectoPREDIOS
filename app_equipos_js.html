@@ -75,26 +75,67 @@
   function pintarKpisEquipos(stats) {
     const totalEl = document.getElementById('kpiEquiposTotalRTs');
     const porAsignarEl = document.getElementById('kpiEquiposPorAsignar');
-    const articuladorBody = document.getElementById('tablaDistribucionArticulador');
-    const gestorBody = document.getElementById('tablaDistribucionGestor');
-
     if (totalEl) totalEl.textContent = (stats.totalRTs !== undefined && stats.totalRTs !== null) ? stats.totalRTs : '-';
     if (porAsignarEl) porAsignarEl.textContent = (stats.rtsPorAsignar === null || stats.rtsPorAsignar === undefined) ? 'N/A' : stats.rtsPorAsignar;
+  }
 
-    function pintarTabla(tbody, distribucion) {
-      if (!tbody) return;
-      const filas = Array.isArray(distribucion) ? distribucion : [];
-      if (!filas.length) {
-        tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-3">Sin datos</td></tr>';
-        return;
-      }
-      tbody.innerHTML = filas.map(function(d) {
-        return '<tr><td>' + (d.email || '-') + '</td><td class="text-end fw-bold">' + d.totalRTs + '</td></tr>';
-      }).join('');
+  // ═══════════════════════════════════════════════════════════════════
+  // ✅ [CONC-FE-15]: Panel "Equipos de Trabajo" — reemplaza las 2 tablas planas de
+  // distribución (Articulador y Gestor por separado, sin relación visible entre ambas)
+  // por un acordeón con jerarquía real: Articulador como cabecera, sus Gestores como
+  // filas hijas con su propio conteo de RTs, alimentado por getEquiposConsolidados().
+  // ═══════════════════════════════════════════════════════════════════
+  function renderEquiposConsolidados(equipos) {
+    const contenedor = document.getElementById('acordeonEquiposTrabajo');
+    if (!contenedor) return;
+    if (!Array.isArray(equipos) || !equipos.length) {
+      contenedor.innerHTML = '<div class="text-center text-muted py-3">Sin equipos consolidados todavía.</div>';
+      return;
     }
 
-    pintarTabla(articuladorBody, stats.distribucionArticulador);
-    pintarTabla(gestorBody, stats.distribucionGestor);
+    contenedor.innerHTML = equipos.map(function(eq, idx) {
+      const totalRTs = eq.gestores.reduce(function(acc, g) { return acc + g.rtsAsignados; }, 0);
+      const collapseId = 'colapsoEquipoTrabajo' + idx;
+      const filasGestor = eq.gestores.map(function(g) {
+        const esSinAsignar = g.email === 'Sin asignar';
+        return '<li class="list-group-item d-flex justify-content-between align-items-center' + (esSinAsignar ? ' text-danger fst-italic' : '') + '">' +
+          '<span><i class="fas fa-user-gear me-2"></i>' + g.email + '</span>' +
+          '<span class="badge bg-secondary rounded-pill">' + g.rtsAsignados + ' RT(s)</span></li>';
+      }).join('');
+
+      return (
+        '<div class="accordion-item">' +
+          '<h2 class="accordion-header">' +
+            '<button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#' + collapseId + '">' +
+              '<i class="fas fa-user-tie me-2"></i>' + eq.articuladorEmail +
+              ' <span class="badge bg-dark ms-2">' + totalRTs + ' RT(s) · ' + eq.gestores.length + ' gestor(es)</span>' +
+            '</button>' +
+          '</h2>' +
+          '<div id="' + collapseId + '" class="accordion-collapse collapse" data-bs-parent="#acordeonEquiposTrabajo">' +
+            '<div class="accordion-body p-0">' +
+              '<ul class="list-group list-group-flush">' + filasGestor + '</ul>' +
+            '</div>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join('');
+  }
+
+  function cargarEquiposConsolidados() {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        const contenedor = document.getElementById('acordeonEquiposTrabajo');
+        if (result && result.success) {
+          renderEquiposConsolidados(result.equipos);
+        } else if (contenedor) {
+          contenedor.innerHTML = '<div class="alert alert-danger m-2">' + ((result && result.error) || 'No fue posible cargar los equipos consolidados.') + '</div>';
+        }
+      })
+      .withFailureHandler(function(error) {
+        const contenedor = document.getElementById('acordeonEquiposTrabajo');
+        if (contenedor) contenedor.innerHTML = '<div class="alert alert-danger m-2">' + (error.message || error) + '</div>';
+      })
+      .getEquiposConsolidados();
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -120,6 +161,10 @@
         catEstructuraEquiposCargando = false;
         if (result && result.success) {
           window.catEstructuraEquipos = result;
+          // ✅ [CONC-FE-15]: el selector de ámbito de exportación (cabecera del módulo) se
+          // alimenta del mismo catálogo, sin round-trip adicional.
+          const selectExportProyecto = document.getElementById('exportAsignacionProyecto');
+          if (selectExportProyecto) poblarSelectEquipos('exportAsignacionProyecto', result.proyectos || [], 'Todos los proyectos');
         } else {
           console.warn('⚠️ getProyectosYListaUsuarios() no tuvo éxito: ' + ((result && result.error) || 'sin detalle'));
         }
@@ -145,9 +190,31 @@
     precargarCatEstructuraEquipos();
   }
 
+  // ✅ [CONC-FE-15]: índice inverso RT -> {proyecto,tramo,articulador,gestor}, precargado en
+  // segundo plano para que el buscador directo de RT del modal (handleRTSelectionDirecta())
+  // resuelva en memoria, sin round-trip por cada RT que el usuario escribe/selecciona.
+  window.mapaInversoRTs = null;
+
+  function precargarMapaInversoRTs() {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        window.mapaInversoRTs = (result && result.success) ? result.indice : {};
+        if (!(result && result.success)) {
+          console.warn('⚠️ getIndiceInversoRTs() no tuvo éxito: ' + ((result && result.error) || 'sin detalle'));
+        }
+      })
+      .withFailureHandler(function(error) {
+        window.mapaInversoRTs = {};
+        console.warn('⚠️ Error cargando getIndiceInversoRTs(): ' + (error.message || error));
+      })
+      .getIndiceInversoRTs();
+  }
+
   function cargarModuloEquipos() {
     aplicarVisibilidadNavEquipos();
     precargarCatEstructuraEquipos();
+    precargarMapaInversoRTs();
+    cargarEquiposConsolidados();
 
     // Pintado optimista desde IndexedDB mientras llega la respuesta fresca del servidor.
     equiposCacheRead().then(function(cached) {
@@ -645,10 +712,28 @@
     if (valores.indexOf(actual) >= 0) select.value = actual;
   }
 
+  // ✅ [CONC-FE-15]: con Nivel=RT, Proyecto/Tramo/RT dejan de editarse a mano — el buscador
+  // directo (#grupoAsignacionBuscadorRT) los autocompleta y los bloquea (disabled) vía
+  // handleRTSelectionDirecta(). Cambiar a cualquier otro Nivel los reactiva y limpia el
+  // buscador/estado vigente, para no dejar residuos de una búsqueda anterior.
   function onEquiposNivelChange() {
     const nivel = document.getElementById('asignacionNivel').value;
+    const esRTDirecto = nivel === 'RT';
+
+    document.getElementById('grupoAsignacionBuscadorRT').classList.toggle('d-none', !esRTDirecto);
     document.getElementById('grupoAsignacionTramo').classList.toggle('d-none', nivel !== 'TRAMO' && nivel !== 'RT');
     document.getElementById('grupoAsignacionRT').classList.toggle('d-none', nivel !== 'RT');
+
+    document.getElementById('asignacionProyecto').disabled = esRTDirecto;
+    document.getElementById('asignacionTramo').disabled = esRTDirecto;
+    document.getElementById('asignacionRT').disabled = esRTDirecto;
+
+    if (!esRTDirecto) {
+      document.getElementById('asignacionBuscadorRT').value = '';
+      document.getElementById('infoAsignacionActual').innerHTML = '';
+      const sugerencias = document.getElementById('asignacionBuscadorRTSugerencias');
+      if (sugerencias) { sugerencias.classList.add('d-none'); sugerencias.innerHTML = ''; }
+    }
   }
   window.onEquiposNivelChange = onEquiposNivelChange;
 
@@ -676,6 +761,129 @@
     poblarSelectEquipos('asignacionRT', rts, 'Selecciona un RT...');
   }
   window.onEquiposTramoChange = onEquiposTramoChange;
+
+  // ✅ [CONC-FE-15]: cascada Proyecto -> Tramo del selector de ÁMBITO de exportación en la
+  // cabecera del módulo (independiente del modal) — mismo catálogo, mismo patrón.
+  function onExportAsignacionProyectoChange() {
+    const proyecto = document.getElementById('exportAsignacionProyecto').value;
+    const cat = window.catEstructuraEquipos;
+    const tramos = (proyecto && cat && cat.tramosPorProyecto && cat.tramosPorProyecto[proyecto]) || [];
+    poblarSelectEquipos('exportAsignacionTramo', tramos, 'Todos los tramos');
+  }
+  window.onExportAsignacionProyectoChange = onExportAsignacionProyectoChange;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ✅ [CONC-FE-15]: Buscador directo de RT (Nivel=RT) — lookup O(1) contra
+  // window.mapaInversoRTs, sin escanear ninguna estructura ni pedir nada al servidor.
+  // ═══════════════════════════════════════════════════════════════════
+  function _renderInfoAsignacionActual(articulador, gestor, tieneDraft) {
+    const info = document.getElementById('infoAsignacionActual');
+    if (!info) return;
+    const artTxt = articulador || 'Sin asignar';
+    const gesTxt = gestor || 'Sin asignar';
+    const draftTxt = tieneDraft ? ' <span class="badge bg-warning text-dark">Con cambio en borrador</span>' : '';
+    info.innerHTML = '<div class="alert alert-secondary py-2 mb-0 small">' +
+      '<strong>Estado vigente en el servidor:</strong> Articulador: ' + artTxt + ' · Gestor: ' + gesTxt + draftTxt +
+      '</div>';
+  }
+
+  // Suggestions custom (NO <datalist> nativo): con ~10 mil RTs, un <datalist> con miles de
+  // <option> genera lag de tipeo perceptible en varios navegadores (Directiva 3 — nada de
+  // DOM masivo). Este dropdown propio nunca renderiza más de 15 nodos a la vez.
+  function handleBuscadorRTInput(valor) {
+    const texto = String(valor || '').trim();
+    const contenedor = document.getElementById('asignacionBuscadorRTSugerencias');
+    if (!contenedor) return;
+
+    if (texto.length < 2) {
+      contenedor.classList.add('d-none');
+      contenedor.innerHTML = '';
+      if (!texto) document.getElementById('infoAsignacionActual').innerHTML = '';
+      return;
+    }
+
+    const mapa = window.mapaInversoRTs || {};
+    const textoLower = texto.toLowerCase();
+    const coincidencias = Object.keys(mapa)
+      .filter(function(rt) { return rt.toLowerCase().indexOf(textoLower) >= 0; })
+      .slice(0, 15);
+
+    if (!coincidencias.length) {
+      contenedor.innerHTML = '<div class="list-group-item text-muted small">Sin coincidencias.</div>';
+      contenedor.classList.remove('d-none');
+      return;
+    }
+
+    contenedor.innerHTML = coincidencias.map(function(rt) {
+      const d = mapa[rt];
+      return '<button type="button" class="list-group-item list-group-item-action py-1 px-2 small" ' +
+        'onmousedown="event.preventDefault(); window.handleRTSelectionDirecta(' + JSON.stringify(rt) + '); document.getElementById(\'asignacionBuscadorRTSugerencias\').classList.add(\'d-none\');">' +
+        '<strong>' + rt + '</strong> — ' + d.proyecto + ' / ' + d.tramo + '</button>';
+    }).join('');
+    contenedor.classList.remove('d-none');
+  }
+  window.handleBuscadorRTInput = handleBuscadorRTInput;
+
+  // onmousedown (arriba) ya dispara la selección antes de que el input pierda foco, pero se
+  // deja este blur con pequeño delay como respaldo para cerrar el dropdown en cualquier otro
+  // caso (p.ej. el usuario hace click fuera del modal).
+  function ocultarSugerenciasBuscadorRT() {
+    setTimeout(function() {
+      const contenedor = document.getElementById('asignacionBuscadorRTSugerencias');
+      if (contenedor) contenedor.classList.add('d-none');
+    }, 150);
+  }
+  window.ocultarSugerenciasBuscadorRT = ocultarSugerenciasBuscadorRT;
+
+  // Autocompleta Proyecto/Tramo/RT (bloqueados) + Articulador/Gestor + panel de estado
+  // vigente a partir de window.mapaInversoRTs — 0ms, sin round-trip. Un borrador ya
+  // pendiente sobre este RT (Draft Mode, CONC-BE-12) gana sobre el valor real del servidor,
+  // igual que en cualquier otro punto de entrada al modal.
+  function handleRTSelectionDirecta(rtId) {
+    const rt = String(rtId || '').trim();
+    const datos = (window.mapaInversoRTs || {})[rt];
+
+    if (!datos) {
+      _renderInfoAsignacionActual(null, null, false);
+      const info = document.getElementById('infoAsignacionActual');
+      if (info) info.innerHTML = rt ? '<span class="text-muted small">RT no encontrado en el catálogo — verifica el número.</span>' : '';
+      return;
+    }
+
+    const buscador = document.getElementById('asignacionBuscadorRT');
+    if (buscador && buscador.value !== rt) buscador.value = rt;
+
+    poblarSelectEquipos('asignacionProyecto', (window.catEstructuraEquipos && window.catEstructuraEquipos.proyectos) || [datos.proyecto], 'Selecciona un proyecto...');
+    document.getElementById('asignacionProyecto').value = datos.proyecto;
+    const tramosDelProyecto = (window.catEstructuraEquipos && window.catEstructuraEquipos.tramosPorProyecto && window.catEstructuraEquipos.tramosPorProyecto[datos.proyecto]) || [datos.tramo];
+    poblarSelectEquipos('asignacionTramo', tramosDelProyecto, 'Selecciona un tramo...');
+    document.getElementById('asignacionTramo').value = datos.tramo;
+    poblarSelectEquipos('asignacionRT', [rt], 'Selecciona un RT...');
+    document.getElementById('asignacionRT').value = rt;
+
+    const draftExistente = draftParaNodo('RT', datos.proyecto, datos.tramo, rt);
+    const articuladorPre = (draftExistente && draftExistente.articuladorEmail) || datos.articulador || '';
+    const gestorPre = (draftExistente && draftExistente.gestorEmail) || datos.gestor || '';
+
+    _poblarSelectArticuladorAsignacion();
+    _poblarSelectGestorAsignacion(null);
+    document.getElementById('asignacionEmailArticulador').value = '';
+    document.getElementById('asignacionEmailGestor').value = '';
+
+    if (articuladorPre) {
+      document.getElementById('asignacionEmailArticulador').value = articuladorPre;
+      handleArticuladorChangeInModal(articuladorPre);
+    }
+    if (gestorPre) {
+      const selectGestor = document.getElementById('asignacionEmailGestor');
+      const yaDisponible = Array.prototype.some.call(selectGestor.options, function(o) { return o.value === gestorPre; });
+      if (!yaDisponible) _poblarSelectGestorAsignacion(null);
+      selectGestor.value = gestorPre;
+    }
+
+    _renderInfoAsignacionActual(datos.articulador, datos.gestor, !!draftExistente);
+  }
+  window.handleRTSelectionDirecta = handleRTSelectionDirecta;
 
   function _poblarSelectArticuladorAsignacion() {
     const select = document.getElementById('asignacionEmailArticulador');
@@ -788,6 +996,8 @@
     _poblarSelectGestorAsignacion(null);
     document.getElementById('asignacionEmailArticulador').value = '';
     document.getElementById('asignacionEmailGestor').value = '';
+    document.getElementById('asignacionBuscadorRT').value = '';
+    document.getElementById('infoAsignacionActual').innerHTML = '';
 
     if (ids.proyecto) {
       document.getElementById('asignacionProyecto').value = ids.proyecto;
@@ -821,6 +1031,21 @@
       // reabre la lista completa para no perder el valor real que traía el nodo.
       if (!yaDisponible) _poblarSelectGestorAsignacion(null);
       selectGestor.value = gestorPre;
+    }
+
+    // ✅ [CONC-FE-15]: si el nivel es RT y ya sabemos cuál (llegó del árbol o de un
+    // datosPrecalculados con rt), sincroniza el buscador + el panel de estado vigente. Usa
+    // window.mapaInversoRTs si ya cargó (fuente de verdad más fresca); si el precache aún no
+    // llega (carrera de tiempos con un click muy rápido tras entrar al módulo), muestra lo
+    // que ya trajo el árbol (pre) para no dejar el panel vacío.
+    if (nivel === 'RT' && ids.rt) {
+      document.getElementById('asignacionBuscadorRT').value = ids.rt;
+      const datosMapa = (window.mapaInversoRTs || {})[ids.rt];
+      _renderInfoAsignacionActual(
+        datosMapa ? datosMapa.articulador : (pre && pre.articulador),
+        datosMapa ? datosMapa.gestor : (pre && pre.gestor),
+        !!draftExistente
+      );
     }
 
     const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAsignacionGranular'));
@@ -943,5 +1168,322 @@
       .reasignarUsuarioMasivo(origen, destino, rol, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
   }
   window.handleReasignarUsuarioMasivo = handleReasignarUsuarioMasivo;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ✅ [CONC-FE-15]: Asignación Masiva Offline (Bulk CSV Export/Import) — descarga una
+  // plantilla CSV con el ámbito elegido (Proyecto/Tramo, o todo lo visible si no se elige
+  // nada), el usuario la edita en Excel sin conexión, y la vuelve a subir para aplicar todos
+  // los cambios en un solo lote bajo un único LockService (asignarEquipoGranularLote(), ya
+  // existente desde el Modo Borrador — CONC-BE-12).
+  // ═══════════════════════════════════════════════════════════════════
+  function handleDescargarPlantillaAsignacion() {
+    const proyecto = document.getElementById('exportAsignacionProyecto').value;
+    const tramo = document.getElementById('exportAsignacionTramo').value;
+    const nivel = tramo ? 'TRAMO' : (proyecto ? 'PROYECTO' : '');
+    const idTarget = tramo || proyecto || '';
+
+    if (typeof window.showNotification === 'function') {
+      window.showNotification('Generando', 'Preparando la plantilla CSV...', 'info');
+    }
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!result || !result.success) {
+          if (typeof window.showNotification === 'function') {
+            window.showNotification('Error', (result && result.error) || 'No fue posible generar la plantilla.', 'danger');
+          }
+          return;
+        }
+        const nombreArchivo = 'plantilla_asignacion_' + (idTarget || 'todos').replace(/[^a-z0-9_-]+/gi, '_') + '.csv';
+        _descargarTextoComoArchivo(result.csv, nombreArchivo);
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Listo', result.totalFilas + ' fila(s) exportadas a ' + nombreArchivo + '.', 'success');
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', error.message || String(error), 'danger');
+        }
+      })
+      .generarPlantillaAsignacionCSV(nivel, idTarget, proyecto);
+  }
+  window.handleDescargarPlantillaAsignacion = handleDescargarPlantillaAsignacion;
+
+  // BOM (﻿) al inicio del Blob: sin él, Excel en Windows asume ANSI/Latin-1 y corrompe
+  // tildes/eñes al abrir un CSV UTF-8 directamente (doble-click) en vez de importarlo.
+  function _descargarTextoComoArchivo(texto, nombreArchivo) {
+    const blob = new Blob(['﻿' + texto], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nombreArchivo;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  const CSV_ASIGNACION_SEPARADOR = ';'; // mismo delimitador que EXPORT_ENGINE.separator (export_backend.js)
+  const CSV_ASIGNACION_COLUMNAS_ESPERADAS = ['RT', 'PROYECTO', 'TRAMO', 'ARTICULADOR_EMAIL', 'GESTOR_EMAIL'];
+
+  // Parser CSV mínimo (RFC4180-ish): soporta campos entre comillas con el separador/comillas/
+  // saltos de línea escapados dentro, tal como los produce csvEscape() en export_backend.js.
+  function _parsearLineasCSV(texto, separador) {
+    const filas = [];
+    let fila = [];
+    let campo = '';
+    let dentroComillas = false;
+
+    for (let i = 0; i < texto.length; i++) {
+      const c = texto[i];
+      if (dentroComillas) {
+        if (c === '"') {
+          if (texto[i + 1] === '"') { campo += '"'; i++; }
+          else { dentroComillas = false; }
+        } else {
+          campo += c;
+        }
+      } else if (c === '"') {
+        dentroComillas = true;
+      } else if (c === separador) {
+        fila.push(campo);
+        campo = '';
+      } else if (c === '\r') {
+        // se ignora: el '\n' que sigue cierra la fila
+      } else if (c === '\n') {
+        fila.push(campo);
+        filas.push(fila);
+        fila = [];
+        campo = '';
+      } else {
+        campo += c;
+      }
+    }
+    if (campo.length || fila.length) { fila.push(campo); filas.push(fila); }
+
+    return filas.filter(function(f) { return !(f.length === 1 && f[0].trim() === ''); });
+  }
+
+  // Validación estricta: RT obligatorio, al menos un email (Articulador o Gestor), y
+  // cualquier email SÍ digitado debe existir en window.catEstructuraEquipos (catálogo de
+  // USUARIOS activos) — un correo que no está en el catálogo se marca inválido, no se
+  // asume válido "porque tiene forma de email".
+  function _parsearYValidarCSVAsignacion(texto) {
+    const lineas = _parsearLineasCSV(texto, CSV_ASIGNACION_SEPARADOR);
+    if (!lineas.length) {
+      return { columnasOk: false, error: 'El archivo está vacío.', filas: [] };
+    }
+
+    const encabezado = lineas[0].map(function(h) { return String(h || '').trim().toUpperCase(); });
+    const faltantes = CSV_ASIGNACION_COLUMNAS_ESPERADAS.filter(function(c) { return encabezado.indexOf(c) < 0; });
+    if (faltantes.length) {
+      return { columnasOk: false, error: 'Faltan columnas obligatorias: ' + faltantes.join(', ') + '. Descarga la plantilla desde "Descargar Plantilla Asignación" para asegurar el formato correcto.', filas: [] };
+    }
+
+    const idx = {};
+    CSV_ASIGNACION_COLUMNAS_ESPERADAS.forEach(function(c) { idx[c] = encabezado.indexOf(c); });
+
+    const cat = window.catEstructuraEquipos;
+    const catalogoArticuladores = {};
+    const catalogoGestores = {};
+    ((cat && cat.articuladores) || []).forEach(function(u) { catalogoArticuladores[String(u.email).trim().toLowerCase()] = true; });
+    ((cat && cat.gestores) || []).forEach(function(u) { catalogoGestores[String(u.email).trim().toLowerCase()] = true; });
+
+    const filas = lineas.slice(1).map(function(cols, i) {
+      const rt = String(cols[idx.RT] || '').trim();
+      const proyecto = String(cols[idx.PROYECTO] || '').trim();
+      const tramo = String(cols[idx.TRAMO] || '').trim();
+      const articuladorEmail = String(cols[idx.ARTICULADOR_EMAIL] || '').trim();
+      const gestorEmail = String(cols[idx.GESTOR_EMAIL] || '').trim();
+
+      const errores = [];
+      if (!rt) errores.push('RT vacío');
+      if (!articuladorEmail && !gestorEmail) errores.push('Debe indicar al menos Articulador o Gestor');
+      if (articuladorEmail && !catalogoArticuladores[articuladorEmail.toLowerCase()]) errores.push('Articulador no existe en USUARIOS: ' + articuladorEmail);
+      if (gestorEmail && !catalogoGestores[gestorEmail.toLowerCase()]) errores.push('Gestor no existe en USUARIOS: ' + gestorEmail);
+
+      return {
+        fila: i + 2, // +1 por el encabezado, +1 porque las filas de Excel empiezan en 1
+        rt: rt, proyecto: proyecto, tramo: tramo,
+        articuladorEmail: articuladorEmail, gestorEmail: gestorEmail,
+        valido: errores.length === 0,
+        errores: errores
+      };
+    }).filter(function(f) { return f.rt || f.proyecto || f.tramo || f.articuladorEmail || f.gestorEmail; });
+
+    return { columnasOk: true, filas: filas };
+  }
+
+  function handleArchivoAsignacionSeleccionado(file) {
+    if (!file) return;
+    procesarArchivoAsignacionCSV(file);
+    document.getElementById('inputAsignacionMasivaCSV').value = ''; // permite re-seleccionar el mismo archivo
+  }
+  window.handleArchivoAsignacionSeleccionado = handleArchivoAsignacionSeleccionado;
+
+  function procesarArchivoAsignacionCSV(file) {
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+      const resultado = _parsearYValidarCSVAsignacion(String(evt.target.result || ''));
+      _abrirModalPrevisualizacionCSV(resultado);
+    };
+    reader.onerror = function() {
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', 'No fue posible leer el archivo.', 'danger');
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+  window.procesarArchivoAsignacionCSV = procesarArchivoAsignacionCSV;
+
+  function ensureModalPrevisualizacionCSV() {
+    if (document.getElementById('modalPrevisualizacionCSV')) return;
+
+    const modalHtml =
+      '<div class="modal fade" id="modalPrevisualizacionCSV" tabindex="-1" aria-hidden="true">' +
+        '<div class="modal-dialog modal-xl modal-dialog-scrollable">' +
+          '<div class="modal-content border-0 shadow-lg">' +
+            '<div class="modal-header bg-dark text-white">' +
+              '<h5 class="modal-title"><i class="fas fa-table-list"></i> Previsualización de Asignación Masiva</h5>' +
+              '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>' +
+            '</div>' +
+            '<div class="modal-body p-3">' +
+              '<div id="resumenPrevisualizacionCSV" class="mb-3"></div>' +
+              '<div class="table-responsive" style="max-height:400px;">' +
+                '<table class="table table-sm table-striped mb-0">' +
+                  '<thead><tr><th>Fila</th><th>RT</th><th>Proyecto</th><th>Tramo</th><th>Articulador</th><th>Gestor</th><th>Estado</th></tr></thead>' +
+                  '<tbody id="tablaPrevisualizacionCSV"></tbody>' +
+                '</table>' +
+              '</div>' +
+            '</div>' +
+            '<div class="modal-footer">' +
+              '<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>' +
+              '<button type="button" class="btn btn-success" id="btnAprobarCSV" onclick="handleAprobarCambiosCSV()" disabled><i class="fas fa-check-double"></i> Aprobar y Ejecutar Cambios</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = modalHtml;
+    document.body.appendChild(wrapper.firstElementChild);
+  }
+
+  // Filas válidas pendientes de aprobar — vacío también cuando hay errores (bloqueo total:
+  // basta 1 sola fila inválida para inhabilitar TODO el lote, no solo esa fila).
+  let filasValidasCSVPendientes = [];
+
+  function _abrirModalPrevisualizacionCSV(resultado) {
+    ensureModalPrevisualizacionCSV();
+
+    const resumen = document.getElementById('resumenPrevisualizacionCSV');
+    const tbody = document.getElementById('tablaPrevisualizacionCSV');
+    const btnAprobar = document.getElementById('btnAprobarCSV');
+
+    if (!resultado.columnasOk) {
+      resumen.innerHTML = '<div class="alert alert-danger mb-0">' + resultado.error + '</div>';
+      tbody.innerHTML = '';
+      btnAprobar.disabled = true;
+      filasValidasCSVPendientes = [];
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPrevisualizacionCSV')).show();
+      return;
+    }
+
+    const filas = resultado.filas;
+    const validas = filas.filter(function(f) { return f.valido; });
+    const invalidas = filas.filter(function(f) { return !f.valido; });
+
+    if (!filas.length) {
+      resumen.innerHTML = '<div class="alert alert-warning mb-0">El archivo no tiene filas de datos.</div>';
+      tbody.innerHTML = '';
+      btnAprobar.disabled = true;
+      filasValidasCSVPendientes = [];
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPrevisualizacionCSV')).show();
+      return;
+    }
+
+    resumen.innerHTML =
+      '<div class="alert ' + (invalidas.length ? 'alert-warning' : 'alert-success') + ' mb-0">' +
+        '<strong>' + filas.length + '</strong> fila(s) leídas — ' +
+        '<span class="text-success"><strong>' + validas.length + '</strong> válida(s)</span> · ' +
+        '<span class="text-danger"><strong>' + invalidas.length + '</strong> con error</span>' +
+        (invalidas.length ? '<br><small>Corrige el archivo (o descarga una plantilla nueva) y vuelve a subirlo — no se puede aprobar mientras existan errores.</small>' : '') +
+      '</div>';
+
+    tbody.innerHTML = filas.map(function(f) {
+      const claseFila = f.valido ? 'table-success' : 'table-danger';
+      const estado = f.valido
+        ? '<i class="fas fa-circle-check text-success"></i> OK'
+        : '<span class="text-danger" title="' + f.errores.join(' | ') + '"><i class="fas fa-circle-xmark"></i> ' + f.errores.join('; ') + '</span>';
+      return '<tr class="' + claseFila + '"><td>' + f.fila + '</td><td>' + (f.rt || '-') + '</td><td>' + (f.proyecto || '-') + '</td><td>' + (f.tramo || '-') + '</td>' +
+        '<td>' + (f.articuladorEmail || '-') + '</td><td>' + (f.gestorEmail || '-') + '</td><td>' + estado + '</td></tr>';
+    }).join('');
+
+    // Bloqueo total: 1 solo error en el archivo inhabilita el botón para TODO el lote.
+    filasValidasCSVPendientes = invalidas.length === 0 ? validas : [];
+    btnAprobar.disabled = invalidas.length > 0 || validas.length === 0;
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPrevisualizacionCSV')).show();
+  }
+
+  function handleAprobarCambiosCSV() {
+    if (!filasValidasCSVPendientes.length) return;
+
+    const cambiosArray = filasValidasCSVPendientes.map(function(f) {
+      return {
+        nivel: 'RT',
+        idTarget: f.rt,
+        articuladorEmail: f.articuladorEmail || null,
+        gestorEmail: f.gestorEmail || null
+      };
+    });
+
+    const btnAprobar = document.getElementById('btnAprobarCSV');
+    if (btnAprobar) btnAprobar.disabled = true;
+    if (typeof window.showNotification === 'function') {
+      window.showNotification('Procesando', 'Aplicando ' + cambiosArray.length + ' fila(s) del archivo...', 'info');
+    }
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result && result.success) {
+          const modalInst = bootstrap.Modal.getInstance(document.getElementById('modalPrevisualizacionCSV'));
+          if (modalInst) modalInst.hide();
+          filasValidasCSVPendientes = [];
+
+          if (typeof window.showNotification === 'function') {
+            const tieneErroresPorNodo = Array.isArray(result.erroresPorNodo) && result.erroresPorNodo.length > 0;
+            if (tieneErroresPorNodo) console.warn('Errores por nodo en la carga masiva:', result.erroresPorNodo);
+            window.showNotification(
+              'Carga masiva aplicada',
+              (result.cambiosAplicados || 0) + ' cambio(s) aplicados sobre ' + (result.totalRTsAfectados || 0) + ' RT(s).' +
+                (tieneErroresPorNodo ? ' (' + result.erroresPorNodo.length + ' fila(s) con error, ver consola)' : ''),
+              tieneErroresPorNodo ? 'warning' : 'success'
+            );
+          }
+
+          // ✅ [CONC-FE-15]: refresca caché de servidor + repinta el módulo completo — la
+          // carga masiva pudo haber tocado docenas/cientos de RTs a la vez, así que el
+          // catálogo/índice/árbol/KPIs precacheados quedan obsoletos y se recargan de cero.
+          google.script.run.invalidateDataCache();
+          window.catEstructuraEquipos = null;
+          window.mapaInversoRTs = null;
+          cargarModuloEquipos();
+        } else if (btnAprobar) {
+          btnAprobar.disabled = false;
+          if (typeof window.showNotification === 'function') {
+            window.showNotification('Error', (result && result.error) || 'No fue posible aplicar la carga masiva.', 'danger');
+          }
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (btnAprobar) btnAprobar.disabled = false;
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', error.message || String(error), 'danger');
+        }
+      })
+      .asignarEquipoGranularLote(cambiosArray, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
+  }
+  window.handleAprobarCambiosCSV = handleAprobarCambiosCSV;
 })();
 </script>
