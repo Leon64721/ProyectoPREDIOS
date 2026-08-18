@@ -785,6 +785,13 @@ function ejecutarCargaLineaCero() {
   }
 
   try {
+    // ✅ [CONC-BE-14]: invalida ANTES de procesar — si `Datos` fue restaurada/editada
+    // manualmente justo antes de correr Línea Cero, cualquier lectura concurrente de
+    // getDashboardData() (Matriz, evaluador de alertas) no debe seguir sirviendo un
+    // dash_data_v1 calculado sobre la versión anterior de `Datos` mientras esta
+    // operación está en curso.
+    _invalidarCacheDatosSiExiste();
+
     const mapeoResultado = obtenerMapeoLineaCero();
     if (!mapeoResultado.success) {
       throw new Error('No se pudo calcular el mapeo de homologación: ' + (mapeoResultado.error || ''));
@@ -809,6 +816,14 @@ function ejecutarCargaLineaCero() {
     const cambios = [];
     let candidatosArticulador = 0;
     let candidatosGestor = 0;
+    // ✅ [CONC-BE-14]: un RT sin ningún correo mapeable NO genera fila en
+    // ASIGNACIONES_EQUIPOS (no hay nada real que escribir) — se deja que
+    // _fusionarAsignacionesConMatriz() caiga de vuelta al valor crudo de Datos para
+    // ese RT, exactamente igual que cualquier otro RT sin overlay. Esto es
+    // intencional y no rompe los conteos del árbol (_esRTCompleto ya trata ausencia
+    // de overlay como "sin asignar" si Datos tampoco tiene el dato). Se cuenta aparte
+    // solo para diagnóstico/observabilidad en el resumen devuelto y en el log.
+    let rtsSinMapeoAlguno = 0;
 
     rows.forEach(function(row) {
       const rt = String(row[rtCol] || '').trim();
@@ -828,7 +843,14 @@ function ejecutarCargaLineaCero() {
         tieneCambio = true;
         candidatosGestor++;
       }
-      if (tieneCambio) cambios.push(cambio);
+
+      if (tieneCambio) {
+        cambios.push(cambio);
+      } else if (articuladorActual || gestorActual) {
+        // Tenía texto histórico en Datos pero ninguno de los dos nombres homologó a
+        // un email — no se inventa un valor: queda pendiente de homologación manual.
+        rtsSinMapeoAlguno++;
+      }
     });
 
     const ejecutorEmail = Session.getActiveUser().getEmail() || 'Sistema';
@@ -848,9 +870,13 @@ function ejecutarCargaLineaCero() {
       ejecutorEmail: ejecutorEmail,
       observaciones: 'Inicialización de Línea Cero (Baseline) completada — ' + totalAsociacionesResueltas +
         ' asociaciones escritas en ASIGNACIONES_EQUIPOS (' + candidatosArticulador + ' candidatas Articulador, ' +
-        candidatosGestor + ' candidatas Gestor) sobre ' + rows.length + ' RTs.'
+        candidatosGestor + ' candidatas Gestor) sobre ' + rows.length + ' RTs. ' +
+        rtsSinMapeoAlguno + ' RT(s) con texto histórico en Datos que no homologó a ningún email (quedan pendientes).'
     });
 
+    // ✅ [CONC-BE-14]: invalida también DESPUÉS — la escritura en ASIGNACIONES_EQUIPOS ya
+    // ocurrió, cualquier dash_data_v1 que quedara servido debe descartarse para que el
+    // próximo getDashboardData() lea la fusión con el overlay recién actualizado.
     _invalidarCacheDatosSiExiste();
 
     return {
@@ -860,6 +886,7 @@ function ejecutarCargaLineaCero() {
       cambiosArticulador: candidatosArticulador,
       cambiosGestor: candidatosGestor,
       totalNombresMapeados: mapeoResultado.totalMapeados,
+      rtsSinMapeoAlguno: rtsSinMapeoAlguno,
       logRegistrado: !!(logResultado && logResultado.success)
     };
   } catch (e) {

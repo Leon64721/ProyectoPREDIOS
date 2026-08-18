@@ -29,6 +29,11 @@ var CACHE_KEY_DASHBOARD = 'dash_data_v1';
 var CACHE_KEY_DASHBOARD_META = CACHE_KEY_DASHBOARD + '_meta';
 var CACHE_KEY_DASHBOARD_CHUNK_PREFIX = CACHE_KEY_DASHBOARD + '_chunk_';
 var CACHE_DASHBOARD_CHUNK_SIZE = 90000;
+// ✅ [CONC-BE-14]: barrido defensivo más ancho que el histórico "12" — si una corrida
+// previa a una restauración de Datos dejó más chunks de los que la meta actual declara
+// (o la meta está corrupta/ausente), este es el límite superior que invalidateDataCache()
+// recorre para no dejar fragmentos huérfanos sirviendo datos pre-restauración.
+var CACHE_DASHBOARD_CHUNK_SWEEP_FALLBACK = 40;
 
 function _dashboardChunkKey(index) {
   return CACHE_KEY_DASHBOARD_CHUNK_PREFIX + String(index);
@@ -39,7 +44,7 @@ function _removeDashboardCacheKeys(cache, knownChunkCount) {
     cache.remove(CACHE_KEY_DASHBOARD);
     cache.remove(CACHE_KEY_DASHBOARD_META);
 
-    var maxToRemove = knownChunkCount || 12;
+    var maxToRemove = knownChunkCount || CACHE_DASHBOARD_CHUNK_SWEEP_FALLBACK;
     for (var i = 1; i <= maxToRemove; i++) {
       cache.remove(_dashboardChunkKey(i));
     }
@@ -115,18 +120,30 @@ function putDashboardCachePayload(cache, payload, ttlSeconds) {
 /**
  * Helper centralizado de invalidación del caché de lectura. Se llama al final de
  * cada escritura transaccional que afecta los datos servidos por getDashboardData
- * (seguimiento, filtro matriz). Fail-open: un error aquí no debe tumbar la
- * operación de negocio que la originó.
+ * (seguimiento, filtro matriz, asignación de equipos, Línea Cero). Fail-open: un
+ * error aquí no debe tumbar la operación de negocio que la originó.
+ *
+ * ✅ [CONC-BE-14]: purga EXPLÍCITA de `dash_data_v1` + `dash_data_v1_meta` + todos sus
+ * fragmentos (chunks) — el barrido usa `Math.max(chunkCount declarado, sweep fallback)`
+ * para no confiar ciegamente en una meta que puede quedar desactualizada tras una
+ * restauración manual de `Datos` (payload distinto → distinto número de chunks).
+ *
+ * `equipos_cache_*` NO es una clave de `CacheService`: los KPIs/árbol de Equipos
+ * (`getEstadisticasCargaEquipos`/`getProyectosConteo`/etc.) se calculan en vivo en
+ * cada llamada, sin caché de servidor — esa clave vive únicamente en IndexedDB del
+ * navegador (`equipos-cache-v1`), purgada client-side desde `refreshData()` en
+ * `app_core_js.html`. `CacheService` no expone listado ni borrado por prefijo/patrón
+ * (limitación de la plataforma), así que no hay nada que enumerar aquí para esa clave.
  */
 function invalidateDataCache() {
   try {
     var cache = CacheService.getScriptCache();
     var metaRaw = cache.get(CACHE_KEY_DASHBOARD_META);
-    var chunkCount = 12;
+    var chunkCount = CACHE_DASHBOARD_CHUNK_SWEEP_FALLBACK;
     if (metaRaw) {
       try {
         var parsed = JSON.parse(metaRaw);
-        chunkCount = Number(parsed.chunkCount || 12);
+        chunkCount = Math.max(Number(parsed.chunkCount || 0), CACHE_DASHBOARD_CHUNK_SWEEP_FALLBACK);
       } catch (e) {}
     }
 
