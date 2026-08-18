@@ -1184,6 +1184,17 @@ function updateKPIs() {
                 orderable: false,
                 width: "60px"
             });
+
+            colsDef.push({
+                title: "FICHA PDF",
+                data: null,
+                defaultContent: '',
+                orderable: false,
+                width: "60px",
+                render: function() {
+                    return '<button class="btn btn-outline-danger btn-sm btn-ficha-pdf" title="Generar Ficha Predial PDF"><i class="fas fa-file-pdf"></i></button>';
+                }
+            });
         }
 
         allColsList.forEach(c => {
@@ -1244,7 +1255,12 @@ function updateKPIs() {
                 bootstrap.Modal.getInstance(document.getElementById('detailModal')).hide();
                 openEditModal(data);
             });
-            
+
+            $('#detailTable tbody').off('click', '.btn-ficha-pdf').on('click', '.btn-ficha-pdf', function () {
+                var data = tableInstance.row($(this).parents('tr')).data();
+                window.handleGenerarFichaPredial(data);
+            });
+
             setTimeout(() => {
                 if(tableInstance) {
                     tableInstance.columns.adjust().draw();
@@ -2101,7 +2117,9 @@ function updateKPIs() {
                     }
                 }
                 html += '</table></div></div>';
+                html += '<div class="d-grid mt-3"><button type="button" class="btn btn-outline-primary" onclick="window.handleGenerarFichaPredial(window.__ultimoPredioBuscado)"><i class="fas fa-file-pdf"></i> Generar Ficha Predial PDF</button></div>';
 
+                window.__ultimoPredioBuscado = row;
                 $('#detailsContainer').html(html);
                 console.log('📋 Detalles encontrados para RT: ' + row[C.RT]);
                 

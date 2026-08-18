@@ -363,3 +363,19 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 **Context:** Ver `DESIGN.md` completo para el plan de diseño y el orden de implementación recomendado (Sección 7).
 
 **Depends on / blocked by:** Depende de que el ítem 13 (validación visual runtime) confirme que el Sprint 1 quedó realmente cerrado antes de iniciar el Sprint 2, para no construir sobre una base sin validar.
+
+---
+
+## 17. Sprint 4 — Fase B: PDF Ficha Predial y Reporte de Alertas — [COMPLETADO 2026-08-18]
+
+**What:** motor de generación de PDF institucional (`export_pdf_backend.js`) con dos endpoints públicos: `generarFichaPredialPdfBackend(predioData, metadata)` (ficha de un predio) y `generarReporteAlertasPdfBackend(alertasArray, metadata)` (reporte consolidado de alertas activas, agrupado por severidad y proyecto, procesado en lotes de 1000). Cliente en `app_herramientas_js.html` con modal `#modalFichaPredial`, handlers `handleGenerarFichaPredial(predioData)`/`handleGenerarReporteAlertas()`, y descarga directa del blob PDF (base64) sin depender de `MailApp` ni de compartir archivos en Drive. Botones de disparo: acción de fila "FICHA PDF" en el `DataTable` de detalle y en la búsqueda de RT (`app_matriz_js.html`), botón "Generar Reporte PDF" en el footer del modal `#modalDetalleAlertas` (`app_alertas_js.html`).
+
+**Why:** siguiente fase anotada en el checkpoint de memoria `sprint-4-exportacion-core` tras el cierre de Fase A (`21d1bff`). Evita extender el antipatrón de `Codigo.js:1392` (`generateServerPdfReport()`, sin batching, sin límites, siempre por correo).
+
+**Corrección incluida:** `institutionName`/`INSTITUTION_HEADER` en `export_backend.js` y `app_herramientas_js.html` corregido de "INSTITUTO DISTRITAL DE ANTROPOLOGÍA E HISTORIA" a "INSTITUTO DE DESARROLLO URBANO".
+
+**Verificación ejecutada:** `node --check` sobre `export_backend.js` y `export_pdf_backend.js`; extracción y `node --check` de los bloques `<script>` de `app_herramientas_js.html`, `app_core_js.html`, `app_alertas_js.html`, `app_matriz_js.html` — 6/6 OK. `npx clasp push --force` → `Pushed 46 files`, incluyendo `export_pdf_backend.js` como archivo nuevo.
+
+**Context:** ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 18 para el detalle completo de la implementación y el cumplimiento de las 3 directivas del proyecto.
+
+**Depends on / blocked by:** ninguno funcional. Sigue pendiente el ítem 13 de este documento (validación visual en runtime) — no ejecutada aquí por no haber navegador/sesión autenticada disponible en este entorno de agente; aplica también a los dos botones nuevos de esta fase.

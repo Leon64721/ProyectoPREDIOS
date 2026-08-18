@@ -2,7 +2,7 @@
 
 (function(global) {
   const EXPORT_ENGINE = {
-    institutionName: 'INSTITUTO DISTRITAL DE ANTROPOLOGÍA E HISTORIA',
+    institutionName: 'INSTITUTO DE DESARROLLO URBANO',
     institutionShort: 'IDU',
     separator: ';',
     batchSize: 1000,

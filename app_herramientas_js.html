@@ -1,7 +1,7 @@
 <script>
 (function() {
   const EXPORT_BATCH_SIZE = 1000;
-  const INSTITUTION_HEADER = 'INSTITUTO DISTRITAL DE ANTROPOLOGÍA E HISTORIA';
+  const INSTITUTION_HEADER = 'INSTITUTO DE DESARROLLO URBANO';
 
   function safeExportText(value) {
     if (value === null || value === undefined) return '';
@@ -276,6 +276,202 @@
     }
   }
 
+  function triggerBase64Download(base64, fileName, mimeType) {
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+      byteNumbers[i] = byteChars.charCodeAt(i);
+    }
+    const blob = new Blob([new Uint8Array(byteNumbers)], { type: mimeType || 'application/pdf' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
+  function getAlertasForRt(rt) {
+    const resumen = window.alertasResumenActivo;
+    const items = resumen && Array.isArray(resumen.alertas) ? resumen.alertas : [];
+    const rtNormalizado = String(rt || '').toUpperCase().trim();
+    if (!rtNormalizado) return [];
+    return items.filter(function(item) {
+      return String(item.RT || '').toUpperCase().trim() === rtNormalizado;
+    });
+  }
+
+  function getPredioSourceRows() {
+    return new Promise(function(resolve) {
+      const rows = Array.isArray(window.currentData) && window.currentData.length ? window.currentData
+                 : (Array.isArray(window.rawData) && window.rawData.length ? window.rawData : []);
+      if (rows.length) {
+        resolve(rows);
+        return;
+      }
+
+      const hasReliableIdentity = typeof CURRENT_USER_EMAIL !== 'undefined' && !!CURRENT_USER_EMAIL;
+      if (!hasReliableIdentity || typeof window.readDashboardCache !== 'function') {
+        resolve([]);
+        return;
+      }
+
+      const cacheKey = 'dashboardData_' + CURRENT_USER_EMAIL;
+      window.readDashboardCache(cacheKey).then(function(cached) {
+        if (cached && cached.response && Array.isArray(cached.response.data)) {
+          resolve(cached.response.data);
+          return;
+        }
+        if (cached && cached.response && Array.isArray(cached.response.rows)) {
+          resolve(cached.response.rows);
+          return;
+        }
+        resolve([]);
+      }).catch(function() {
+        resolve([]);
+      });
+    });
+  }
+
+  function findPredioRow(rt) {
+    const rtNormalizado = String(rt || '').toUpperCase().trim();
+    return getPredioSourceRows().then(function(rows) {
+      return rows.find(function(row) {
+        return String((row && row[C.RT]) || '').toUpperCase().trim() === rtNormalizado;
+      }) || null;
+    });
+  }
+
+  function buildFichaPredialData(row) {
+    return {
+      RT: row[C.RT],
+      PROYECTO: row[C.PROYECTO],
+      TRAMO: row[C.TRAMO],
+      ESTADO: row[C.ESTADO],
+      DISPONIBILIDAD: row[C.DISP],
+      VALOR_ESTIMADO: row[C.EST],
+      VALOR_PAGADO: row[C.PAG],
+      FECHA_ACTUALIZACION: row[C.FECHA],
+      OBSERVACIONES: row[C.OBS],
+      ALERTAS: getAlertasForRt(row[C.RT])
+    };
+  }
+
+  function buildPdfMetadata() {
+    return {
+      user: typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema',
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  function ensureModal(id, titleHtml, bodyId) {
+    let modal = document.getElementById(id);
+    if (modal) return modal;
+
+    const modalHtml =
+      '<div class="modal fade" id="' + id + '" tabindex="-1" aria-hidden="true">' +
+        '<div class="modal-dialog modal-dialog-centered">' +
+          '<div class="modal-content border-0 shadow-lg">' +
+            '<div class="modal-header bg-dark text-white">' +
+              '<h5 class="modal-title">' + titleHtml + '</h5>' +
+              '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>' +
+            '</div>' +
+            '<div class="modal-body text-center p-4" id="' + bodyId + '"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = modalHtml;
+    document.body.appendChild(wrapper.firstElementChild);
+    return document.getElementById(id);
+  }
+
+  function showPdfProgress(id, titleHtml, bodyId, message) {
+    ensureModal(id, titleHtml, bodyId);
+    const body = document.getElementById(bodyId);
+    if (body) {
+      body.innerHTML = '<div class="spinner-border text-primary mb-2" role="status"></div><div>' + message + '</div>';
+    }
+    const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById(id));
+    modalInst.show();
+    return modalInst;
+  }
+
+  function showPdfResult(bodyId, result, fallbackFileName) {
+    const body = document.getElementById(bodyId);
+    if (!body) return;
+    if (result && result.success) {
+      triggerBase64Download(result.base64, result.fileName || fallbackFileName, result.mimeType || 'application/pdf');
+      body.innerHTML = '<i class="fas fa-file-pdf fa-2x text-success mb-2"></i><div>PDF generado: <strong>' + (result.fileName || fallbackFileName) + '</strong></div>';
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Éxito', 'PDF generado y descargado correctamente', 'success');
+      }
+    } else {
+      body.innerHTML = '<i class="fas fa-triangle-exclamation fa-2x text-danger mb-2"></i><div>' + ((result && result.error) || 'No fue posible generar el PDF.') + '</div>';
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', (result && result.error) || 'No fue posible generar el PDF', 'danger');
+      }
+    }
+  }
+
+  /**
+   * Handler del botón "Generar Ficha PDF". Acepta el objeto de fila ya resuelto
+   * (acción de fila en la tabla de detalle / búsqueda de RT) o, si se le pasa un
+   * string, lo resuelve por RT contra currentData/rawData/IndexedDB.
+   */
+  function handleGenerarFichaPredial(predioData) {
+    const resolver = (predioData && typeof predioData === 'object')
+      ? Promise.resolve(predioData)
+      : findPredioRow(predioData);
+
+    resolver.then(function(row) {
+      if (!row) {
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', 'Predio no encontrado en los datos cargados.', 'danger');
+        }
+        return;
+      }
+
+      const rt = row[C.RT];
+      showPdfProgress('modalFichaPredial', '<i class="fas fa-id-card"></i> Ficha Predial', 'modalFichaPredialBody', 'Generando ficha predial en PDF...');
+
+      google.script.run
+        .withSuccessHandler(function(result) {
+          showPdfResult('modalFichaPredialBody', result, 'Ficha_Predial_' + rt + '.pdf');
+        })
+        .withFailureHandler(function(error) {
+          showPdfResult('modalFichaPredialBody', { success: false, error: error.message || String(error) }, 'Ficha_Predial_' + rt + '.pdf');
+        })
+        .generarFichaPredialPdfBackend(buildFichaPredialData(row), buildPdfMetadata());
+    });
+  }
+
+  /**
+   * Handler del botón "Generar Reporte PDF" del modal de alertas activas.
+   * Lee window.alertasResumenActivo (ya cargado por onDataLoaded, tope MAX_ALERTAS_PAYLOAD=100).
+   */
+  function handleGenerarReporteAlertas() {
+    const resumen = window.alertasResumenActivo;
+    const alertas = resumen && Array.isArray(resumen.alertas) ? resumen.alertas : [];
+
+    showPdfProgress('modalFichaPredial', '<i class="fas fa-triangle-exclamation"></i> Reporte de Alertas', 'modalFichaPredialBody', 'Generando reporte de alertas en PDF...');
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        showPdfResult('modalFichaPredialBody', result, 'Reporte_Alertas.pdf');
+      })
+      .withFailureHandler(function(error) {
+        showPdfResult('modalFichaPredialBody', { success: false, error: error.message || String(error) }, 'Reporte_Alertas.pdf');
+      })
+      .generarReporteAlertasPdfBackend(alertas, buildPdfMetadata());
+  }
+
+  window.handleGenerarFichaPredial = handleGenerarFichaPredial;
+  window.handleGenerarReporteAlertas = handleGenerarReporteAlertas;
+
   window.appHerramientas = {
     EXPORT_BATCH_SIZE: EXPORT_BATCH_SIZE,
     buildExportInstitutionHeader: buildExportInstitutionHeader,
@@ -286,7 +482,9 @@
     writeIndexedExportSnapshot: writeIndexedExportSnapshot,
     exportCurrentMatrixCsv: handleExportCsv,
     exportCurrentMatrixExcel: handleExportExcel,
-    attachExportButtons: attachExportButtons
+    attachExportButtons: attachExportButtons,
+    handleGenerarFichaPredial: handleGenerarFichaPredial,
+    handleGenerarReporteAlertas: handleGenerarReporteAlertas
   };
 
   window.buildExportInstitutionHeader = buildExportInstitutionHeader;
