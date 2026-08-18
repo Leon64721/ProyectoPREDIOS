@@ -359,6 +359,11 @@ function _obtenerDirectorioGruposIDU(forzarRefresco) {
 
   if (typeof AdminDirectory === 'undefined') return [];
 
+  if (!AdminDirectory.Members || !AdminDirectory.Users) {
+    console.warn('⚠️ AdminDirectory habilitado pero AdminDirectory.Members no está disponible. Requiere habilitar Admin SDK API en Google Cloud Console.');
+    return [];
+  }
+
   const inventario = {};
   GRUPOS_OFICIALES_IDU.forEach(function(grupo) {
     try {
@@ -420,6 +425,9 @@ function sincronizarGruposGoogleIDU() {
   try {
     if (typeof AdminDirectory === 'undefined') {
       throw new Error('El servicio avanzado AdminDirectory no está habilitado en este proyecto de Apps Script (ver appsscript.json / Servicios avanzados de Google).');
+    }
+    if (!AdminDirectory.Members || !AdminDirectory.Users) {
+      throw new Error('AdminDirectory está habilitado pero AdminDirectory.Members no está disponible. Requiere habilitar "Admin SDK API" en el proyecto de Google Cloud Console vinculado a este script — activar el servicio avanzado en Apps Script no es suficiente por sí solo.');
     }
 
     const usuariosFileId = getConfig('DATA_FILES.USUARIOS');
