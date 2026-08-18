@@ -122,8 +122,166 @@
         }
       })
       .getEstadisticasCargaEquipos({});
+
+    cargarArbolAsignacion();
   }
   window.cargarModuloEquipos = cargarModuloEquipos;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Árbol navegable Proyecto → Tramo → RT ("línea cero") — feedback de
+  // usuario 2026-08-18: la interfaz anterior (tablas planas + modal
+  // desconectado) era "muy precaria". Carga perezosa por nivel: nunca se
+  // trae de una vez el detalle de los ~9700 RTs — cada nivel se pide al
+  // servidor solo cuando el usuario expande ese nodo (Directiva 3: nada
+  // de payloads/DOM masivos de entrada).
+  // ═══════════════════════════════════════════════════════════════════
+  let arbolEstado = [];
+
+  function cargarArbolAsignacion() {
+    const contenedor = document.getElementById('arbolAsignacionEquipos');
+    if (!contenedor) return;
+    contenedor.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div></div>';
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!result || !result.success) {
+          contenedor.innerHTML = '<div class="alert alert-danger">' + ((result && result.error) || 'No fue posible cargar el árbol de asignación.') + '</div>';
+          return;
+        }
+        arbolEstado = (result.proyectos || []).map(function(p) {
+          return { proyecto: p.proyecto, totalRTs: p.totalRTs, sinAsignar: p.sinAsignar, expandido: false, tramos: null };
+        });
+        renderArbolAsignacion();
+      })
+      .withFailureHandler(function(error) {
+        contenedor.innerHTML = '<div class="alert alert-danger">' + (error.message || error) + '</div>';
+      })
+      .getProyectosConteo();
+  }
+  window.cargarArbolAsignacion = cargarArbolAsignacion;
+
+  function renderArbolAsignacion() {
+    const contenedor = document.getElementById('arbolAsignacionEquipos');
+    if (!contenedor) return;
+    if (!arbolEstado.length) {
+      contenedor.innerHTML = '<div class="text-center text-muted py-4">Sin proyectos visibles.</div>';
+      return;
+    }
+    contenedor.innerHTML = arbolEstado.map(renderNodoProyectoArbol).join('');
+  }
+
+  function renderNodoProyectoArbol(p, pIdx) {
+    const chevron = p.expandido ? 'fa-chevron-down' : 'fa-chevron-right';
+    const badgeColor = p.sinAsignar > 0 ? 'warning' : 'success';
+    let html =
+      '<div class="border rounded mb-2">' +
+        '<div class="d-flex justify-content-between align-items-center p-2 bg-light" style="cursor:pointer" onclick="window.toggleProyectoArbol(' + pIdx + ')">' +
+          '<div><i class="fas ' + chevron + ' me-2"></i><strong>' + p.proyecto + '</strong> ' +
+            '<span class="badge bg-secondary ms-2">' + p.totalRTs + ' RTs</span> ' +
+            '<span class="badge bg-' + badgeColor + '">' + p.sinAsignar + ' sin asignar</span></div>' +
+          '<button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); window.abrirFormularioAsignacionEquipos({nivel:\'PROYECTO\',proyecto:' + JSON.stringify(p.proyecto) + '});"><i class="fas fa-diagram-project"></i> Asignar proyecto completo</button>' +
+        '</div>';
+
+    if (p.expandido) {
+      html += '<div class="p-2">';
+      if (p.tramos === null) {
+        html += '<div class="text-center py-2"><div class="spinner-border spinner-border-sm text-primary" role="status"></div></div>';
+      } else if (!p.tramos.length) {
+        html += '<div class="text-muted small">Sin tramos.</div>';
+      } else {
+        html += p.tramos.map(function(t, tIdx) { return renderNodoTramoArbol(p, pIdx, t, tIdx); }).join('');
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function renderNodoTramoArbol(p, pIdx, t, tIdx) {
+    const chevron = t.expandido ? 'fa-chevron-down' : 'fa-chevron-right';
+    const badgeColor = t.sinAsignar > 0 ? 'warning' : 'success';
+    let html =
+      '<div class="border rounded mb-2 ms-4">' +
+        '<div class="d-flex justify-content-between align-items-center p-2" style="cursor:pointer" onclick="window.toggleTramoArbol(' + pIdx + ',' + tIdx + ')">' +
+          '<div><i class="fas ' + chevron + ' me-2"></i>' + t.tramo + ' ' +
+            '<span class="badge bg-secondary ms-2">' + t.totalRTs + ' RTs</span> ' +
+            '<span class="badge bg-' + badgeColor + '">' + t.sinAsignar + ' sin asignar</span></div>' +
+          '<button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); window.abrirFormularioAsignacionEquipos({nivel:\'TRAMO\',proyecto:' + JSON.stringify(p.proyecto) + ',tramo:' + JSON.stringify(t.tramo) + '});"><i class="fas fa-diagram-project"></i> Asignar tramo completo</button>' +
+        '</div>';
+
+    if (t.expandido) {
+      html += '<div class="p-2">';
+      if (t.rts === null) {
+        html += '<div class="text-center py-2"><div class="spinner-border spinner-border-sm text-primary" role="status"></div></div>';
+      } else if (!t.rts.length) {
+        html += '<div class="text-muted small">Sin RTs.</div>';
+      } else {
+        html += '<div class="table-responsive"><table class="table table-sm table-striped mb-0"><thead><tr><th>RT</th><th>Articulador</th><th>Gestor</th><th></th></tr></thead><tbody>' +
+          t.rts.map(function(r) {
+            const artTxt = !r.articulador ? '<span class="text-danger">Sin asignar</span>' : (r.articuladorEsEmail ? r.articulador : ('<span class="text-muted fst-italic" title="Nombre libre sin homologar">' + r.articulador + '</span>'));
+            const gesTxt = !r.gestor ? '<span class="text-danger">Sin asignar</span>' : (r.gestorEsEmail ? r.gestor : ('<span class="text-muted fst-italic" title="Nombre libre sin homologar">' + r.gestor + '</span>'));
+            return '<tr><td>' + r.rt + '</td><td>' + artTxt + '</td><td>' + gesTxt + '</td>' +
+              '<td><button class="btn btn-sm btn-outline-secondary" onclick="window.abrirFormularioAsignacionEquipos({nivel:\'RT\',proyecto:' + JSON.stringify(p.proyecto) + ',tramo:' + JSON.stringify(t.tramo) + ',rt:' + JSON.stringify(r.rt) + '});"><i class="fas fa-pen"></i></button></td></tr>';
+          }).join('') +
+          '</tbody></table></div>';
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function toggleProyectoArbol(pIdx) {
+    const p = arbolEstado[pIdx];
+    if (!p) return;
+    p.expandido = !p.expandido;
+
+    if (p.expandido && p.tramos === null) {
+      renderArbolAsignacion();
+      google.script.run
+        .withSuccessHandler(function(result) {
+          p.tramos = (result && result.success ? result.tramos : []).map(function(t) {
+            return { tramo: t.tramo, totalRTs: t.totalRTs, sinAsignar: t.sinAsignar, expandido: false, rts: null };
+          });
+          renderArbolAsignacion();
+        })
+        .withFailureHandler(function() {
+          p.tramos = [];
+          renderArbolAsignacion();
+        })
+        .getTramosPorProyecto(p.proyecto);
+    } else {
+      renderArbolAsignacion();
+    }
+  }
+  window.toggleProyectoArbol = toggleProyectoArbol;
+
+  function toggleTramoArbol(pIdx, tIdx) {
+    const p = arbolEstado[pIdx];
+    if (!p || !p.tramos) return;
+    const t = p.tramos[tIdx];
+    if (!t) return;
+    t.expandido = !t.expandido;
+
+    if (t.expandido && t.rts === null) {
+      renderArbolAsignacion();
+      google.script.run
+        .withSuccessHandler(function(result) {
+          t.rts = (result && result.success) ? result.rts : [];
+          renderArbolAsignacion();
+        })
+        .withFailureHandler(function() {
+          t.rts = [];
+          renderArbolAsignacion();
+        })
+        .getRTsPorTramo(p.proyecto, t.tramo);
+    } else {
+      renderArbolAsignacion();
+    }
+  }
+  window.toggleTramoArbol = toggleTramoArbol;
 
   // ═══════════════════════════════════════════════════════════════════
   // Modal de Homologación — NO_ENCONTRADO / ENCONTRADO_INACTIVO
@@ -149,11 +307,24 @@
     document.body.appendChild(wrapper.firstElementChild);
   }
 
+  const HUERFANO_BADGE_COLOR = {
+    ENCONTRADO_INACTIVO: 'warning',
+    ENCONTRADO_SIN_PERFIL: 'info',
+    NO_ENCONTRADO: 'secondary'
+  };
+  const HUERFANO_HINT = {
+    ENCONTRADO_INACTIVO: 'Coincide con un usuario marcado ACTIVO=NO en USUARIOS.',
+    ENCONTRADO_SIN_PERFIL: 'Encontrado en los grupos de Google (Groups), pero todavía sin fila de perfil en USUARIOS — al vincular, agrega manualmente su ROL en USUARIOS.',
+    NO_ENCONTRADO: 'Sin coincidencia en USUARIOS ni en el directorio de Grupos.'
+  };
+
   function renderHuerfanoItem(item, index) {
-    const badgeColor = item.confianza === 'ENCONTRADO_INACTIVO' ? 'warning' : 'secondary';
+    const badgeColor = HUERFANO_BADGE_COLOR[item.confianza] || 'secondary';
+    const fuenteTexto = item.fuente ? (' · fuente: ' + item.fuente) : '';
     const sugerenciaTexto = item.coincidenciaSugerida
-      ? ('Sugerencia: ' + item.coincidenciaSugerida + ' (' + (item.email || 'sin email') + ', puntaje ' + item.puntaje + ')')
+      ? ('Sugerencia: ' + item.coincidenciaSugerida + ' (' + (item.email || 'sin email') + ', puntaje ' + item.puntaje + fuenteTexto + ')')
       : 'Sin sugerencia automática';
+    const hint = HUERFANO_HINT[item.confianza] || '';
 
     return (
       '<div class="border rounded p-3 mb-3 shadow-sm">' +
@@ -164,7 +335,8 @@
           '</div>' +
         '</div>' +
         '<div class="fw-bold text-dark">' + item.nombreEnDatos + '</div>' +
-        '<div class="small text-muted mb-2">' + sugerenciaTexto + '</div>' +
+        '<div class="small text-muted mb-1">' + sugerenciaTexto + '</div>' +
+        (hint ? '<div class="small fst-italic text-secondary mb-2">' + hint + '</div>' : '') +
         '<div class="input-group input-group-sm">' +
           '<input type="email" class="form-control" id="huerfanoEmail_' + index + '" placeholder="email@idu.gov.co" value="' + (item.email || '') + '">' +
           '<button class="btn btn-primary" type="button" onclick="window.vincularUsuarioHuerfano(' + index + ')"><i class="fas fa-link"></i> Vincular</button>' +
@@ -286,12 +458,30 @@
   }
   window.onEquiposTramoChange = onEquiposTramoChange;
 
-  function abrirFormularioAsignacionEquipos() {
+  // `prefill` opcional: { nivel, proyecto, tramo, rt } — usado por los botones del árbol
+  // navegable para abrir el modal ya apuntando al nodo exacto que el usuario clickeó,
+  // en vez de forzarlo a repetir la cascada manualmente.
+  function abrirFormularioAsignacionEquipos(prefill) {
     const datos = equiposDatosBase();
     const proyectos = Array.from(new Set(datos.map(function(r) { return r[C.PROYECTO]; }))).filter(Boolean).sort();
     poblarSelectEquipos('equiposProyecto', proyectos, 'Selecciona un proyecto...');
     poblarSelectEquipos('equiposTramo', [], 'Selecciona un proyecto primero...');
     poblarSelectEquipos('equiposRT', [], 'Selecciona un tramo primero...');
+
+    document.getElementById('equiposNivel').value = (prefill && prefill.nivel) || 'PROYECTO';
+
+    if (prefill && prefill.proyecto) {
+      document.getElementById('equiposProyecto').value = prefill.proyecto;
+      onEquiposProyectoChange();
+      if (prefill.tramo) {
+        document.getElementById('equiposTramo').value = prefill.tramo;
+        onEquiposTramoChange();
+        if (prefill.rt) {
+          document.getElementById('equiposRT').value = prefill.rt;
+        }
+      }
+    }
+
     onEquiposNivelChange();
 
     const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAsignacionGranular'));

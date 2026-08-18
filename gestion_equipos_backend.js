@@ -113,6 +113,159 @@ function getEstadisticasCargaEquipos(userContext) {
   }
 }
 
+/**
+ * Lee Datos una vez, resuelve los índices de columnas relevantes y aplica el MISMO recorte
+ * RBAC que getDashboardData() (Codigo.js) — Articulador solo ve sus filas, Gestor las suyas
+ * + las de su(s) Articulador(es). Devuelto como filas ya filtradas, para que las 3 funciones
+ * de árbol (getProyectosConteo/getTramosPorProyecto/getRTsPorTramo) no dupliquen esta lógica.
+ */
+function _leerFilasVisiblesRBACEquipos() {
+  const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
+  const { headers, rows } = gestorDatos.leerDatos(getConfig('SHEETS.DATOS'));
+  if (!headers.length) throw new Error('No se pudo leer la hoja Datos');
+
+  const idxProyecto = findColumnIndex(headers, getConfig('COLUMNS.PROYECTO'));
+  const idxTramo = findColumnIndex(headers, getConfig('COLUMNS.TRAMO'));
+  const idxRT = findColumnIndex(headers, getConfig('COLUMNS.RT'));
+  const idxArticulador = findColumnIndex(headers, getConfig('COLUMNS.ARTICULADOR_JURIDICO'));
+  const idxGestor = findColumnIndex(headers, getConfig('COLUMNS.GESTOR_JURIDICO'));
+
+  if (idxProyecto < 0 || idxTramo < 0 || idxRT < 0 || idxArticulador < 0 || idxGestor < 0) {
+    throw new Error('Columnas requeridas (PROYECTO/TRAMO/RT/ARTICULADOR/GESTOR) no encontradas en Datos');
+  }
+
+  const colProyecto = headers[idxProyecto];
+  const colTramo = headers[idxTramo];
+  const colRT = headers[idxRT];
+  const colArticulador = headers[idxArticulador];
+  const colGestor = headers[idxGestor];
+
+  const currentUserEmail = (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+  const rolUsuario = getUserRole(currentUserEmail) || getConfig('ROLES.LECTOR');
+  const esArticulador = rolUsuario === getConfig('ROLES.ARTICULADOR');
+  const esGestor = rolUsuario === getConfig('ROLES.GESTOR');
+
+  let articuladoresPermitidosGestor = null;
+  if (esGestor) {
+    articuladoresPermitidosGestor = new Set();
+    for (let i = 0; i < rows.length; i++) {
+      const g = String(rows[i][colGestor] || '').trim().toLowerCase();
+      if (g === currentUserEmail) {
+        const a = String(rows[i][colArticulador] || '').trim().toLowerCase();
+        if (a) articuladoresPermitidosGestor.add(a);
+      }
+    }
+  }
+
+  const filas = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const articuladorCelda = String(row[colArticulador] || '').trim();
+    const gestorCelda = String(row[colGestor] || '').trim();
+
+    if (esArticulador && articuladorCelda.toLowerCase() !== currentUserEmail) continue;
+    if (esGestor) {
+      const visible = gestorCelda.toLowerCase() === currentUserEmail ||
+        (articuladoresPermitidosGestor && articuladoresPermitidosGestor.has(articuladorCelda.toLowerCase()));
+      if (!visible) continue;
+    }
+
+    filas.push({
+      proyecto: String(row[colProyecto] || '').trim() || 'SIN PROYECTO',
+      tramo: String(row[colTramo] || '').trim() || 'SIN TRAMO',
+      rt: String(row[colRT] || '').trim(),
+      articulador: articuladorCelda,
+      articuladorEsEmail: REGEX_EMAIL_SIMPLE_EQUIPOS.test(articuladorCelda),
+      gestor: gestorCelda,
+      gestorEsEmail: REGEX_EMAIL_SIMPLE_EQUIPOS.test(gestorCelda)
+    });
+  }
+
+  return filas;
+}
+
+/**
+ * Nivel 1 del árbol de asignación (Fase B — feedback 2026-08-18): lista de Proyectos con
+ * conteo de RTs y de RTs sin asignar. Carga liviana — no trae Tramos ni RTs todavía
+ * (esos se piden bajo demanda con getTramosPorProyecto/getRTsPorTramo al expandir un nodo,
+ * para no mandar los 9691 RTs de una sola vez ni renderizar miles de filas de golpe).
+ */
+function getProyectosConteo() {
+  try {
+    const filas = _leerFilasVisiblesRBACEquipos();
+    const porProyecto = {};
+
+    filas.forEach(function(f) {
+      if (!porProyecto[f.proyecto]) porProyecto[f.proyecto] = { totalRTs: 0, sinAsignar: 0 };
+      porProyecto[f.proyecto].totalRTs++;
+      if (!f.articuladorEsEmail && !f.gestorEsEmail) porProyecto[f.proyecto].sinAsignar++;
+    });
+
+    const proyectos = Object.keys(porProyecto).sort().map(function(p) {
+      return { proyecto: p, totalRTs: porProyecto[p].totalRTs, sinAsignar: porProyecto[p].sinAsignar };
+    });
+
+    return { success: true, proyectos: proyectos };
+  } catch (e) {
+    console.error('❌ Error en getProyectosConteo: ' + e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+/**
+ * Nivel 2 del árbol: Tramos de un Proyecto específico, con sus conteos.
+ */
+function getTramosPorProyecto(proyecto) {
+  try {
+    const filas = _leerFilasVisiblesRBACEquipos().filter(function(f) { return f.proyecto === proyecto; });
+    const porTramo = {};
+
+    filas.forEach(function(f) {
+      if (!porTramo[f.tramo]) porTramo[f.tramo] = { totalRTs: 0, sinAsignar: 0 };
+      porTramo[f.tramo].totalRTs++;
+      if (!f.articuladorEsEmail && !f.gestorEsEmail) porTramo[f.tramo].sinAsignar++;
+    });
+
+    const tramos = Object.keys(porTramo).sort().map(function(t) {
+      return { tramo: t, totalRTs: porTramo[t].totalRTs, sinAsignar: porTramo[t].sinAsignar };
+    });
+
+    return { success: true, proyecto: proyecto, tramos: tramos };
+  } catch (e) {
+    console.error('❌ Error en getTramosPorProyecto: ' + e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+/**
+ * Nivel 3 del árbol ("línea cero"): detalle de RTs de un Tramo específico, cada uno con su
+ * Articulador/Gestor actual (email ya resuelto o nombre libre histórico) — la vista que
+ * permite ver y disparar la reasignación puntual de cada RT.
+ */
+function getRTsPorTramo(proyecto, tramo) {
+  try {
+    const filas = _leerFilasVisiblesRBACEquipos().filter(function(f) {
+      return f.proyecto === proyecto && f.tramo === tramo;
+    });
+
+    const rts = filas.map(function(f) {
+      return {
+        rt: f.rt,
+        articulador: f.articulador,
+        articuladorEsEmail: f.articuladorEsEmail,
+        gestor: f.gestor,
+        gestorEsEmail: f.gestorEsEmail,
+        sinAsignar: !f.articuladorEsEmail && !f.gestorEsEmail
+      };
+    }).sort(function(a, b) { return a.rt.localeCompare(b.rt); });
+
+    return { success: true, proyecto: proyecto, tramo: tramo, rts: rts };
+  } catch (e) {
+    console.error('❌ Error en getRTsPorTramo: ' + e.message);
+    return { success: false, error: e.message };
+  }
+}
+
 function _invalidarCacheDatosSiExiste() {
   try {
     if (typeof invalidateDataCache === 'function') invalidateDataCache();

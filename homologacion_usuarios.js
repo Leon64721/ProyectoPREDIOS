@@ -3,15 +3,21 @@
 /**
  * Motor de homologación difusa de usuarios — Sprint 5, Fase A [CONC-BE-07].
  * Cruza los nombres libres de Datos.ARTICULADOR JUIRIDICO / Datos.GESTOR JURÍDICO
- * contra el directorio de identidad USUARIOS (spreadsheet separado, ver
- * CONFIG.DATA_FILES.USUARIOS) para resolver el email real de cada responsable, combinando
- * Token Set Ratio + Levenshtein para tolerar nombres informales/incompletos y typos.
+ * contra un directorio COMBINADO de dos fuentes (ARCHITECTURE_V4.md Sección 6.1 +
+ * feedback de usuario 2026-08-18 sobre la vista de Homologación en producción):
+ *   1. USUARIOS (spreadsheet separado, CONFIG.DATA_FILES.USUARIOS) — tiene perfil completo
+ *      (ROL/ACTIVO/COMPONENTE), es la fuente con prioridad cuando un email aparece en ambas.
+ *   2. Directorio de Grupos de Workspace (dtdp/stap/stgsv, vía Admin SDK) — fallback para
+ *      personas que todavía no tienen fila en USUARIOS; solo trae nombre+email+componente,
+ *      sin perfil (ROL/ACTIVO quedan vacíos — "si no tiene perfil se agrega manualmente").
+ * Combina Token Set Ratio + Levenshtein para tolerar nombres informales/incompletos y typos.
  * No lee PAC_Articuladores — deprecado para este propósito (ARCHITECTURE_V4.md Sección 6.1).
  *
- * sincronizarGruposGoogleIDU() enriquece USUARIOS desde los grupos oficiales de Workspace
- * (Admin SDK Directory API) ANTES de correr homologarUsuariosMatriz() — son dos pasos
- * independientes, no encadenados automáticamente: si Admin SDK no está habilitado/autorizado
- * todavía, homologarUsuariosMatriz() sigue funcionando igual sobre el USUARIOS actual.
+ * sincronizarGruposGoogleIDU() enriquece USUARIOS desde los grupos oficiales ANTES de correr
+ * homologarUsuariosMatriz() — son dos pasos independientes, no encadenados automáticamente:
+ * si Admin SDK no está habilitado/autorizado todavía, homologarUsuariosMatriz() sigue
+ * funcionando igual sobre el USUARIOS actual (el fallback a Grupos simplemente queda vacío,
+ * sin romper nada — ver _obtenerDirectorioGruposIDU()).
  */
 
 const HOMOLOGACION_ENGINE = {
@@ -19,14 +25,17 @@ const HOMOLOGACION_ENGINE = {
   batchSize: 1000
 };
 
-// Inventario de grupos oficiales de Google Workspace (idu.gov.co) usados para enriquecer
-// USUARIOS. Requiere Admin SDK Directory API habilitado (ver appsscript.json) y que la
-// cuenta ejecutora tenga privilegios de administrador de Grupos — ver sincronizarGruposGoogleIDU().
+// Inventario de grupos oficiales de Google Workspace (idu.gov.co). Requiere Admin SDK
+// Directory API habilitado (ver appsscript.json) y que la cuenta ejecutora tenga
+// privilegios de administrador de Grupos — ver sincronizarGruposGoogleIDU().
 const GRUPOS_OFICIALES_IDU = [
   { email: 'dtdp@idu.gov.co', componente: 'DTDP' },
   { email: 'stap@idu.gov.co', componente: 'STAP' },
   { email: 'stgsv@idu.gov.co', componente: 'STGSV' }
 ];
+
+const GRUPOS_DIRECTORIO_CACHE_KEY = 'grupos_idu_directorio_v1';
+const GRUPOS_DIRECTORIO_CACHE_TTL = 21600; // 6h — máximo permitido por CacheService
 
 /**
  * Normaliza un nombre para comparación: mayúsculas, sin tildes, espacios colapsados.
@@ -42,7 +51,7 @@ function _normalizarNombreUsuario(valor) {
     .replace(/\s+/g, ' ');
 }
 
-function _leerDirectorioUsuarios() {
+function _leerDirectorioUsuariosSheet() {
   const usuariosFileId = getConfig('DATA_FILES.USUARIOS');
   if (!usuariosFileId) {
     throw new Error('CONFIG.DATA_FILES.USUARIOS no está configurado');
@@ -61,10 +70,51 @@ function _leerDirectorioUsuarios() {
         nombre: nombre,
         nombreNormalizado: _normalizarNombreUsuario(nombre),
         activo: String(row['ACTIVO'] || '').trim().toUpperCase(),
-        componente: String(row['COMPONENTE'] || '').trim()
+        componente: String(row['COMPONENTE'] || '').trim(),
+        fuente: 'USUARIOS'
       };
     })
     .filter(function(u) { return u.nombre !== ''; });
+}
+
+/**
+ * Fusiona USUARIOS + directorio de Grupos. USUARIOS tiene prioridad (ya tiene perfil);
+ * un email que solo aparece en Grupos se agrega SIN perfil (rol/activo vacíos) — es el
+ * candidato que homologarUsuariosMatriz() puede sugerir, pero que un admin debe completar
+ * manualmente en USUARIOS para que quede con ROL/ACTIVO reales.
+ */
+function _leerDirectorioCombinado() {
+  const directorioUsuarios = _leerDirectorioUsuariosSheet();
+  const porEmail = {};
+  directorioUsuarios.forEach(function(u) {
+    const key = u.email.toLowerCase();
+    if (key) porEmail[key] = u;
+  });
+
+  let directorioGrupos = [];
+  try {
+    directorioGrupos = _obtenerDirectorioGruposIDU(false);
+  } catch (e) {
+    console.warn('⚠️ No se pudo leer el directorio de Grupos para el fallback de homologación: ' + e.message);
+  }
+
+  directorioGrupos.forEach(function(g) {
+    const key = String(g.email || '').trim().toLowerCase();
+    if (!key || porEmail[key]) return; // USUARIOS ya tiene esta persona con perfil — prioridad
+    const nombre = g.nombreCompleto || '';
+    if (!nombre) return; // sin nombre no sirve como candidato de homologación
+    porEmail[key] = {
+      email: g.email,
+      rol: '',
+      nombre: nombre,
+      nombreNormalizado: _normalizarNombreUsuario(nombre),
+      activo: '', // sin perfil todavía
+      componente: (g.componentes || []).join(', '),
+      fuente: 'GRUPOS'
+    };
+  });
+
+  return Object.keys(porEmail).map(function(k) { return porEmail[k]; });
 }
 
 function _esActivo(usuario) {
@@ -114,8 +164,9 @@ function _tokenSetRatio(nombreNormalizadoA, nombreNormalizadoB) {
 }
 
 /**
- * Busca la mejor coincidencia de `nombreBuscado` en `directorio`.
- * 1. Igualdad exacta normalizada (sin tildes) → ENCONTRADO_ACTIVO / ENCONTRADO_INACTIVO.
+ * Busca la mejor coincidencia de `nombreBuscado` en `directorio` (combinado USUARIOS+Grupos).
+ * 1. Igualdad exacta normalizada (sin tildes) → ENCONTRADO_ACTIVO / ENCONTRADO_INACTIVO /
+ *    ENCONTRADO_SIN_PERFIL (coincide, pero la fila viene solo de Grupos, sin ROL/ACTIVO).
  * 2. Token Set Ratio + Levenshtein sobre nombres normalizados (se toma el mayor de los dos,
  *    porque cubren casos distintos: Levenshtein detecta typos dentro del mismo nombre,
  *    Token Set Ratio detecta nombres informales/incompletos) → SIMILITUD_APROXIMADA si > umbral.
@@ -129,11 +180,13 @@ function _mejorCoincidenciaUsuario(nombreBuscado, directorio) {
 
   const exacto = directorio.find(function(u) { return u.nombreNormalizado === nombreNormalizado; });
   if (exacto) {
-    return {
-      usuario: exacto,
-      puntaje: 1,
-      confianza: _esActivo(exacto) ? 'ENCONTRADO_ACTIVO' : 'ENCONTRADO_INACTIVO'
-    };
+    let confianza;
+    if (exacto.fuente === 'GRUPOS') {
+      confianza = 'ENCONTRADO_SIN_PERFIL';
+    } else {
+      confianza = _esActivo(exacto) ? 'ENCONTRADO_ACTIVO' : 'ENCONTRADO_INACTIVO';
+    }
+    return { usuario: exacto, puntaje: 1, confianza: confianza };
   }
 
   let mejor = null;
@@ -164,6 +217,7 @@ function _serializarResultados(mapa, rolLabel) {
       coincidenciaSugerida: r.usuario ? r.usuario.nombre : null,
       email: r.usuario ? r.usuario.email : null,
       activo: r.usuario ? r.usuario.activo : null,
+      fuente: r.usuario ? r.usuario.fuente : null,
       puntaje: Number(r.puntaje.toFixed(3)),
       confianza: r.confianza
     };
@@ -171,8 +225,9 @@ function _serializarResultados(mapa, rolLabel) {
 }
 
 /**
- * Cruza Datos (ARTICULADOR JUIRIDICO / GESTOR JURÍDICO) contra USUARIOS.
- * Procesa por lotes de 1000 filas (Directiva 3) — solo lectura, no toca Datos.
+ * Cruza Datos (ARTICULADOR JUIRIDICO / GESTOR JURÍDICO) contra el directorio combinado
+ * (USUARIOS + fallback de Grupos). Procesa por lotes de 1000 filas (Directiva 3) — solo
+ * lectura, no toca Datos.
  */
 function homologarUsuariosMatriz() {
   try {
@@ -195,7 +250,7 @@ function homologarUsuariosMatriz() {
 
     const colArticulador = headers[idxArticulador];
     const colGestor = headers[idxGestor];
-    const directorio = _leerDirectorioUsuarios();
+    const directorio = _leerDirectorioCombinado();
 
     // Nombres únicos por rol — evita recalcular Levenshtein para el mismo nombre repetido en cientos de RTs.
     const resultadosArticulador = {};
@@ -231,8 +286,9 @@ function homologarUsuariosMatriz() {
 }
 
 /**
- * Subconjunto de homologarUsuariosMatriz() en confianza NO_ENCONTRADO o ENCONTRADO_INACTIVO —
- * la cola lista-para-modal de cuentas desactualizadas/ausentes (Fase B).
+ * Subconjunto de homologarUsuariosMatriz() en confianza NO_ENCONTRADO, ENCONTRADO_INACTIVO
+ * o ENCONTRADO_SIN_PERFIL — la cola lista-para-modal de cuentas desactualizadas/ausentes/
+ * sin perfil completo (Fase B).
  */
 function detectarUsuariosHuerfanos() {
   try {
@@ -242,7 +298,9 @@ function detectarUsuariosHuerfanos() {
     const huerfanos = homologacion.articuladores
       .concat(homologacion.gestores)
       .filter(function(item) {
-        return item.confianza === 'NO_ENCONTRADO' || item.confianza === 'ENCONTRADO_INACTIVO';
+        return item.confianza === 'NO_ENCONTRADO' ||
+          item.confianza === 'ENCONTRADO_INACTIVO' ||
+          item.confianza === 'ENCONTRADO_SIN_PERFIL';
       });
 
     return {
@@ -281,6 +339,61 @@ function _obtenerNombreCompleto(emailUsuario) {
 }
 
 /**
+ * Lee (y cachea 6h en CacheService) el directorio {email, nombreCompleto, componentes}
+ * de los 3 grupos oficiales — cruzando SIEMPRE por email (Members.list ya da el email;
+ * Users.get() trae el nombre oficial de Workspace para ese email), nunca por nombre.
+ * Si AdminDirectory no está habilitado, devuelve [] silenciosamente — el llamador
+ * (sincronizarGruposGoogleIDU o el fallback de homologación) sigue funcionando sin esta
+ * fuente en vez de romperse.
+ */
+function _obtenerDirectorioGruposIDU(forzarRefresco) {
+  const cache = CacheService.getScriptCache();
+  if (!forzarRefresco) {
+    try {
+      const cacheado = cache.get(GRUPOS_DIRECTORIO_CACHE_KEY);
+      if (cacheado) return JSON.parse(cacheado);
+    } catch (e) {
+      console.warn('⚠️ Caché de directorio de grupos corrupto, recalculando: ' + e.message);
+    }
+  }
+
+  if (typeof AdminDirectory === 'undefined') return [];
+
+  const inventario = {};
+  GRUPOS_OFICIALES_IDU.forEach(function(grupo) {
+    try {
+      const miembros = _obtenerMiembrosGrupo(grupo.email);
+      miembros.forEach(function(emailMiembro) {
+        const emailNorm = String(emailMiembro || '').trim().toLowerCase();
+        if (!emailNorm) return;
+        if (!inventario[emailNorm]) {
+          inventario[emailNorm] = { email: emailNorm, nombreCompleto: null, componentes: [] };
+        }
+        if (inventario[emailNorm].componentes.indexOf(grupo.componente) < 0) {
+          inventario[emailNorm].componentes.push(grupo.componente);
+        }
+      });
+    } catch (eGrupo) {
+      console.warn('⚠️ No se pudo leer grupo ' + grupo.email + ' para el directorio: ' + eGrupo.message);
+    }
+  });
+
+  const directorio = Object.keys(inventario).map(function(email) {
+    const entrada = inventario[email];
+    entrada.nombreCompleto = _obtenerNombreCompleto(email);
+    return entrada;
+  });
+
+  try {
+    cache.put(GRUPOS_DIRECTORIO_CACHE_KEY, JSON.stringify(directorio), GRUPOS_DIRECTORIO_CACHE_TTL);
+  } catch (e) {
+    console.warn('⚠️ No se pudo cachear el directorio de grupos: ' + e.message);
+  }
+
+  return directorio;
+}
+
+/**
  * Sincroniza USUARIOS contra los grupos oficiales de Workspace (GRUPOS_OFICIALES_IDU) vía
  * Admin SDK Directory API. REQUIERE: (a) el servicio avanzado "AdminDirectory" habilitado
  * (ya declarado en appsscript.json), (b) el scope admin.directory.group.member.readonly +
@@ -290,11 +403,11 @@ function _obtenerNombreCompleto(emailUsuario) {
  * no está disponible, la función falla con un error explícito en vez de intentar leer las
  * páginas /members por HTTP (esas requieren sesión de navegador, UrlFetchApp no la tiene).
  *
- * Upsert por EMAIL, no destructivo: usuarios nuevos se agregan (ACTIVO='SI', ROL vacío — la
- * asignación de rol es una decisión de gobernanza, no algo que este sync deba inferir);
- * usuarios ya existentes en USUARIOS solo se enriquecen si su NOMBRE/COMPONENTE están vacíos,
- * nunca se sobreescribe un valor ya curado manualmente. Un mismo email en varios grupos
- * acumula todos los COMPONENTE separados por coma en vez de sobreescribirse entre grupos.
+ * Upsert por EMAIL, cruzando siempre por email (nunca por nombre). NOMBRE: Google/Groups
+ * es la fuente autoritativa (feedback de usuario 2026-08-18) — se sobreescribe SIEMPRE
+ * que AdminDirectory.Users.get() devuelva un nombre, incluso si USUARIOS ya tenía algo
+ * escrito ahí. COMPONENTE: se fusiona (unión), no se sobreescribe — una persona puede
+ * pertenecer a varios grupos y no queremos perder membresías ya registradas.
  */
 function sincronizarGruposGoogleIDU() {
   const lock = LockService.getScriptLock();
@@ -333,32 +446,8 @@ function sincronizarGruposGoogleIDU() {
       if (email) indicePorEmail[email] = i;
     });
 
-    const errores = [];
-    const gruposConsultados = [];
-    const inventario = {};
-
-    GRUPOS_OFICIALES_IDU.forEach(function(grupo) {
-      try {
-        const miembros = _obtenerMiembrosGrupo(grupo.email);
-        gruposConsultados.push({ grupo: grupo.email, miembros: miembros.length });
-
-        miembros.forEach(function(emailMiembro) {
-          const emailNorm = String(emailMiembro || '').trim().toLowerCase();
-          if (!emailNorm) return;
-          if (!inventario[emailNorm]) {
-            inventario[emailNorm] = { email: emailNorm, nombreCompleto: null, componentes: [] };
-          }
-          if (inventario[emailNorm].componentes.indexOf(grupo.componente) < 0) {
-            inventario[emailNorm].componentes.push(grupo.componente);
-          }
-        });
-      } catch (eGrupo) {
-        console.error('❌ Error consultando grupo ' + grupo.email + ': ' + eGrupo.message);
-        errores.push({ grupo: grupo.email, error: eGrupo.message });
-      }
-    });
-
-    const emailsUnicos = Object.keys(inventario);
+    const directorio = _obtenerDirectorioGruposIDU(true); // forzar refresco — este es el sync explícito
+    const gruposConsultados = GRUPOS_OFICIALES_IDU.map(function(g) { return { grupo: g.email }; });
     const totalFilasExistentes = rows.length;
 
     // Una sola lectura/escritura por columna afectada (Directiva 3), en vez de N
@@ -374,14 +463,12 @@ function sincronizarGruposGoogleIDU() {
     let usuariosEnriquecidos = 0;
     const filasNuevas = [];
 
-    for (let start = 0; start < emailsUnicos.length; start += HOMOLOGACION_ENGINE.batchSize) {
-      const fin = Math.min(start + HOMOLOGACION_ENGINE.batchSize, emailsUnicos.length);
+    for (let start = 0; start < directorio.length; start += HOMOLOGACION_ENGINE.batchSize) {
+      const fin = Math.min(start + HOMOLOGACION_ENGINE.batchSize, directorio.length);
       for (let i = start; i < fin; i++) {
-        const email = emailsUnicos[i];
-        const entrada = inventario[email];
-        entrada.nombreCompleto = _obtenerNombreCompleto(email);
-        const componenteTexto = entrada.componentes.join(', ');
-
+        const entrada = directorio[i];
+        const email = entrada.email;
+        const componenteTexto = (entrada.componentes || []).join(', ');
         const filaExistenteIdx = indicePorEmail[email];
 
         if (filaExistenteIdx === undefined) {
@@ -400,14 +487,24 @@ function sincronizarGruposGoogleIDU() {
         const componenteActual = idxComponente >= 0 ? String(rowActual['COMPONENTE'] || '').trim() : '';
         let cambios = false;
 
-        if (!nombreActual && entrada.nombreCompleto) {
+        // Google siempre gana el nombre — es la fuente más completa (feedback 2026-08-18).
+        if (entrada.nombreCompleto && nombreActual !== entrada.nombreCompleto) {
           columnaNombreValores[filaExistenteIdx][0] = entrada.nombreCompleto;
           cambios = true;
         }
-        if (idxComponente >= 0 && !componenteActual && componenteTexto) {
-          columnaComponenteValores[filaExistenteIdx][0] = componenteTexto;
-          cambios = true;
+
+        // COMPONENTE se fusiona (unión), no se sobreescribe.
+        if (idxComponente >= 0 && componenteTexto) {
+          const existentes = componenteActual ? componenteActual.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : [];
+          const nuevos = componenteTexto.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+          const union = Array.from(new Set(existentes.concat(nuevos)));
+          const unionTexto = union.join(', ');
+          if (unionTexto !== componenteActual) {
+            columnaComponenteValores[filaExistenteIdx][0] = unionTexto;
+            cambios = true;
+          }
         }
+
         if (cambios) usuariosEnriquecidos++;
       }
     }
@@ -427,10 +524,10 @@ function sincronizarGruposGoogleIDU() {
     return {
       success: true,
       gruposConsultados: gruposConsultados,
-      totalMiembrosUnicos: emailsUnicos.length,
+      totalMiembrosUnicos: directorio.length,
       usuariosNuevos: usuariosNuevos,
       usuariosEnriquecidos: usuariosEnriquecidos,
-      errores: errores
+      errores: []
     };
   } catch (e) {
     console.error('❌ Error en sincronizarGruposGoogleIDU: ' + e.message);

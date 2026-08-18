@@ -1951,3 +1951,37 @@ pandoc DOCUMENTACION_TECNICA_VIVA.md -o Documento_Tecnico_Aplicacion_Predios.doc
 3. Validación visual en runtime de los 3 flujos nuevos de Fase B (KPIs, homologación, asignación/handover) y del filtro RBAC de Fase C con usuarios reales de cada rol — no ejecutada por un agente de código, mismo patrón que el ítem 13 de `TODOS.md` desde Sprint 1.
 
 **Depends on / blocked by:** ninguno funcional para el código ya desplegado. Los 3 pendientes de arriba son de configuración externa o de validación humana, no de desarrollo pendiente.
+
+## 22. Sprint 5 — Corrección post-QA: autoridad de nombre, fallback de Grupos y árbol de asignación — [COMPLETADO 2026-08-18]
+
+**Agente:** Claude Code (Claude Sonnet 5, orquestado con gstack v1.60.1.0).
+
+**Origen:** feedback directo del usuario probando `#moduloGestionEquipos` en el deployment real (capturas de pantalla adjuntas en la sesión). Confirmó dos decisiones vía `AskUserQuestion` antes de tocar código: (1) el nombre que trae Google (Groups/Workspace) debe ganar siempre sobre lo que ya esté escrito en `USUARIOS`, y (2) construir un árbol navegable completo Proyecto→Tramo→RT en vez de iterar sobre las tablas planas.
+
+**Diagnóstico de lo que se veía mal (separado de lo que sí era un bug de diseño):**
+- `TOTAL RTS = RTS POR ASIGNAR = 9691` y "Sin datos" en las distribuciones: comportamiento esperado, no un bug — `sincronizarGruposGoogleIDU()` sigue sin poder ejecutarse ni una vez (Admin SDK aún no habilitado en Cloud Console, pendiente documentado en Sección 20), así que `USUARIOS` sigue tan poco poblada como antes de Fase A.
+- `"FINALIZADO"` apareciendo como articulador huérfano: valor real presente en la columna `ARTICULADOR JUIRIDICO` de `Datos` — el motor lo señala correctamente como dato sucio a revisar, no lo inventa.
+- El diseño de `sincronizarGruposGoogleIDU()` sí tenía un problema real: nunca sobreescribía un `NOMBRE` ya presente en `USUARIOS`, aunque el nombre que trae `AdminDirectory.Users.get()` (cruzado por correo, no por nombre) sea más completo. Y `homologarUsuariosMatriz()` solo buscaba en `USUARIOS`, sin fallback al directorio de Grupos para personas que todavía no tienen fila ahí.
+
+**Cambios realizados:**
+
+### Motor de homologación (`homologacion_usuarios.js`, reescrito)
+- **`_obtenerDirectorioGruposIDU(forzarRefresco)` (nueva):** extrae a una función compartida la lectura de los 3 grupos (antes vivía inline dentro de `sincronizarGruposGoogleIDU()`), con caché de 6h en `CacheService` (`GRUPOS_DIRECTORIO_CACHE_KEY`, TTL 21600 — el máximo permitido) para no repetir las llamadas paginadas a `AdminDirectory` en cada apertura del modal de homologación. Cruza siempre por email (`Members.list()` → `Users.get()`), nunca por nombre. Si `AdminDirectory` no está habilitado devuelve `[]` silenciosamente — no rompe a quien la llama.
+- **`sincronizarGruposGoogleIDU()` — autoridad de nombre invertida:** ahora reutiliza `_obtenerDirectorioGruposIDU(true)` y sobreescribe `NOMBRE` en `USUARIOS` **siempre** que Google devuelva un nombre distinto al actual (antes: solo si estaba vacío). `COMPONENTE` pasó de "solo si vacío" a **fusión por unión** (una persona puede estar en varios grupos sin perder membresías previas).
+- **`_leerDirectorioCombinado()` (nueva):** fusiona `USUARIOS` (prioridad — ya tiene perfil ROL/ACTIVO) con el fallback de `_obtenerDirectorioGruposIDU()` (email+nombre, sin perfil) para las personas que aún no tienen fila en `USUARIOS`. `homologarUsuariosMatriz()` ahora llama a esta función en vez de leer solo `USUARIOS`.
+- **Quinto estado de confianza, `ENCONTRADO_SIN_PERFIL`:** una coincidencia exacta que solo viene del directorio de Grupos (sin fila en `USUARIOS`) ya no se confunde con `ENCONTRADO_INACTIVO` — es un estado distinto y accionable ("agregar perfil manualmente"). `detectarUsuariosHuerfanos()` ahora también incluye este estado en la cola.
+- Cada resultado serializado incluye `fuente` (`'USUARIOS'` o `'GRUPOS'`) para que la UI pueda mostrar de dónde salió la sugerencia.
+
+### Árbol de asignación jerárquico (`gestion_equipos_backend.js` + `app_equipos_js.html` + `Index.html`)
+- **`_leerFilasVisiblesRBACEquipos()` (nueva, compartida):** lee `Datos` una vez y aplica el mismo recorte RBAC que `getDashboardData()` (Articulador solo sus filas, Gestor las suyas + las de su Articulador), para que las 3 funciones nuevas no dupliquen esa lógica.
+- **`getProyectosConteo()` / `getTramosPorProyecto(proyecto)` / `getRTsPorTramo(proyecto, tramo)` (nuevas):** los 3 niveles del árbol, cargados **perezosamente** — nunca se manda de una sola vez el detalle de los ~9700 RTs observados en producción. `getProyectosConteo()` es liviana (solo conteos); `getTramosPorProyecto`/`getRTsPorTramo` se piden al servidor solo cuando el usuario expande ese nodo específico. Esto es deliberado por Directiva 3 — un árbol eager con miles de filas de RT habría sido exactamente el "renderizado bloqueante" que la directiva prohíbe.
+- **`app_equipos_js.html`:** nuevo panel "Árbol de Asignación" (`#arbolAsignacionEquipos`) con render-desde-estado (`arbolEstado`, reconstruido en memoria en cada expand/collapse) y botones "Asignar [nivel] completo" en cada nodo que prellenan y abren el modal `#modalAsignacionGranular` ya existente (`abrirFormularioAsignacionEquipos(prefill)`, nuevo parámetro opcional `{nivel, proyecto, tramo, rt}`) — sin duplicar la lógica de envío de `asignarEquipoGranular()`.
+- **`Index.html`:** nueva card con el contenedor `#arbolAsignacionEquipos` dentro de `#moduloGestionEquipos`, debajo de las tablas de distribución existentes (que se conservan).
+
+**Verificación ejecutada:** `node --check` sobre `homologacion_usuarios.js`, `gestion_equipos_backend.js`; extracción + `node --check` de `app_equipos_js.html` — 3/3 OK. Prueba aislada en Node de la clasificación de confianza por `fuente` (`USUARIOS`+activo→`ENCONTRADO_ACTIVO`, `USUARIOS`+inactivo→`ENCONTRADO_INACTIVO`, `GRUPOS`→`ENCONTRADO_SIN_PERFIL`) — 3/3 correctas.
+
+**Evidencia de despliegue:** `npx clasp push --force` → `Pushed 49 files`.
+
+**Pendiente sin cambios (no resuelto en esta corrección):** `sincronizarGruposGoogleIDU()` y el fallback de `_obtenerDirectorioGruposIDU()` siguen sin poder ejecutarse contra datos reales hasta que se habilite Admin SDK API en Cloud Console + privilegios de administrador de Grupos — mismo pendiente de la Sección 20, no se resuelve con código. Hasta entonces, el árbol y la homologación seguirán viendo `USUARIOS` tan poco poblada como está hoy.
+
+**Depends on / blocked by:** el fallback a Grupos y el reetiquetado de nombre no tendrán efecto observable en producción hasta que el pendiente de Admin SDK de la Sección 20 se resuelva — el código ya está listo para cuando eso pase.
