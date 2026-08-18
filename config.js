@@ -17,7 +17,9 @@ const CONFIG = {
     PRINCIPAL: '', // Usar el Spreadsheet activo si no se especifica otro ID
     SECUNDARIOS: [],
     STAGING: '', // ID de Dato 2 / Staging para validaciones y promoción manual
-    LOGS: '***REMOVED***' // ✅ FASE 5b: spreadsheet separado (BD_OPERACIONAL_PREDIOS) para logs de auditoría (registrarAccion/getUserLogs)
+    LOGS: '***REMOVED***', // ✅ FASE 5b: spreadsheet separado (BD_OPERACIONAL_PREDIOS) para logs de auditoría (registrarAccion/getUserLogs)
+    USUARIOS: '***REMOVED***', // ✅ SPRINT5-FASE-A: directorio de identidad/rol (EMAIL/ROL/NOMBRE/ACTIVO/COMPONENTE), spreadsheet separado — ver ARCHITECTURE_V4.md Sección 6.1
+    LOGS_ASIGNACION: 'ID_SPREADSHEET_LOGS_ASIGNACION_AQUI' // ⚠️ SPRINT5-FASE-A: placeholder sin reemplazar — crear spreadsheet dedicado y pegar su ID aquí antes de operar en producción (registrarLogAsignacion() se autodeshabilita mientras esto siga así, ver auditoria.js:31 para el mismo patrón)
   },
   
   // ✅ NUEVO: Compatibilidad con código que usa DATA_FILES_IDS
@@ -34,7 +36,9 @@ const CONFIG = {
     REPORTES: 'ReportesGuardados',
     LOGS: 'Logs',
     AUDITORIA: 'LOGS_AUDITORIA',
-    HISTORIAL_PERMISOS: 'Historial_Permisos'
+    HISTORIAL_PERMISOS: 'Historial_Permisos',
+    USUARIOS: 'USUARIOS', // ✅ SPRINT5-FASE-A: pestaña dentro de DATA_FILES.USUARIOS
+    LOGS_ASIGNACION: 'LOGS_ASIGNACION' // ✅ SPRINT5-FASE-A: pestaña dentro de DATA_FILES.LOGS_ASIGNACION, creada automáticamente por registrarLogAsignacion() si no existe
   },
   
   // ✅ COLUMNAS DE DATOS (V1 + V2 completo) - SIN CAMBIOS
@@ -71,9 +75,15 @@ const CONFIG = {
     // Especiales
     SITUACIONES: 'SITUACIONES ESPECIALES',
     OBSERVACIONES: 'OBSERVACIONES',
-    
+
     // Virtual (creado en cliente)
-    FECHA_ISO: 'FECHA_ISO'
+    FECHA_ISO: 'FECHA_ISO',
+
+    // ✅ SPRINT5-FASE-A: responsables jurídicos — nombres EXACTOS de producción.
+    // ARTICULADOR_JURIDICO tiene un typo real en la hoja ("JUIRIDICO", no "JURIDICO") — NO corregir,
+    // debe matchear el header literal o findColumnIndex() no lo encuentra.
+    ARTICULADOR_JURIDICO: 'ARTICULADOR JUIRIDICO',
+    GESTOR_JURIDICO: 'GESTOR JURÍDICO'
   },
   
   // ✅ COLUMNAS DE SEGUIMIENTO (V2) - SIN CAMBIOS
@@ -111,19 +121,46 @@ const CONFIG = {
     'ACTIVO',
     'FECHA_CREACION'
   ],
-  
-  // ✅ ROLES Y PERMISOS - SIN CAMBIOS
+
+  // ✅ COLUMNAS DE USUARIOS (SPRINT5-FASE-A) — esquema confirmado por el usuario, hoja en DATA_FILES.USUARIOS
+  COLUMNS_USUARIOS: [
+    'No',
+    'EMAIL',
+    'ROL',
+    'NOMBRE',
+    'ACTIVO',
+    'COMPONENTE'
+  ],
+
+  // ✅ COLUMNAS DE LOGS_ASIGNACION (SPRINT5-FASE-A) — ver ARCHITECTURE_V4.md Sección 3
+  COLUMNS_LOG_ASIGNACION: [
+    'TIMESTAMP',
+    'NIVEL',
+    'ID_TARGET',
+    'ROL',
+    'USUARIO_ANTERIOR',
+    'USUARIO_NUEVO',
+    'EJECUTOR_EMAIL',
+    'OBSERVACIONES'
+  ],
+
+  // ✅ ROLES Y PERMISOS — SPRINT5-FASE-A añade ARTICULADOR/GESTOR (jerarquía de negocio,
+  // ver ARCHITECTURE_V4.md Sección 6.1: se decidió extender CONFIG.ROLES, no una capa paralela)
   ROLES: {
     EDITOR: 'Editor',
     LECTOR: 'Lector',
-    ADMIN: 'Administrador'
+    ADMIN: 'Administrador',
+    ARTICULADOR: 'Articulador',
+    GESTOR: 'Gestor'
   },
-  
-  // ✅ PERMISOS POR ROL - SIN CAMBIOS
+
+  // ✅ PERMISOS POR ROL — SPRINT5-FASE-A añade Articulador/Gestor
   PERMISOS_POR_ROL: {
     'Administrador': ['LEER', 'EDITAR', 'ELIMINAR', 'PERMISOS', 'REPORTES'],
     'Editor': ['LEER', 'EDITAR', 'REPORTES'],
-    'Lector': ['LEER', 'REPORTES']
+    'Lector': ['LEER', 'REPORTES'],
+    'Articulador': ['LEER', 'EDITAR', 'REPORTES', 'ASIGNAR_EQUIPO'], // alcance recortado a sus proyectos — aplicado en backend, no solo UI
+    'Gestor': ['LEER', 'REPORTES'] // alcance recortado a los RTs de su Articulador
   },
   
   // ✅ FORMATOS - SIN CAMBIOS

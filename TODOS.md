@@ -379,3 +379,33 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 **Context:** ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 18 para el detalle completo de la implementación y el cumplimiento de las 3 directivas del proyecto.
 
 **Depends on / blocked by:** ninguno funcional. Sigue pendiente el ítem 13 de este documento (validación visual en runtime) — no ejecutada aquí por no haber navegador/sesión autenticada disponible en este entorno de agente; aplica también a los dos botones nuevos de esta fase.
+
+---
+
+## 18. Sprint 5: Gestión de Equipos y Jerarquía RBAC — [Fase A COMPLETADA 2026-08-18, Fase B/C pendientes]
+
+**What:** módulo de gestión de equipos con homologación difusa de usuarios (`Datos` ↔ hoja `USUARIOS`), asignación en cascada Proyecto→Tramo→RT con jerarquía RBAC (Administrador/Articulador/Gestor), tablero de carga, reasignación masiva (handover 1-click) y enrutamiento de alertas por email resuelto desde la asignación vigente. Especificación técnica completa en `ARCHITECTURE_V4.md`.
+
+**Why:** hoy `Datos` y el directorio de usuarios (fragmentado entre `Permisos` y `PAC_Articuladores`, este último con el campo `correo` permanentemente vacío) divergen sin control, dejando RTs sin dueño resoluble a un email real y sin visibilidad de balance de carga. Ver Sección 0 y 1.1 de `ARCHITECTURE_V4.md` para el diagnóstico verificado contra código (no asumido).
+
+**Fase A — Motor Backend, Homologación Fuzzy y Hoja LOGS_ASIGNACION:** [COMPLETADA 2026-08-18]
+- `homologacion_usuarios.js` (nuevo): `homologarUsuariosMatriz()` — compara `Datos.ARTICULADOR JUIRIDICO`/`Datos.GESTOR JURÍDICO` (nombres exactos confirmados, typo de producción incluido) contra `USUARIOS.NOMBRE` (`DATA_FILES.USUARIOS`, esquema `No, EMAIL, ROL, NOMBRE, ACTIVO, COMPONENTE`) en 4 estados: `ENCONTRADO_ACTIVO`, `ENCONTRADO_INACTIVO`, `SIMILITUD_APROXIMADA` (puntaje > 0.75), `NO_ENCONTRADO`. Reutiliza `levenshteinDistance()` de `normalizacion_script/UtilidadesNormalizacion.js:17`. `detectarUsuariosHuerfanos()` filtra el subconjunto `NO_ENCONTRADO`/`ENCONTRADO_INACTIVO`.
+- `gestion_equipos_backend.js` (nuevo): `registrarLogAsignacion(eventoData)` (hoja `LOGS_ASIGNACION` autocreada con headers si no existe, `DATA_FILES.LOGS_ASIGNACION` — placeholder pendiente de ID real, ver Nota abajo), `asignarEquipoGranular(nivel, idTarget, articuladorEmail, gestorEmail, ejecutorEmail)` (cascada Proyecto/Tramo/RT), `reasignarUsuarioMasivo(usuarioOrigen, usuarioDestino, rol, ejecutorEmail)` (handover 1-click). Ambas mutaciones usan `LockService.getScriptLock()` con timeout de 60s (no 30s como `permisos.js` — riesgo de contención en handovers masivos, Sección 5 de `ARCHITECTURE_V4.md`) y una única llamada `setValues()` por columna afectada tras parchar en memoria por lotes de 1000 (Directiva 3), en vez de N escrituras individuales sobre filas dispersas.
+- `config.js`: añadidos `ROLES.ARTICULADOR`/`ROLES.GESTOR`, `PERMISOS_POR_ROL` para ambos, `COLUMNS.ARTICULADOR_JURIDICO`/`COLUMNS.GESTOR_JURIDICO` (typo real preservado), `DATA_FILES.USUARIOS` (ID real) y `DATA_FILES.LOGS_ASIGNACION` (placeholder), `SHEETS.USUARIOS`/`SHEETS.LOGS_ASIGNACION`, `COLUMNS_USUARIOS`, `COLUMNS_LOG_ASIGNACION`.
+
+**⚠️ Pendiente antes de operar en producción:** `CONFIG.DATA_FILES.LOGS_ASIGNACION` sigue en `'ID_SPREADSHEET_LOGS_ASIGNACION_AQUI'` — no existe todavía un spreadsheet real dedicado para `LOGS_ASIGNACION`. `registrarLogAsignacion()` detecta el placeholder y se autodeshabilita con `console.error` (mismo patrón que `auditoria.js:31`), por lo que `asignarEquipoGranular()`/`reasignarUsuarioMasivo()` funcionan (mutan `Datos` correctamente) pero **sin auditoría** hasta que se cree el spreadsheet y se reemplace el ID.
+
+**Fase B — UI, Tablero de Carga y Asignación Granular:** [PLANIFICADO, listo para iniciar]
+- `app_equipos_js.html`: panel `#moduloGestionEquipos` (KPIs de carga + cola "RTs por Asignar"), modal de Homologación de Usuarios (mismo patrón de modal dinámico que `#modalFichaPredial`/`#modalDetalleAlertas`, sin scriptlets GAS — Directiva 2), selector jerárquico en cascada, caché de estado en IndexedDB (`equipos_cache_<CURRENT_USER_EMAIL>` — Directiva 1).
+
+**Fase C — Enrutamiento de Alertas e Integración de Permisos por Rol:** [PLANIFICADO, listo para iniciar]
+- Modificación (no reescritura) de `evaluador_alertas.js` para resolver `articuladorEmail`/`gestorEmail` por RT desde la asignación vigente; alertas de RTs sin dueño resoluble se marcan `SIN_RESPONSABLE` en vez de enrutarse a nadie.
+- Integración de la jerarquía Articulador/Gestor con el sistema de permisos existente (`CONFIG.ROLES`, `GestorPermisos`) — confirmado que se extiende `CONFIG.ROLES`/`PERMISOS_POR_ROL`, no una capa paralela.
+
+**Antipatrones a evitar (explícitos del brief):** asignación parcial sin log, mutación directa de `Datos` sin `LockService`, `localStorage`, renderizado bloqueante del tablero de carga.
+
+**Resuelto 2026-08-18 (6 de 6 preguntas, confirmadas por el usuario):** `USUARIOS` ya existe en spreadsheet separado (URL en `ARCHITECTURE_V4.md` Sección 6.1) y reemplaza/deprecra `PAC_Articuladores`; Articulador/Gestor se agregan a `CONFIG.ROLES`; 1 RT → 1 Gestor exclusivo; `LOGS_ASIGNACION` va en spreadsheet nuevo y dedicado; esquema de `USUARIOS` confirmado (`No, EMAIL, ROL, NOMBRE, ACTIVO, COMPONENTE`); columnas en `Datos` confirmadas (`ARTICULADOR JUIRIDICO` — typo real de producción — y `GESTOR JURÍDICO`). Ver `ARCHITECTURE_V4.md` Sección 6 para el detalle completo. La navegación automatizada vía `gstack /browse` no logró leer los spreadsheets en vivo (4 intentos, todos con crash del proceso de Chromium en este entorno Windows, no un problema de login) — el esquema final viene de texto pegado directamente por el usuario.
+
+**Context:** ver `ARCHITECTURE_V4.md` completo y `DOCUMENTACION_TECNICA_VIVA.md` Sección 19 para el diseño técnico, el grounding verificado contra código real, y la evidencia de la Fase A (`node --check`, `clasp push`, hash de commit).
+
+**Depends on / blocked by:** Fase B y Fase C dependen de que se cree el spreadsheet real de `LOGS_ASIGNACION` (ver Nota de arriba) antes de considerar la auditoría de asignaciones realmente operativa — no bloquea empezar Fase B (UI), sí bloquea confiar en los logs en producción.
