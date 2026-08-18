@@ -132,6 +132,22 @@ class MotorEvaluadorReglas {
       return obj;
     });
 
+    // ✅ SPRINT6-DESACOPLE [CONC-BE-12]: Datos sigue siendo solo lectura — sobreescribe
+    // ARTICULADOR/GESTOR con el valor EFECTIVO (Datos + overlay ASIGNACIONES_EQUIPOS) antes
+    // de evaluar reglas, para que _registrarAlerta() (más abajo) enrute con el dato vigente
+    // sin tener que tocar su lógica. _leerAsignacionesEquipos()/_fusionarAsignacionesConMatriz()
+    // viven en gestion_equipos_backend.js, globales a propósito (mismo scope GAS compartido).
+    if (typeof _leerAsignacionesEquipos === 'function' && typeof _fusionarAsignacionesConMatriz === 'function') {
+      const colArticuladorMotor = getConfig('COLUMNS.ARTICULADOR_JURIDICO');
+      const colGestorMotor = getConfig('COLUMNS.GESTOR_JURIDICO');
+      const asignacionesMapMotor = _leerAsignacionesEquipos();
+      matriz.forEach(function(obj) {
+        const fusion = _fusionarAsignacionesConMatriz(obj['RT'], obj[colArticuladorMotor], obj[colGestorMotor], asignacionesMapMotor);
+        obj[colArticuladorMotor] = fusion.articuladorEmail;
+        obj[colGestorMotor] = fusion.gestorEmail;
+      });
+    }
+
     // 3. Evaluar fila por fila contra cada regla
     matriz.forEach((filaMatriz, indexFila) => {
       const rt = filaMatriz["RT"];

@@ -907,12 +907,69 @@ function onDataLoaded(result) {
     }
 }
 
+/**
+ * ✅ SPRINT6 [CONC-BE-12]: purga un valor de un store de IndexedDB por clave. Usado por
+ * refreshData() para limpiar dashboard-cache-v1 y equipos-cache-v1 — self-contained (no
+ * depende de que app_equipos_js.html ya se haya evaluado, aunque en la práctica todos los
+ * <script> de Index.html ya están cargados antes de que el usuario pueda hacer clic).
+ */
+function purgarCacheIndexedDB(dbName, storeName, key) {
+    return new Promise(function(resolve) {
+        if (!('indexedDB' in window)) { resolve(); return; }
+        const request = indexedDB.open(dbName, 1);
+        request.onupgradeneeded = function() {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName);
+        };
+        request.onsuccess = function() {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(storeName)) { resolve(); return; }
+            const tx = db.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            store.delete(key);
+            tx.oncomplete = function() { resolve(); };
+            tx.onerror = function() { resolve(); };
+        };
+        request.onerror = function() { resolve(); };
+    });
+}
+
+/**
+ * ✅ SPRINT6 [CONC-BE-12]: "Recargar" pasa de "recargar" a "purgar y recargar". Antes solo
+ * llamaba a loadDashboardData(), que podía devolver EXACTAMENTE los mismos datos: el caché
+ * del servidor (CacheService, hasta 30 min de TTL) seguía vigente, y el pintado optimista de
+ * loadDashboardData() repinta primero desde el mismo snapshot de IndexedDB antes de que
+ * llegue la red. Ahora: (1) invalida CacheService server-side, (2) en paralelo limpia
+ * dashboard-cache-v1 Y equipos-cache-v1 en IndexedDB, (3) solo entonces recarga — garantiza
+ * un cache-miss real en las dos capas. Ver ARCHITECTURE_V5.md Sección 0.3 para el diagnóstico.
+ */
 function refreshData() {
-    console.log('🔄 Recargando datos...');
-    // ✅ FASE 5c: loadDashboardData() ya muestra su propio Skeleton Loader — el
-    // overlay de página completa (#loader) aquí lo taparía por completo (z-index
-    // 9999) hasta que termine, anulando la mejora de percepción de velocidad.
-    loadDashboardData();
+    console.log('🔄 Recargando datos (purga completa server + IndexedDB)...');
+
+    const hasReliableIdentity = typeof CURRENT_USER_EMAIL !== 'undefined' && !!CURRENT_USER_EMAIL;
+    const dashboardKey = hasReliableIdentity ? ('dashboardData_' + CURRENT_USER_EMAIL) : null;
+    const equiposKey = hasReliableIdentity ? ('equipos_cache_' + CURRENT_USER_EMAIL) : null;
+
+    const purgaLocal = Promise.all([
+        dashboardKey ? purgarCacheIndexedDB('dashboard-cache-v1', 'dashboard-cache-store', dashboardKey) : Promise.resolve(),
+        equiposKey ? purgarCacheIndexedDB('equipos-cache-v1', 'stats', equiposKey) : Promise.resolve()
+    ]);
+
+    google.script.run
+        .withSuccessHandler(function() {
+            purgaLocal.then(function() {
+                // ✅ FASE 5c: loadDashboardData() ya muestra su propio Skeleton Loader — el
+                // overlay de página completa (#loader) aquí lo taparía por completo.
+                loadDashboardData();
+            });
+        })
+        .withFailureHandler(function(error) {
+            console.warn('⚠️ No se pudo invalidar el caché del servidor, recargando de todas formas: ' + (error && error.message ? error.message : error));
+            purgaLocal.then(function() {
+                loadDashboardData();
+            });
+        })
+        .invalidateDataCache();
 }
 
 function showAbout() {

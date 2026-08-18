@@ -426,3 +426,36 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 **Corrección post-QA 2026-08-18 (feedback de usuario probando el deployment real):** ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 22. Resumen: `sincronizarGruposGoogleIDU()` ahora sobreescribe `NOMBRE` en `USUARIOS` con el de Google siempre (antes solo si vacío); `homologarUsuariosMatriz()` ahora tiene fallback al directorio de Grupos (`_leerDirectorioCombinado()`) cuando `USUARIOS` no tiene la persona; nuevo estado `ENCONTRADO_SIN_PERFIL`. Se reemplazaron las tablas planas de distribución por un árbol navegable Proyecto→Tramo→RT con carga perezosa (`getProyectosConteo`/`getTramosPorProyecto`/`getRTsPorTramo`, nuevas en `gestion_equipos_backend.js`) y asignación inline desde cada nodo. El pendiente de Admin SDK (punto 2 arriba) sigue sin resolverse — el código nuevo no tendrá efecto observable hasta entonces.
 
 **Sembrado manual de usuarios DTDP/STAP 2026-08-18 — [CÓDIGO DESPLEGADO, EJECUCIÓN PENDIENTE]:** ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 23. `sembrado_usuarios_grupos.js` (nuevo) con `DIRECTORIO_OFICIAL_SEMBRADO` (**260 registros verificados, no 266** como se reportó inicialmente — DTDP 215/STAP 175 sí cuadran, la cifra de personas únicas no; corregido antes de comitear) y `ejecutarSembradoInicialUsuarios()` (upsert por email + `homologarUsuariosMatriz()` automática al final). **`USUARIOS` todavía no tiene estos registros** — el agente solo pudo desplegar el código (`clasp push`), no ejecutarlo: `npx clasp run` falla porque el proyecto está desplegado como Web App, no como API Executable. Pendiente: correr `ejecutarSembradoInicialUsuarios()` una vez desde el editor de Apps Script (Seleccionar función → Ejecutar).
+
+---
+
+## 19. Sprint 6: Estabilización Post-Línea Cero (Performance, Limpieza y UX) — [COMPLETADO Y DESPLEGADO 2026-08-18]
+
+**Actualización de cierre:** el build real ejecutado amplió el alcance de este plan — además de 1.A–1.E, el usuario pidió (y se construyó) un desacoplamiento arquitectónico total: `Datos` pasa a solo-lectura y toda escritura de asignaciones migra a una hoja nueva `ASIGNACIONES_EQUIPOS`, fusionada en memoria en cada punto de lectura (`_fusionarAsignacionesConMatriz()`), más una regla de completitud estricta (`_esRTCompleto`: falta CUALQUIERA de los dos roles = pendiente, antes era "faltan ambos"). Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 25 para el detalle técnico completo, incluyendo el nuevo endpoint `asignarEquipoGranularLote()` que sostiene el Modo Borrador de 1.E. `npx clasp push --force` → `Pushed 50 files`. Commit: `feat(teams): implement ASIGNACIONES_EQUIPOS overlay, strict RT completeness logic, Draft Mode tree and dead code purge [CONC-BE-12]`.
+
+**What:** 4 puntos críticos de UX/Performance levantados por el usuario tras confirmar el éxito de la Línea Cero en producción (RTs pendientes bajaron de ~9691 a 4690). Especificación técnica completa, con hallazgos de investigación verificados contra código, en `ARCHITECTURE_V5.md`.
+
+**Why:** la Línea Cero funciona, pero expuso/coincidió con 3 problemas preexistentes reales (`include()` roto, invalidación de caché incompleta, Filtro Matriz arquitectónicamente lento) más una petición de UX nueva para el árbol de asignación (modo borrador + guardado en lote).
+
+**Hallazgos del `/investigate` (no asumidos, verificados):**
+1. `Index.html:1843` tiene `<?!= include('export_backend') ?>` — `export_backend.js` es un archivo de servidor V8 plano, nunca debió incluirse vía `include()` (esa función busca un `.html`, que no existe — confirmado, 0 resultados). Rompe cada carga de `doGet()`.
+2. **La premisa "pagar/premium" era incorrecta** — búsqueda exhaustiva no encontró ningún mensaje de pago en el código; el término real es "FILTRO MANUAL VISTA RÁPIDA" (`Codigo.js:570`, `guardarYActivarFiltroManual()`). La lentitud real es arquitectónica: `aplicarFiltroAdhoc()`/`restablecerFiltroAdhoc()` disparan `loadDashboardData()` completo (recarga íntegra de `Datos`, miles de filas) en cada toggle, aunque la invalidación de `CacheService` sí funciona correctamente.
+3. Confirmado: `refreshData()` (botón "Recargar") solo llama a `loadDashboardData()`, nunca a `invalidateDataCache()` — y `loadDashboardData()` además pinta primero desde IndexedDB local antes de la respuesta de red. Dos capas de staleness, no una.
+
+**Fase A — Fixes de bajo riesgo (1.A a 1.D de `ARCHITECTURE_V5.md`):** [PLANIFICADO, listo para construir]
+- 1.A: eliminar el `include('export_backend')` roto de `Index.html`.
+- 1.B: `refreshData()` purga `invalidateDataCache()` server-side + limpia `dashboard-cache-v1` (IndexedDB) client-side ANTES de recargar, no solo después/nunca.
+- 1.C: eliminar `sincronizarGruposGoogleIDU()` y toda su cadena (`_obtenerDirectorioGruposIDU`, `_obtenerMiembrosGrupo`, `_obtenerNombreCompleto`, constantes `GRUPOS_*`) de `homologacion_usuarios.js`, simplificar `_leerDirectorioCombinado()` de vuelta a lectura directa de `USUARIOS`, y retirar el servicio avanzado `AdminDirectory` + 2 scopes OAuth de `appsscript.json` — reduce la superficie de permisos pedidos. `sembrado_usuarios_grupos.js` y `ejecutarCargaLineaCero()` no se tocan (no dependen de Admin SDK).
+- 1.D: reestructurar `aplicarFiltroAdhoc()`/`restablecerFiltroAdhoc()` para filtrar `window.currentData`/`rawData` in-memory y repintar al instante, dejando el guardado en `FiltroMatriz` como persistencia de fondo (no bloqueante del repintado).
+
+**Fase B — UI de Asignación en Lote / Draft Mode (1.E de `ARCHITECTURE_V5.md`):** [PLANIFICADO, requiere diseño de backend adicional antes de construir]
+- Rediseño de `#arbolAsignacionEquipos` a modo borrador: selecciones locales en memoria (`pendiente` por nodo), botón flotante "Guardar Todos los Cambios" que envía un solo payload.
+- **Bloqueo de diseño real:** `asignarEquipoGranular()` acepta un solo `(nivel, idTarget)` por llamada — un guardado por lote heterogéneo (mezcla de Proyecto/Tramo/RT) necesita una función nueva `asignarEquipoGranularLote(cambios[])`, con su propio diseño de locking/batching. Recomendado: ronda de `/plan-eng-review` dedicada para esta fase antes de tocar código, separada de la Fase A.
+
+**Antipatrones a evitar:** los mismos del proyecto — sin `localStorage` (1.B usa IndexedDB), sin scriptlets complejos (1.A solo elimina una línea), sin lógica bloqueante en cliente (1.D/1.E mueven trabajo a memoria/lote, no lo bloquean).
+
+**Priorización recomendada:** construir 1.A–1.D en una sola Fase A (bajo riesgo, responde directo a la queja del usuario); tratar 1.E como Fase B separada con diseño de backend previo.
+
+**Context:** ver `ARCHITECTURE_V5.md` completo para el detalle técnico de cada punto y la tabla de riesgo por punto.
+
+**Depends on / blocked by:** ninguno para Fase A. Fase B depende de una ronda de diseño adicional (`asignarEquipoGranularLote`) antes de poder construirse.

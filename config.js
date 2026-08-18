@@ -38,7 +38,11 @@ const CONFIG = {
     AUDITORIA: 'LOGS_AUDITORIA',
     HISTORIAL_PERMISOS: 'Historial_Permisos',
     USUARIOS: 'USUARIOS', // ✅ SPRINT5-FASE-A: pestaña dentro de DATA_FILES.USUARIOS
-    LOGS_ASIGNACION: 'LOGS_ASIGNACION' // ✅ SPRINT5-FASE-A: pestaña dentro de DATA_FILES.LOGS_ASIGNACION, creada automáticamente por registrarLogAsignacion() si no existe
+    LOGS_ASIGNACION: 'LOGS_ASIGNACION', // ✅ SPRINT5-FASE-A: pestaña dentro de DATA_FILES.LOGS_ASIGNACION, creada automáticamente por registrarLogAsignacion() si no existe
+    // ✅ SPRINT6-DESACOPLE [CONC-BE-12]: capa de escritura de asignaciones, separada de Datos
+    // (que pasa a ser 100% lectura). Vive en DATA_FILES.PRINCIPAL, junto a Datos — se crea
+    // automáticamente con headers por _asegurarHojaAsignacionesEquipos() si no existe.
+    ASIGNACIONES_EQUIPOS: 'ASIGNACIONES_EQUIPOS'
   },
   
   // ✅ COLUMNAS DE DATOS (V1 + V2 completo) - SIN CAMBIOS
@@ -142,6 +146,17 @@ const CONFIG = {
     'USUARIO_NUEVO',
     'EJECUTOR_EMAIL',
     'OBSERVACIONES'
+  ],
+
+  // ✅ SPRINT6-DESACOPLE [CONC-BE-12]: esquema de ASIGNACIONES_EQUIPOS, clave primaria RT.
+  // Único destino de escritura de asignarEquipoGranular()/reasignarUsuarioMasivo()/
+  // ejecutarCargaLineaCero()/asignarEquipoGranularLote() — Datos ya no se escribe nunca.
+  COLUMNS_ASIGNACIONES_EQUIPOS: [
+    'RT',
+    'ARTICULADOR_EMAIL',
+    'GESTOR_EMAIL',
+    'FECHA_ACTUALIZACION',
+    'EJECUTOR'
   ],
 
   // ✅ ROLES Y PERMISOS — SPRINT5-FASE-A añade ARTICULADOR/GESTOR (jerarquía de negocio,

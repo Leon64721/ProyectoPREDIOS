@@ -180,8 +180,12 @@ function getBaseFilteredData() {
 
     function filterData() {
             const estado = $('#filterEstado').val();
-            currentData = rawData.filter(d => {
-                
+            // ✅ SPRINT6 [CONC-BE-12]: getBaseFilteredData() aplica el recorte de Filtro
+            // Matriz (window.filtroMatrizActivoGlobal) ANTES de los filtros de la barra
+            // (proyecto/tramo/fecha/estado/KPI) — antes filterData() ignoraba por completo
+            // filtroMatrizActivoGlobal y filtraba siempre desde rawData sin recortar.
+            currentData = getBaseFilteredData().filter(d => {
+
                 // --- NUEVO: OCULTAR INACTIVOS DE LA MATRIZ Y KPIs ---
                 const estadoActivo = String(d['ACTIVO/INACTIVO'] || "").toUpperCase().trim();
                 if (estadoActivo === 'INACTIVO' || estadoActivo === 'NO ACTIVO') {
@@ -2389,31 +2393,47 @@ function renderProyectosCheckboxes() {
 function marcarAdhoc(estado) { document.querySelectorAll('.chk-adhoc').forEach(c => c.checked = estado); }
 function marcarNuevo(estado) { document.querySelectorAll('.chk-nuevo').forEach(c => c.checked = estado); }
 
-// ✅ APLICAR FILTRO RÁPIDO (GUARDA EN BD PARA TODOS LOS USUARIOS)
+// ✅ SPRINT6 [CONC-BE-12]: APLICAR FILTRO RÁPIDO — ahora in-memory + persistencia en
+// background, en vez de round-trip completo (loadDashboardData()). Antes cada aplicar/quitar
+// pagaba el costo íntegro de una recarga del dashboard (relectura completa de Datos en el
+// servidor) porque el toggle SIEMPRE disparaba loadDashboardData() al terminar. Ahora el
+// recorte se aplica al instante sobre rawData ya cargado (window.filtroMatrizActivoGlobal +
+// getBaseFilteredData(), que filterData() ya consulta) y el guardado en FiltroMatriz (para
+// que persista entre sesiones/usuarios) corre en paralelo sin bloquear el repintado.
+// LIMITACIÓN CONOCIDA: esto solo puede RECORTAR lo que el cliente ya tiene cargado — si
+// seleccionas un proyecto que un filtro anterior había excluido del todo del payload del
+// servidor, no aparecerá hasta que uses "Restablecer" (que sí trae todo de nuevo del servidor).
 function aplicarFiltroAdhoc() {
   const incluidos = Array.from(document.querySelectorAll('.chk-adhoc:checked')).map(cb => cb.value);
   if (incluidos.length === 0) return showAlert('Debes seleccionar al menos un proyecto', 'warning');
 
-  showLoader('Guardando filtro para todos los usuarios...');
+  window.filtroMatrizActivoGlobal = { id: 'adhoc-local', proyectosIncluidos: incluidos, proyectosExcluidos: [] };
+  applyFilters();
+  showAlert('Filtro aplicado', 'success');
+
   google.script.run
     .withSuccessHandler(res => {
-      if (res.success) {
-        showAlert('Filtro Principal guardado y aplicado a la Base de Datos', 'success');
-        loadDashboardData(); // Refresca completamente todo desde el servidor
-      } else {
-        hideLoader();
-        showAlert('Error: ' + res.error, 'danger');
+      if (!res || !res.success) {
+        showAlert('El filtro se aplicó en pantalla, pero no se pudo guardar para otros usuarios: ' + (res && res.error), 'warning');
       }
     })
-    .withFailureHandler(err => { hideLoader(); showAlert('Error: '+err.message, 'danger'); })
+    .withFailureHandler(err => {
+      showAlert('El filtro se aplicó en pantalla, pero no se pudo guardar para otros usuarios: ' + err.message, 'warning');
+    })
     .guardarYActivarFiltroManual(incluidos, currentUser);
 }
 
 // ✅ RESTABLECER Y MOSTRAR TODO (QUITA FILTRO EN BD PARA TODOS)
+// ✅ SPRINT6 [CONC-BE-12]: "Restablecer" SÍ requiere ida y vuelta al servidor, a
+// diferencia de "Aplicar" — el filtrado en memoria solo puede RECORTAR lo que el
+// cliente ya tiene cargado (getDashboardData() pre-filtra en servidor según el
+// FiltroMatriz activo), nunca puede ENSANCHAR de vuelta a proyectos que nunca
+// llegaron al payload. Por eso este camino se deja con loadDashboardData() real.
 function restablecerFiltroAdhoc() {
   showLoader('Restableciendo vista global (Mostrando Todos)...');
   google.script.run
     .withSuccessHandler(res => {
+        window.filtroMatrizActivoGlobal = null;
         showAlert('Filtro eliminado. Se han cargado todos los proyectos.', 'success');
         loadDashboardData(); // Refresca y trae todos los registros
     })

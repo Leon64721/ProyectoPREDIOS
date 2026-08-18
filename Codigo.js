@@ -355,6 +355,12 @@ function getDashboardData() {
     const requiereFiltroRBAC = esArticuladorRBAC || esGestorRBAC;
     const colArticuladorRBAC = getConfig('COLUMNS.ARTICULADOR_JURIDICO', '').toUpperCase().trim();
     const colGestorRBAC = getConfig('COLUMNS.GESTOR_JURIDICO', '').toUpperCase().trim();
+    const colRTRBAC = getConfig('COLUMNS.RT', '').toUpperCase().trim();
+    // ✅ SPRINT6-DESACOPLE [CONC-BE-12]: Datos es 100% lectura — el valor EFECTIVO de
+    // Articulador/Gestor por RT sale de fusionar con ASIGNACIONES_EQUIPOS (la capa que sí se
+    // escribe). _leerAsignacionesEquipos()/_fusionarAsignacionesConMatriz() viven en
+    // gestion_equipos_backend.js pero son globales a propósito (mismo scope GAS compartido).
+    const asignacionesMapRBAC = _leerAsignacionesEquipos();
 
     const cache = CacheService.getScriptCache();
     if (!requiereFiltroRBAC) {
@@ -421,18 +427,21 @@ function getDashboardData() {
         // ✅ SPRINT5-FASE-C: índices de las columnas de responsables para el filtro RBAC.
         const idxArticuladorRBAC = headers.indexOf(colArticuladorRBAC);
         const idxGestorRBAC = headers.indexOf(colGestorRBAC);
+        const idxRTRBAC = headers.indexOf(colRTRBAC);
 
         // Un Gestor ve TODOS los RTs del/los Articulador(es) bajo los que él mismo aparece
-        // asignado como Gestor — se deriva de Datos, no de una tabla de reporte separada.
-        // Pre-pasada barata en memoria (mismo usableRows ya leído, sin llamadas extra a Sheets).
+        // asignado como Gestor — se deriva de la vista FUSIONADA (Datos + ASIGNACIONES_EQUIPOS),
+        // no solo de Datos crudo. Pre-pasada barata en memoria (mismo usableRows ya leído).
         let articuladoresPermitidosGestorRBAC = null;
         if (esGestorRBAC && idxGestorRBAC >= 0 && idxArticuladorRBAC >= 0) {
           articuladoresPermitidosGestorRBAC = new Set();
           for (let k = 1; k < usableRows.length; k++) {
-            const gestorCeldaPrepass = String(usableRows[k][idxGestorRBAC] || '').trim().toLowerCase();
-            if (gestorCeldaPrepass === currentUserEmailRBAC) {
-              const articuladorCeldaPrepass = String(usableRows[k][idxArticuladorRBAC] || '').trim().toLowerCase();
-              if (articuladorCeldaPrepass) articuladoresPermitidosGestorRBAC.add(articuladorCeldaPrepass);
+            const rtPrepass = idxRTRBAC >= 0 ? String(usableRows[k][idxRTRBAC] || '').trim() : '';
+            const fusionPrepass = _fusionarAsignacionesConMatriz(
+              rtPrepass, usableRows[k][idxArticuladorRBAC], usableRows[k][idxGestorRBAC], asignacionesMapRBAC
+            );
+            if (fusionPrepass.gestorEmail.toLowerCase() === currentUserEmailRBAC && fusionPrepass.articuladorEmail) {
+              articuladoresPermitidosGestorRBAC.add(fusionPrepass.articuladorEmail.toLowerCase());
             }
           }
         }
@@ -456,21 +465,27 @@ function getDashboardData() {
 
           if (!incluirRegistro) continue;
 
-          // ✅ SPRINT5-FASE-C: recorte por jerarquía RBAC (Articulador/Gestor), aplicado sobre
-          // el email ya resuelto en la celda (ver evaluador_alertas.js para la misma lógica de
-          // "¿esta celda ya es un email o sigue siendo el nombre libre histórico?"). Una fila
-          // cuya columna todavía tiene el nombre libre sin migrar simplemente no es visible
+          // ✅ SPRINT6-DESACOPLE: el valor EFECTIVO de Articulador/Gestor para esta fila sale
+          // de fusionar Datos (crudo) con ASIGNACIONES_EQUIPOS (overlay) — una sola vez por
+          // fila, reutilizado tanto para el filtro RBAC de abajo como para lo que se manda
+          // al cliente (así la Matriz también refleja reasignaciones hechas desde el árbol,
+          // no solo el módulo de Equipos).
+          const rtFilaRBAC = idxRTRBAC >= 0 ? String(row[idxRTRBAC] || '').trim() : '';
+          const fusionRBAC = (idxArticuladorRBAC >= 0)
+            ? _fusionarAsignacionesConMatriz(rtFilaRBAC, row[idxArticuladorRBAC], row[idxGestorRBAC], asignacionesMapRBAC)
+            : null;
+
+          // ✅ SPRINT5-FASE-C: recorte por jerarquía RBAC (Articulador/Gestor). Una fila cuyo
+          // valor efectivo todavía es el nombre libre sin migrar simplemente no es visible
           // para Articulador/Gestor hasta que se homologe/asigne — es el incentivo esperado.
-          if (requiereFiltroRBAC && idxArticuladorRBAC >= 0) {
-            const articuladorCeldaRBAC = String(row[idxArticuladorRBAC] || '').trim().toLowerCase();
-            const gestorCeldaRBAC = idxGestorRBAC >= 0 ? String(row[idxGestorRBAC] || '').trim().toLowerCase() : '';
+          if (requiereFiltroRBAC && fusionRBAC) {
             let visiblePorRBAC = false;
 
             if (esArticuladorRBAC) {
-              visiblePorRBAC = articuladorCeldaRBAC === currentUserEmailRBAC;
+              visiblePorRBAC = fusionRBAC.articuladorEmail.toLowerCase() === currentUserEmailRBAC;
             } else if (esGestorRBAC) {
-              visiblePorRBAC = (gestorCeldaRBAC === currentUserEmailRBAC) ||
-                (articuladoresPermitidosGestorRBAC && articuladoresPermitidosGestorRBAC.has(articuladorCeldaRBAC));
+              visiblePorRBAC = (fusionRBAC.gestorEmail.toLowerCase() === currentUserEmailRBAC) ||
+                (articuladoresPermitidosGestorRBAC && articuladoresPermitidosGestorRBAC.has(fusionRBAC.articuladorEmail.toLowerCase()));
             }
 
             if (!visiblePorRBAC) continue;
@@ -485,6 +500,13 @@ function getDashboardData() {
             } else {
               rowObject[colName] = cellVal || '';
             }
+          }
+          // ✅ SPRINT6-DESACOPLE: sobreescribe con el valor EFECTIVO (Datos + overlay) lo que
+          // se manda al cliente — la Matriz general también debe ver reasignaciones hechas
+          // desde el árbol de Equipos, no solo el módulo de Equipos mismo.
+          if (fusionRBAC) {
+            rowObject[colArticuladorRBAC] = fusionRBAC.articuladorEmail;
+            rowObject[colGestorRBAC] = fusionRBAC.gestorEmail;
           }
           allRecords.push(rowObject);
         }

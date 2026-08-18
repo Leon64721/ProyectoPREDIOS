@@ -137,6 +137,112 @@
   // ═══════════════════════════════════════════════════════════════════
   let arbolEstado = [];
 
+  // ═══════════════════════════════════════════════════════════════════
+  // Modo Borrador [CONC-BE-12] — feedback de usuario 2026-08-18: las ediciones
+  // sobre el árbol ya no se envían al servidor una por una (cada "Asignar" del
+  // modal disparaba su propio round-trip con LockService). Ahora cada edición
+  // se acumula localmente en `borradorCambiosEquipos` (clave por nodo), se
+  // refleja de inmediato en el árbol (resaltado + badge "Cambio pendiente"),
+  // y solo se persiste en ASIGNACIONES_EQUIPOS cuando el usuario pulsa
+  // "Guardar Todos los Cambios", en una única llamada batch a
+  // asignarEquipoGranularLote() bajo un solo LockService en el servidor.
+  // ═══════════════════════════════════════════════════════════════════
+  let borradorCambiosEquipos = {};
+
+  function claveDraftEquipos(nivel, proyecto, tramo, rt) {
+    if (nivel === 'PROYECTO') return 'P::' + proyecto;
+    if (nivel === 'TRAMO') return 'T::' + proyecto + '::' + tramo;
+    return 'R::' + proyecto + '::' + tramo + '::' + rt;
+  }
+
+  // Un RT hereda el borrador más específico que lo cubra: su propio RT, si no
+  // el TRAMO al que pertenece, si no el PROYECTO — igual que la resolución en
+  // cascada que ya hace _resolverCambiosPorNivel() en el servidor.
+  function draftParaRT(proyecto, tramo, rt) {
+    return borradorCambiosEquipos[claveDraftEquipos('RT', proyecto, tramo, rt)]
+        || borradorCambiosEquipos[claveDraftEquipos('TRAMO', proyecto, tramo)]
+        || borradorCambiosEquipos[claveDraftEquipos('PROYECTO', proyecto)]
+        || null;
+  }
+
+  function draftParaNodo(nivel, proyecto, tramo, rt) {
+    return borradorCambiosEquipos[claveDraftEquipos(nivel, proyecto, tramo, rt)] || null;
+  }
+
+  function ensureBarraBorradorEquipos() {
+    if (document.getElementById('barraBorradorEquipos')) return;
+    const bar = document.createElement('div');
+    bar.id = 'barraBorradorEquipos';
+    bar.className = 'd-none';
+    bar.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:1055;background:#212529;' +
+      'color:#fff;padding:12px 16px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.35);' +
+      'display:flex;align-items:center;gap:12px;';
+    bar.innerHTML =
+      '<span><i class="fas fa-pen-to-square me-1"></i><span id="barraBorradorEquiposCount">0</span> cambio(s) sin guardar</span>' +
+      '<button type="button" class="btn btn-sm btn-outline-light" onclick="window.descartarBorradorEquipos()">Descartar</button>' +
+      '<button type="button" class="btn btn-sm btn-warning fw-bold" onclick="window.guardarBorradorEquipos()"><i class="fas fa-save"></i> Guardar Todos los Cambios</button>';
+    document.body.appendChild(bar);
+  }
+
+  function actualizarBarraBorradorEquipos() {
+    ensureBarraBorradorEquipos();
+    const bar = document.getElementById('barraBorradorEquipos');
+    const count = Object.keys(borradorCambiosEquipos).length;
+    document.getElementById('barraBorradorEquiposCount').textContent = count;
+    bar.classList.toggle('d-none', count === 0);
+  }
+
+  function descartarBorradorEquipos() {
+    borradorCambiosEquipos = {};
+    actualizarBarraBorradorEquipos();
+    renderArbolAsignacion();
+  }
+  window.descartarBorradorEquipos = descartarBorradorEquipos;
+
+  function guardarBorradorEquipos() {
+    const cambios = Object.keys(borradorCambiosEquipos).map(function(k) {
+      const d = borradorCambiosEquipos[k];
+      return { nivel: d.nivel, idTarget: d.idTarget, articuladorEmail: d.articuladorEmail, gestorEmail: d.gestorEmail };
+    });
+    if (!cambios.length) return;
+
+    const bar = document.getElementById('barraBorradorEquipos');
+    if (bar) bar.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+    if (typeof window.showNotification === 'function') {
+      window.showNotification('Guardando', 'Aplicando ' + cambios.length + ' cambio(s) al servidor...', 'info');
+    }
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (bar) bar.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+        if (result && result.success) {
+          const tieneErrores = Array.isArray(result.erroresPorNodo) && result.erroresPorNodo.length > 0;
+          if (tieneErrores) console.warn('Errores por nodo en asignarEquipoGranularLote:', result.erroresPorNodo);
+          const erroresTxt = tieneErrores ? (' (' + result.erroresPorNodo.length + ' nodo(s) con error, ver consola)') : '';
+          if (typeof window.showNotification === 'function') {
+            window.showNotification(
+              'Cambios guardados',
+              (result.cambiosAplicados || 0) + ' cambio(s) aplicados sobre ' + (result.totalRTsAfectados || 0) + ' RT(s) de ' + (result.totalNodosRecibidos || 0) + ' nodo(s) del árbol.' + erroresTxt,
+              tieneErrores ? 'warning' : 'success'
+            );
+          }
+          borradorCambiosEquipos = {};
+          actualizarBarraBorradorEquipos();
+          cargarModuloEquipos();
+        } else if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', (result && result.error) || 'No fue posible guardar los cambios.', 'danger');
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (bar) bar.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', error.message || String(error), 'danger');
+        }
+      })
+      .asignarEquipoGranularLote(cambios, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
+  }
+  window.guardarBorradorEquipos = guardarBorradorEquipos;
+
   function cargarArbolAsignacion() {
     const contenedor = document.getElementById('arbolAsignacionEquipos');
     if (!contenedor) return;
@@ -173,12 +279,14 @@
   function renderNodoProyectoArbol(p, pIdx) {
     const chevron = p.expandido ? 'fa-chevron-down' : 'fa-chevron-right';
     const badgeColor = p.sinAsignar > 0 ? 'warning' : 'success';
+    const draftNodo = draftParaNodo('PROYECTO', p.proyecto);
+    const pendienteBadge = draftNodo ? ' <span class="badge bg-warning text-dark"><i class="fas fa-pen"></i> Cambio pendiente</span>' : '';
     let html =
-      '<div class="border rounded mb-2">' +
+      '<div class="border rounded mb-2' + (draftNodo ? ' border-warning border-2' : '') + '">' +
         '<div class="d-flex justify-content-between align-items-center p-2 bg-light" style="cursor:pointer" onclick="window.toggleProyectoArbol(' + pIdx + ')">' +
           '<div><i class="fas ' + chevron + ' me-2"></i><strong>' + p.proyecto + '</strong> ' +
             '<span class="badge bg-secondary ms-2">' + p.totalRTs + ' RTs</span> ' +
-            '<span class="badge bg-' + badgeColor + '">' + p.sinAsignar + ' sin asignar</span></div>' +
+            '<span class="badge bg-' + badgeColor + '">' + p.sinAsignar + ' sin asignar</span>' + pendienteBadge + '</div>' +
           '<button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); window.abrirFormularioAsignacionEquipos({nivel:\'PROYECTO\',proyecto:' + JSON.stringify(p.proyecto) + '});"><i class="fas fa-diagram-project"></i> Asignar proyecto completo</button>' +
         '</div>';
 
@@ -201,12 +309,14 @@
   function renderNodoTramoArbol(p, pIdx, t, tIdx) {
     const chevron = t.expandido ? 'fa-chevron-down' : 'fa-chevron-right';
     const badgeColor = t.sinAsignar > 0 ? 'warning' : 'success';
+    const draftNodo = draftParaNodo('TRAMO', p.proyecto, t.tramo);
+    const pendienteBadge = draftNodo ? ' <span class="badge bg-warning text-dark"><i class="fas fa-pen"></i> Cambio pendiente</span>' : '';
     let html =
-      '<div class="border rounded mb-2 ms-4">' +
+      '<div class="border rounded mb-2 ms-4' + (draftNodo ? ' border-warning border-2' : '') + '">' +
         '<div class="d-flex justify-content-between align-items-center p-2" style="cursor:pointer" onclick="window.toggleTramoArbol(' + pIdx + ',' + tIdx + ')">' +
           '<div><i class="fas ' + chevron + ' me-2"></i>' + t.tramo + ' ' +
             '<span class="badge bg-secondary ms-2">' + t.totalRTs + ' RTs</span> ' +
-            '<span class="badge bg-' + badgeColor + '">' + t.sinAsignar + ' sin asignar</span></div>' +
+            '<span class="badge bg-' + badgeColor + '">' + t.sinAsignar + ' sin asignar</span>' + pendienteBadge + '</div>' +
           '<button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); window.abrirFormularioAsignacionEquipos({nivel:\'TRAMO\',proyecto:' + JSON.stringify(p.proyecto) + ',tramo:' + JSON.stringify(t.tramo) + '});"><i class="fas fa-diagram-project"></i> Asignar tramo completo</button>' +
         '</div>';
 
@@ -219,9 +329,16 @@
       } else {
         html += '<div class="table-responsive"><table class="table table-sm table-striped mb-0"><thead><tr><th>RT</th><th>Articulador</th><th>Gestor</th><th></th></tr></thead><tbody>' +
           t.rts.map(function(r) {
-            const artTxt = !r.articulador ? '<span class="text-danger">Sin asignar</span>' : (r.articuladorEsEmail ? r.articulador : ('<span class="text-muted fst-italic" title="Nombre libre sin homologar">' + r.articulador + '</span>'));
-            const gesTxt = !r.gestor ? '<span class="text-danger">Sin asignar</span>' : (r.gestorEsEmail ? r.gestor : ('<span class="text-muted fst-italic" title="Nombre libre sin homologar">' + r.gestor + '</span>'));
-            return '<tr><td>' + r.rt + '</td><td>' + artTxt + '</td><td>' + gesTxt + '</td>' +
+            const draft = draftParaRT(p.proyecto, t.tramo, r.rt);
+            const artValor = (draft && draft.articuladorEmail) ? draft.articuladorEmail : r.articulador;
+            const artEsEmail = (draft && draft.articuladorEmail) ? true : r.articuladorEsEmail;
+            const gesValor = (draft && draft.gestorEmail) ? draft.gestorEmail : r.gestor;
+            const gesEsEmail = (draft && draft.gestorEmail) ? true : r.gestorEsEmail;
+            const artTxt = !artValor ? '<span class="text-danger">Sin asignar</span>' : (artEsEmail ? artValor : ('<span class="text-muted fst-italic" title="Nombre libre sin homologar">' + artValor + '</span>'));
+            const gesTxt = !gesValor ? '<span class="text-danger">Sin asignar</span>' : (gesEsEmail ? gesValor : ('<span class="text-muted fst-italic" title="Nombre libre sin homologar">' + gesValor + '</span>'));
+            const filaClass = draft ? ' class="table-warning"' : '';
+            const pendienteIcono = draft ? ' <i class="fas fa-circle text-warning" style="font-size:6px;vertical-align:middle" title="Cambio pendiente sin guardar"></i>' : '';
+            return '<tr' + filaClass + '><td>' + r.rt + pendienteIcono + '</td><td>' + artTxt + '</td><td>' + gesTxt + '</td>' +
               '<td><button class="btn btn-sm btn-outline-secondary" onclick="window.abrirFormularioAsignacionEquipos({nivel:\'RT\',proyecto:' + JSON.stringify(p.proyecto) + ',tramo:' + JSON.stringify(t.tramo) + ',rt:' + JSON.stringify(r.rt) + '});"><i class="fas fa-pen"></i></button></td></tr>';
           }).join('') +
           '</tbody></table></div>';
@@ -519,6 +636,8 @@
     poblarSelectEquipos('equiposRT', [], 'Selecciona un tramo primero...');
 
     document.getElementById('equiposNivel').value = (prefill && prefill.nivel) || 'PROYECTO';
+    document.getElementById('equiposArticuladorEmail').value = '';
+    document.getElementById('equiposGestorEmail').value = '';
 
     if (prefill && prefill.proyecto) {
       document.getElementById('equiposProyecto').value = prefill.proyecto;
@@ -534,16 +653,32 @@
 
     onEquiposNivelChange();
 
+    // Si ya existe un cambio en borrador para este nodo exacto, precarga sus valores
+    // para que reabrir el modal continúe editando el borrador en vez de partir de cero.
+    if (prefill && prefill.nivel) {
+      const draftExistente = draftParaNodo(prefill.nivel, prefill.proyecto, prefill.tramo, prefill.rt);
+      if (draftExistente) {
+        if (draftExistente.articuladorEmail) document.getElementById('equiposArticuladorEmail').value = draftExistente.articuladorEmail;
+        if (draftExistente.gestorEmail) document.getElementById('equiposGestorEmail').value = draftExistente.gestorEmail;
+      }
+    }
+
     const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAsignacionGranular'));
     modalInst.show();
   }
   window.abrirFormularioAsignacionEquipos = abrirFormularioAsignacionEquipos;
 
-  function handleAsignarEquipoGranular() {
+  // ✅ SPRINT6 [CONC-BE-12]: ya NO llama a asignarEquipoGranular() directo — solo escribe
+  // en el borrador local (borradorCambiosEquipos) y repinta el árbol con el resaltado
+  // optimista. El envío real al servidor ocurre una sola vez, en lote, desde
+  // guardarBorradorEquipos() -> asignarEquipoGranularLote().
+  function agregarCambioAlBorrador() {
     const nivel = document.getElementById('equiposNivel').value;
+    const proyecto = document.getElementById('equiposProyecto').value;
+    const tramo = document.getElementById('equiposTramo').value;
     let idTarget = '';
-    if (nivel === 'PROYECTO') idTarget = document.getElementById('equiposProyecto').value;
-    else if (nivel === 'TRAMO') idTarget = document.getElementById('equiposTramo').value;
+    if (nivel === 'PROYECTO') idTarget = proyecto;
+    else if (nivel === 'TRAMO') idTarget = tramo;
     else if (nivel === 'RT') idTarget = document.getElementById('equiposRT').value;
 
     const articuladorEmail = document.getElementById('equiposArticuladorEmail').value.trim();
@@ -562,26 +697,25 @@
       return;
     }
 
-    google.script.run
-      .withSuccessHandler(function(result) {
-        if (result && result.success) {
-          if (typeof window.showNotification === 'function') {
-            window.showNotification('Éxito', result.cambiosAplicados + ' cambio(s) aplicados sobre ' + result.filasCoincidentes + ' fila(s) coincidentes.', 'success');
-          }
-          bootstrap.Modal.getInstance(document.getElementById('modalAsignacionGranular')).hide();
-          cargarModuloEquipos();
-        } else if (typeof window.showNotification === 'function') {
-          window.showNotification('Error', (result && result.error) || 'No fue posible asignar.', 'danger');
-        }
-      })
-      .withFailureHandler(function(error) {
-        if (typeof window.showNotification === 'function') {
-          window.showNotification('Error', error.message || String(error), 'danger');
-        }
-      })
-      .asignarEquipoGranular(nivel, idTarget, articuladorEmail || null, gestorEmail || null, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
+    const clave = claveDraftEquipos(nivel, proyecto, tramo, idTarget);
+    borradorCambiosEquipos[clave] = {
+      nivel: nivel,
+      idTarget: idTarget,
+      proyecto: proyecto,
+      tramo: nivel !== 'PROYECTO' ? tramo : '',
+      rt: nivel === 'RT' ? idTarget : '',
+      articuladorEmail: articuladorEmail || null,
+      gestorEmail: gestorEmail || null
+    };
+
+    bootstrap.Modal.getInstance(document.getElementById('modalAsignacionGranular')).hide();
+    renderArbolAsignacion();
+    actualizarBarraBorradorEquipos();
+    if (typeof window.showNotification === 'function') {
+      window.showNotification('Agregado al borrador', 'El cambio quedó en borrador local — usa "Guardar Todos los Cambios" para aplicarlo.', 'info');
+    }
   }
-  window.handleAsignarEquipoGranular = handleAsignarEquipoGranular;
+  window.agregarCambioAlBorrador = agregarCambioAlBorrador;
 
   // ═══════════════════════════════════════════════════════════════════
   // Handover 1-click

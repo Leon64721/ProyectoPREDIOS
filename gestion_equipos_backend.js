@@ -1,123 +1,117 @@
 'use strict';
 
 /**
- * Motor backend de asignación de equipos y auditoría dedicada — Sprint 5, Fase A [CONC-BE-07].
- * Toda escritura en Datos usa LockService + una sola llamada setValues() por columna afectada
- * (Directiva 3): se lee la columna completa una vez, se parchan en memoria por lotes de 1000
- * solo las filas que matchean, y se reescribe en un único setValues() — en vez de N escrituras
- * individuales sobre filas dispersas. Cada cambio real genera su propia fila en LOGS_ASIGNACION
- * antes de devolver éxito (nunca una asignación sin log — antipatrón explícito del sprint).
+ * Motor backend de asignación de equipos y auditoría dedicada — Sprint 5 [CONC-BE-07],
+ * desacoplado de `Datos` en Sprint 6 [CONC-BE-12].
+ *
+ * Desde Sprint 6, `Datos` es 100% LECTURA — nunca se escribe en `ARTICULADOR JUIRIDICO` ni
+ * `GESTOR JURÍDICO` ahí. Toda asignación/reasignación se escribe en la hoja dedicada
+ * `ASIGNACIONES_EQUIPOS` (`[RT, ARTICULADOR_EMAIL, GESTOR_EMAIL, FECHA_ACTUALIZACION,
+ * EJECUTOR]`, clave primaria RT), vía el único punto de escritura `_upsertAsignacionesEquipos()`.
+ * Todo lo que necesita saber "quién tiene qué RT hoy" (tableros, árbol, RBAC, alertas) fusiona
+ * en memoria `Datos` (base/legado, incluye lo que ya escribió la Línea Cero antes de este
+ * desacople) con `ASIGNACIONES_EQUIPOS` (capa viva) vía `_fusionarAsignacionesConMatriz()` —
+ * el overlay gana cuando hay valor, Datos es el fallback. `_fusionarAsignacionesConMatriz()`
+ * y `_leerAsignacionesEquipos()` son funciones globales a propósito (mismo scope compartido
+ * de Apps Script): también las usan `Codigo.js` (`getDashboardData()`, RBAC) y
+ * `evaluador_alertas.js` (`evaluarAlertasDataset()`, enrutamiento de alertas).
+ *
+ * Toda escritura sigue bajo LockService + una sola llamada setValues() por columna afectada
+ * (Directiva 3): se lee la columna completa una vez, se parcha en memoria por lotes de 1000,
+ * se reescribe en un único setValues() — nunca N escrituras individuales sobre filas dispersas.
  */
 
 const EQUIPOS_ENGINE = {
   batchSize: 1000,
-  // 60s en vez de los 30s de permisos.js/eliminarPermiso(): reasignarUsuarioMasivo() puede
-  // tocar cientos de filas bajo el mismo lock — riesgo identificado en ARCHITECTURE_V4.md Sección 5.
+  // 60s en vez de los 30s de permisos.js/eliminarPermiso(): reasignarUsuarioMasivo() y
+  // asignarEquipoGranularLote() pueden tocar cientos/miles de filas bajo el mismo lock.
   lockTimeoutMs: 60000
 };
 
 const REGEX_EMAIL_SIMPLE_EQUIPOS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * KPIs del tablero de carga (Fase B): Total RTs, RTs por Asignar, distribución por
- * Articulador/Gestor. `userContext` es solo un hint del cliente — el rol/email que
- * realmente decide el recorte se resuelve SIEMPRE server-side vía Session.getActiveUser()
- * + getUserRole(), nunca del parámetro (un cliente podría declarar cualquier rol).
+ * Regla estricta de completitud (Sprint 6, feedback de usuario): un RT solo cuenta como
+ * asignado si TIENE Articulador Y Gestor — falta cualquiera de los dos y cuenta como
+ * "sin asignar". Es exactamente la misma regla en getEstadisticasCargaEquipos(),
+ * getProyectosConteo(), getTramosPorProyecto() y getRTsPorTramo() porque las 4 comparten
+ * la misma fuente (_leerFilasVisiblesRBACEquipos()) — así los badges de Proyecto/Tramo
+ * siempre coinciden exactamente con la suma de las filas del árbol, por construcción.
  */
-function getEstadisticasCargaEquipos(userContext) {
-  try {
-    const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
-    const { headers, rows } = gestorDatos.leerDatos(getConfig('SHEETS.DATOS'));
+function _esRTCompleto(articuladorEmail, gestorEmail) {
+  return Boolean(
+    articuladorEmail && gestorEmail &&
+    articuladorEmail !== 'Sin asignar' && gestorEmail !== 'Sin asignar'
+  );
+}
 
-    if (!headers.length) {
-      return { success: false, error: 'No se pudo leer la hoja Datos' };
-    }
+function _asegurarHojaAsignacionesEquipos(gestor, sheetName) {
+  let sheet = gestor.ss.getSheetByName(sheetName);
+  if (sheet) return sheet;
 
-    const idxArticulador = findColumnIndex(headers, getConfig('COLUMNS.ARTICULADOR_JURIDICO'));
-    const idxGestor = findColumnIndex(headers, getConfig('COLUMNS.GESTOR_JURIDICO'));
-
-    if (idxArticulador < 0 || idxGestor < 0) {
-      return { success: false, error: 'Columnas ARTICULADOR JUIRIDICO / GESTOR JURÍDICO no encontradas en Datos' };
-    }
-
-    const colArticulador = headers[idxArticulador];
-    const colGestor = headers[idxGestor];
-
-    const currentUserEmail = (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
-    const rolUsuario = getUserRole(currentUserEmail) || getConfig('ROLES.LECTOR');
-    const esArticulador = rolUsuario === getConfig('ROLES.ARTICULADOR');
-    const esGestor = rolUsuario === getConfig('ROLES.GESTOR');
-
-    const conteoArticulador = {};
-    const conteoGestor = {};
-    const articuladoresDelGestor = new Set(); // solo se usa si esGestor
-    let rtsPorAsignar = 0;
-
-    for (let start = 0; start < rows.length; start += EQUIPOS_ENGINE.batchSize) {
-      const fin = Math.min(start + EQUIPOS_ENGINE.batchSize, rows.length);
-      for (let i = start; i < fin; i++) {
-        const row = rows[i];
-        const articuladorCelda = String(row[colArticulador] || '').trim().toLowerCase();
-        const gestorCelda = String(row[colGestor] || '').trim().toLowerCase();
-        const articuladorEsEmail = REGEX_EMAIL_SIMPLE_EQUIPOS.test(articuladorCelda);
-        const gestorEsEmail = REGEX_EMAIL_SIMPLE_EQUIPOS.test(gestorCelda);
-
-        if (articuladorEsEmail) conteoArticulador[articuladorCelda] = (conteoArticulador[articuladorCelda] || 0) + 1;
-        if (gestorEsEmail) conteoGestor[gestorCelda] = (conteoGestor[gestorCelda] || 0) + 1;
-        if (!articuladorEsEmail && !gestorEsEmail) rtsPorAsignar++;
-
-        if (esGestor && gestorEsEmail && gestorCelda === currentUserEmail && articuladorEsEmail) {
-          articuladoresDelGestor.add(articuladorCelda);
-        }
-      }
-    }
-
-    let distribucionArticulador = Object.keys(conteoArticulador).map(function(email) {
-      return { email: email, totalRTs: conteoArticulador[email] };
-    });
-    let distribucionGestor = Object.keys(conteoGestor).map(function(email) {
-      return { email: email, totalRTs: conteoGestor[email] };
-    });
-
-    // Recorte RBAC: un Articulador solo ve su propia carga (y la de sus Gestores derivada de
-    // Datos); un Gestor solo ve su propia fila y la del/los Articulador(es) bajo los que trabaja.
-    if (esArticulador) {
-      distribucionArticulador = distribucionArticulador.filter(function(d) { return d.email === currentUserEmail; });
-      const gestoresDelArticulador = new Set();
-      for (let i = 0; i < rows.length; i++) {
-        const articuladorCelda = String(rows[i][colArticulador] || '').trim().toLowerCase();
-        const gestorCelda = String(rows[i][colGestor] || '').trim().toLowerCase();
-        if (articuladorCelda === currentUserEmail && REGEX_EMAIL_SIMPLE_EQUIPOS.test(gestorCelda)) {
-          gestoresDelArticulador.add(gestorCelda);
-        }
-      }
-      distribucionGestor = distribucionGestor.filter(function(d) { return gestoresDelArticulador.has(d.email); });
-    } else if (esGestor) {
-      distribucionArticulador = distribucionArticulador.filter(function(d) { return articuladoresDelGestor.has(d.email); });
-      distribucionGestor = distribucionGestor.filter(function(d) { return d.email === currentUserEmail; });
-    }
-
-    distribucionArticulador.sort(function(a, b) { return b.totalRTs - a.totalRTs; });
-    distribucionGestor.sort(function(a, b) { return b.totalRTs - a.totalRTs; });
-
-    return {
-      success: true,
-      totalRTs: rows.length,
-      rtsPorAsignar: (esArticulador || esGestor) ? null : rtsPorAsignar, // cola global — solo visible para Admin/Editor/Lector
-      distribucionArticulador: distribucionArticulador,
-      distribucionGestor: distribucionGestor
-    };
-  } catch (e) {
-    console.error('❌ Error en getEstadisticasCargaEquipos: ' + e.message);
-    return { success: false, error: e.message };
-  }
+  sheet = gestor.ss.insertSheet(sheetName);
+  const headers = getConfig('COLUMNS_ASIGNACIONES_EQUIPOS');
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length)
+    .setBackground('#2c3e50')
+    .setFontColor('white')
+    .setFontWeight('bold');
+  return sheet;
 }
 
 /**
- * Lee Datos una vez, resuelve los índices de columnas relevantes y aplica el MISMO recorte
- * RBAC que getDashboardData() (Codigo.js) — Articulador solo ve sus filas, Gestor las suyas
- * + las de su(s) Articulador(es). Devuelto como filas ya filtradas, para que las 3 funciones
- * de árbol (getProyectosConteo/getTramosPorProyecto/getRTsPorTramo) no dupliquen esta lógica.
+ * Lee ASIGNACIONES_EQUIPOS completa en un diccionario {RT: {articuladorEmail, gestorEmail}}.
+ * Crea la hoja con headers si todavía no existe (primera vez que corre cualquier función de
+ * este archivo después del desacople).
+ */
+function _leerAsignacionesEquipos() {
+  const gestorAsig = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
+  const sheetName = getConfig('SHEETS.ASIGNACIONES_EQUIPOS', 'ASIGNACIONES_EQUIPOS');
+  _asegurarHojaAsignacionesEquipos(gestorAsig, sheetName);
+  const { rows } = gestorAsig.leerDatos(sheetName);
+
+  const mapa = {};
+  rows.forEach(function(row) {
+    const rt = String(row['RT'] || '').trim();
+    if (!rt) return;
+    mapa[rt] = {
+      articuladorEmail: String(row['ARTICULADOR_EMAIL'] || '').trim(),
+      gestorEmail: String(row['GESTOR_EMAIL'] || '').trim()
+    };
+  });
+  return mapa;
+}
+
+/**
+ * Fusión en memoria — el corazón del desacople. Para un RT dado, el valor EFECTIVO de
+ * Articulador/Gestor es el de ASIGNACIONES_EQUIPOS si existe ahí; si no, el que ya tenía
+ * Datos (compatibilidad con lo que la Línea Cero ya escribió ahí antes de este desacople).
+ * Global a propósito — Codigo.js y evaluador_alertas.js la llaman directo (mismo scope GAS).
+ */
+function _fusionarAsignacionesConMatriz(rt, articuladorDatos, gestorDatos, asignacionesMap) {
+  const rtKey = String(rt || '').trim();
+  const override = rtKey ? asignacionesMap[rtKey] : null;
+
+  const articuladorEmail = (override && override.articuladorEmail)
+    ? override.articuladorEmail
+    : String(articuladorDatos || '').trim();
+  const gestorEmail = (override && override.gestorEmail)
+    ? override.gestorEmail
+    : String(gestorDatos || '').trim();
+
+  return {
+    articuladorEmail: articuladorEmail,
+    gestorEmail: gestorEmail,
+    articuladorEsEmail: REGEX_EMAIL_SIMPLE_EQUIPOS.test(articuladorEmail),
+    gestorEsEmail: REGEX_EMAIL_SIMPLE_EQUIPOS.test(gestorEmail)
+  };
+}
+
+/**
+ * Lee Datos (SOLO LECTURA) una vez, fusiona cada fila con ASIGNACIONES_EQUIPOS, y aplica el
+ * recorte RBAC (Articulador solo sus filas, Gestor las suyas + las de su(s) Articulador(es)).
+ * Fuente compartida de getEstadisticasCargaEquipos()/getProyectosConteo()/
+ * getTramosPorProyecto()/getRTsPorTramo() — garantiza que KPIs y árbol siempre coincidan.
  */
 function _leerFilasVisiblesRBACEquipos() {
   const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
@@ -140,55 +134,122 @@ function _leerFilasVisiblesRBACEquipos() {
   const colArticulador = headers[idxArticulador];
   const colGestor = headers[idxGestor];
 
+  const asignacionesMap = _leerAsignacionesEquipos();
+
   const currentUserEmail = (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
   const rolUsuario = getUserRole(currentUserEmail) || getConfig('ROLES.LECTOR');
   const esArticulador = rolUsuario === getConfig('ROLES.ARTICULADOR');
   const esGestor = rolUsuario === getConfig('ROLES.GESTOR');
 
+  // Una sola pasada de fusión sobre todas las filas — se reutiliza tanto para el pre-cálculo
+  // de "qué Articuladores tiene este Gestor" como para el filtrado principal de abajo.
+  const fusionadas = new Array(rows.length);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rt = String(row[colRT] || '').trim();
+    const fusion = _fusionarAsignacionesConMatriz(rt, row[colArticulador], row[colGestor], asignacionesMap);
+    fusionadas[i] = {
+      proyecto: String(row[colProyecto] || '').trim() || 'SIN PROYECTO',
+      tramo: String(row[colTramo] || '').trim() || 'SIN TRAMO',
+      rt: rt,
+      articulador: fusion.articuladorEmail,
+      articuladorEsEmail: fusion.articuladorEsEmail,
+      gestor: fusion.gestorEmail,
+      gestorEsEmail: fusion.gestorEsEmail,
+      esCompleto: _esRTCompleto(fusion.articuladorEmail, fusion.gestorEmail)
+    };
+  }
+
   let articuladoresPermitidosGestor = null;
   if (esGestor) {
     articuladoresPermitidosGestor = new Set();
-    for (let i = 0; i < rows.length; i++) {
-      const g = String(rows[i][colGestor] || '').trim().toLowerCase();
-      if (g === currentUserEmail) {
-        const a = String(rows[i][colArticulador] || '').trim().toLowerCase();
-        if (a) articuladoresPermitidosGestor.add(a);
+    for (let i = 0; i < fusionadas.length; i++) {
+      if (fusionadas[i].gestor.toLowerCase() === currentUserEmail && fusionadas[i].articulador) {
+        articuladoresPermitidosGestor.add(fusionadas[i].articulador.toLowerCase());
       }
     }
   }
 
   const filas = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const articuladorCelda = String(row[colArticulador] || '').trim();
-    const gestorCelda = String(row[colGestor] || '').trim();
-
-    if (esArticulador && articuladorCelda.toLowerCase() !== currentUserEmail) continue;
+  for (let i = 0; i < fusionadas.length; i++) {
+    const f = fusionadas[i];
+    if (esArticulador && f.articulador.toLowerCase() !== currentUserEmail) continue;
     if (esGestor) {
-      const visible = gestorCelda.toLowerCase() === currentUserEmail ||
-        (articuladoresPermitidosGestor && articuladoresPermitidosGestor.has(articuladorCelda.toLowerCase()));
+      const visible = f.gestor.toLowerCase() === currentUserEmail ||
+        (articuladoresPermitidosGestor && articuladoresPermitidosGestor.has(f.articulador.toLowerCase()));
       if (!visible) continue;
     }
-
-    filas.push({
-      proyecto: String(row[colProyecto] || '').trim() || 'SIN PROYECTO',
-      tramo: String(row[colTramo] || '').trim() || 'SIN TRAMO',
-      rt: String(row[colRT] || '').trim(),
-      articulador: articuladorCelda,
-      articuladorEsEmail: REGEX_EMAIL_SIMPLE_EQUIPOS.test(articuladorCelda),
-      gestor: gestorCelda,
-      gestorEsEmail: REGEX_EMAIL_SIMPLE_EQUIPOS.test(gestorCelda)
-    });
+    filas.push(f);
   }
 
   return filas;
 }
 
 /**
- * Nivel 1 del árbol de asignación (Fase B — feedback 2026-08-18): lista de Proyectos con
- * conteo de RTs y de RTs sin asignar. Carga liviana — no trae Tramos ni RTs todavía
- * (esos se piden bajo demanda con getTramosPorProyecto/getRTsPorTramo al expandir un nodo,
- * para no mandar los 9691 RTs de una sola vez ni renderizar miles de filas de golpe).
+ * KPIs del tablero de carga: Total RTs, RTs por Asignar (regla estricta: falta Articulador
+ * O Gestor), distribución por Articulador/Gestor. `userContext` es solo un hint del cliente —
+ * el rol/email real se resuelve SIEMPRE server-side.
+ */
+function getEstadisticasCargaEquipos(userContext) {
+  try {
+    const filas = _leerFilasVisiblesRBACEquipos();
+
+    const currentUserEmail = (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    const rolUsuario = getUserRole(currentUserEmail) || getConfig('ROLES.LECTOR');
+    const esArticulador = rolUsuario === getConfig('ROLES.ARTICULADOR');
+    const esGestor = rolUsuario === getConfig('ROLES.GESTOR');
+
+    const conteoArticulador = {};
+    const conteoGestor = {};
+    let rtsPorAsignar = 0;
+
+    filas.forEach(function(f) {
+      if (f.articuladorEsEmail) {
+        const key = f.articulador.toLowerCase();
+        conteoArticulador[key] = (conteoArticulador[key] || 0) + 1;
+      }
+      if (f.gestorEsEmail) {
+        const key = f.gestor.toLowerCase();
+        conteoGestor[key] = (conteoGestor[key] || 0) + 1;
+      }
+      if (!f.esCompleto) rtsPorAsignar++;
+    });
+
+    let distribucionArticulador = Object.keys(conteoArticulador).map(function(email) {
+      return { email: email, totalRTs: conteoArticulador[email] };
+    });
+    let distribucionGestor = Object.keys(conteoGestor).map(function(email) {
+      return { email: email, totalRTs: conteoGestor[email] };
+    });
+
+    // `filas` ya viene recortada por RBAC (Articulador→sus RTs, Gestor→sus RTs+las de su
+    // Articulador) — pero un Gestor no debe ver la carga INDIVIDUAL de otros gestores del
+    // mismo Articulador, solo la suya propia. Mismo criterio de privacidad ya establecido.
+    if (esArticulador) {
+      distribucionArticulador = distribucionArticulador.filter(function(d) { return d.email === currentUserEmail; });
+    } else if (esGestor) {
+      distribucionGestor = distribucionGestor.filter(function(d) { return d.email === currentUserEmail; });
+    }
+
+    distribucionArticulador.sort(function(a, b) { return b.totalRTs - a.totalRTs; });
+    distribucionGestor.sort(function(a, b) { return b.totalRTs - a.totalRTs; });
+
+    return {
+      success: true,
+      totalRTs: filas.length,
+      rtsPorAsignar: (esArticulador || esGestor) ? null : rtsPorAsignar,
+      distribucionArticulador: distribucionArticulador,
+      distribucionGestor: distribucionGestor
+    };
+  } catch (e) {
+    console.error('❌ Error en getEstadisticasCargaEquipos: ' + e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+/**
+ * Nivel 1 del árbol de asignación: lista de Proyectos con conteo de RTs y de RTs sin asignar
+ * (regla estricta). Carga liviana — Tramos/RTs se piden bajo demanda al expandir un nodo.
  */
 function getProyectosConteo() {
   try {
@@ -198,7 +259,7 @@ function getProyectosConteo() {
     filas.forEach(function(f) {
       if (!porProyecto[f.proyecto]) porProyecto[f.proyecto] = { totalRTs: 0, sinAsignar: 0 };
       porProyecto[f.proyecto].totalRTs++;
-      if (!f.articuladorEsEmail && !f.gestorEsEmail) porProyecto[f.proyecto].sinAsignar++;
+      if (!f.esCompleto) porProyecto[f.proyecto].sinAsignar++;
     });
 
     const proyectos = Object.keys(porProyecto).sort().map(function(p) {
@@ -213,7 +274,7 @@ function getProyectosConteo() {
 }
 
 /**
- * Nivel 2 del árbol: Tramos de un Proyecto específico, con sus conteos.
+ * Nivel 2 del árbol: Tramos de un Proyecto específico, con sus conteos (regla estricta).
  */
 function getTramosPorProyecto(proyecto) {
   try {
@@ -223,7 +284,7 @@ function getTramosPorProyecto(proyecto) {
     filas.forEach(function(f) {
       if (!porTramo[f.tramo]) porTramo[f.tramo] = { totalRTs: 0, sinAsignar: 0 };
       porTramo[f.tramo].totalRTs++;
-      if (!f.articuladorEsEmail && !f.gestorEsEmail) porTramo[f.tramo].sinAsignar++;
+      if (!f.esCompleto) porTramo[f.tramo].sinAsignar++;
     });
 
     const tramos = Object.keys(porTramo).sort().map(function(t) {
@@ -238,9 +299,8 @@ function getTramosPorProyecto(proyecto) {
 }
 
 /**
- * Nivel 3 del árbol ("línea cero"): detalle de RTs de un Tramo específico, cada uno con su
- * Articulador/Gestor actual (email ya resuelto o nombre libre histórico) — la vista que
- * permite ver y disparar la reasignación puntual de cada RT.
+ * Nivel 3 del árbol ("línea cero" visual): detalle de RTs de un Tramo específico, cada uno
+ * con su Articulador/Gestor EFECTIVO (ya fusionado) — la vista que dispara la reasignación.
  */
 function getRTsPorTramo(proyecto, tramo) {
   try {
@@ -255,7 +315,7 @@ function getRTsPorTramo(proyecto, tramo) {
         articuladorEsEmail: f.articuladorEsEmail,
         gestor: f.gestor,
         gestorEsEmail: f.gestorEsEmail,
-        sinAsignar: !f.articuladorEsEmail && !f.gestorEsEmail
+        sinAsignar: !f.esCompleto
       };
     }).sort(function(a, b) { return a.rt.localeCompare(b.rt); });
 
@@ -345,8 +405,173 @@ function _construirPredicadoNivel(nivelUpper, idTarget, headers) {
 }
 
 /**
- * Asignación en cascada Proyecto→Tramo→RT. Solo escribe (y solo loguea) las filas cuyo
- * valor actual difiere del nuevo — reasignar al mismo email dos veces no genera logs duplicados.
+ * Resuelve, a partir de Datos (SOLO LECTURA), la lista de {rt, articuladorEmail?, gestorEmail?}
+ * que corresponde a un nivel/idTarget — usada tanto por asignarEquipoGranular() (un nodo) como
+ * por asignarEquipoGranularLote() (N nodos, misma Datos ya leída una sola vez para todos).
+ */
+function _resolverCambiosPorNivel(headers, rows, nivelUpper, idTarget, articuladorEmail, gestorEmail) {
+  const idxRT = findColumnIndex(headers, getConfig('COLUMNS.RT'));
+  if (idxRT < 0) throw new Error('Columna RT no encontrada en Datos');
+
+  const predicado = _construirPredicadoNivel(nivelUpper, idTarget, headers);
+  const rtCol = headers[idxRT];
+  const cambios = [];
+
+  rows.forEach(function(row) {
+    if (!predicado(row)) return;
+    const rt = String(row[rtCol] || '').trim();
+    if (!rt) return;
+    const cambio = { rt: rt };
+    if (articuladorEmail) cambio.articuladorEmail = articuladorEmail;
+    if (gestorEmail) cambio.gestorEmail = gestorEmail;
+    cambios.push(cambio);
+  });
+
+  return cambios;
+}
+
+/**
+ * ÚNICO punto de escritura sobre ASIGNACIONES_EQUIPOS — Datos nunca se toca desde aquí.
+ * `cambios`: [{rt, articuladorEmail?, gestorEmail?}, ...] — cada entrada solo aplica los
+ * campos presentes (omitir un rol para un RT no lo toca). Lee las 4 columnas de datos una
+ * vez, parcha en memoria por lotes de 1000, escribe con como máximo 4 setValues() (una por
+ * columna realmente afectada) + 1 más si hay filas nuevas que agregar — Directiva 3.
+ * `contexto.logPorFila` (default true): si es false, no genera logs aquí — el llamador
+ * (ejecutarCargaLineaCero) registra un único evento resumen para no inundar LOGS_ASIGNACION
+ * en una migración masiva.
+ */
+function _upsertAsignacionesEquipos(cambios, ejecutorEmail, contexto) {
+  const ctx = contexto || {};
+  const logPorFila = ctx.logPorFila !== false;
+
+  const gestorAsig = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
+  const sheetName = getConfig('SHEETS.ASIGNACIONES_EQUIPOS', 'ASIGNACIONES_EQUIPOS');
+  const sheet = _asegurarHojaAsignacionesEquipos(gestorAsig, sheetName);
+  const { headers, rows } = gestorAsig.leerDatos(sheetName);
+
+  const idxRT = findColumnIndex(headers, 'RT');
+  const idxArt = findColumnIndex(headers, 'ARTICULADOR_EMAIL');
+  const idxGes = findColumnIndex(headers, 'GESTOR_EMAIL');
+  const idxFecha = findColumnIndex(headers, 'FECHA_ACTUALIZACION');
+  const idxEjecutor = findColumnIndex(headers, 'EJECUTOR');
+
+  if (idxRT < 0 || idxArt < 0 || idxGes < 0 || idxFecha < 0 || idxEjecutor < 0) {
+    throw new Error('La hoja ASIGNACIONES_EQUIPOS no tiene el esquema esperado [RT, ARTICULADOR_EMAIL, GESTOR_EMAIL, FECHA_ACTUALIZACION, EJECUTOR]');
+  }
+
+  const indicePorRT = {};
+  rows.forEach(function(row, i) {
+    const rt = String(row['RT'] || '').trim();
+    if (rt) indicePorRT[rt] = i;
+  });
+
+  const totalFilas = rows.length;
+  const colArtValores = totalFilas > 0 ? sheet.getRange(2, idxArt + 1, totalFilas, 1).getValues() : [];
+  const colGesValores = totalFilas > 0 ? sheet.getRange(2, idxGes + 1, totalFilas, 1).getValues() : [];
+  const colFechaValores = totalFilas > 0 ? sheet.getRange(2, idxFecha + 1, totalFilas, 1).getValues() : [];
+  const colEjecutorValores = totalFilas > 0 ? sheet.getRange(2, idxEjecutor + 1, totalFilas, 1).getValues() : [];
+
+  const ahora = new Date();
+  const filasNuevas = [];
+  const eventos = [];
+  let cambiosAplicados = 0;
+  let tocoArticulador = false;
+  let tocoGestor = false;
+
+  for (let start = 0; start < cambios.length; start += EQUIPOS_ENGINE.batchSize) {
+    const fin = Math.min(start + EQUIPOS_ENGINE.batchSize, cambios.length);
+    for (let i = start; i < fin; i++) {
+      const cambio = cambios[i];
+      const rt = String(cambio.rt || '').trim();
+      if (!rt) continue;
+
+      const tieneArticulador = !!cambio.articuladorEmail;
+      const tieneGestor = !!cambio.gestorEmail;
+      if (!tieneArticulador && !tieneGestor) continue;
+
+      const filaIdx = indicePorRT[rt];
+      let tocado = false;
+      let usuarioAnteriorArt = '';
+      let usuarioAnteriorGes = '';
+
+      if (filaIdx === undefined) {
+        const filaNueva = new Array(headers.length).fill('');
+        filaNueva[idxRT] = rt;
+        if (tieneArticulador) filaNueva[idxArt] = cambio.articuladorEmail;
+        if (tieneGestor) filaNueva[idxGes] = cambio.gestorEmail;
+        filaNueva[idxFecha] = ahora;
+        filaNueva[idxEjecutor] = ejecutorEmail || 'Sistema';
+        filasNuevas.push(filaNueva);
+        tocado = true;
+        if (tieneArticulador) tocoArticulador = true;
+        if (tieneGestor) tocoGestor = true;
+      } else {
+        if (tieneArticulador) {
+          usuarioAnteriorArt = String(colArtValores[filaIdx][0] || '');
+          if (usuarioAnteriorArt !== cambio.articuladorEmail) {
+            colArtValores[filaIdx][0] = cambio.articuladorEmail;
+            tocado = true;
+            tocoArticulador = true;
+          }
+        }
+        if (tieneGestor) {
+          usuarioAnteriorGes = String(colGesValores[filaIdx][0] || '');
+          if (usuarioAnteriorGes !== cambio.gestorEmail) {
+            colGesValores[filaIdx][0] = cambio.gestorEmail;
+            tocado = true;
+            tocoGestor = true;
+          }
+        }
+        if (tocado) {
+          colFechaValores[filaIdx][0] = ahora;
+          colEjecutorValores[filaIdx][0] = ejecutorEmail || 'Sistema';
+        }
+      }
+
+      if (tocado) {
+        cambiosAplicados++;
+        if (logPorFila) {
+          if (tieneArticulador) {
+            eventos.push({
+              nivel: ctx.nivel || 'RT', idTarget: rt, rol: 'ARTICULADOR',
+              usuarioAnterior: usuarioAnteriorArt, usuarioNuevo: cambio.articuladorEmail,
+              ejecutorEmail: ejecutorEmail, observaciones: ctx.observaciones || ('Asignación sobre RT ' + rt)
+            });
+          }
+          if (tieneGestor) {
+            eventos.push({
+              nivel: ctx.nivel || 'RT', idTarget: rt, rol: 'GESTOR',
+              usuarioAnterior: usuarioAnteriorGes, usuarioNuevo: cambio.gestorEmail,
+              ejecutorEmail: ejecutorEmail, observaciones: ctx.observaciones || ('Asignación sobre RT ' + rt)
+            });
+          }
+        }
+      }
+    }
+  }
+
+  if (tocoArticulador && totalFilas > 0) sheet.getRange(2, idxArt + 1, totalFilas, 1).setValues(colArtValores);
+  if (tocoGestor && totalFilas > 0) sheet.getRange(2, idxGes + 1, totalFilas, 1).setValues(colGesValores);
+  if ((tocoArticulador || tocoGestor) && totalFilas > 0) {
+    sheet.getRange(2, idxFecha + 1, totalFilas, 1).setValues(colFechaValores);
+    sheet.getRange(2, idxEjecutor + 1, totalFilas, 1).setValues(colEjecutorValores);
+  }
+  if (filasNuevas.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, filasNuevas.length, headers.length).setValues(filasNuevas);
+  }
+
+  let logsOk = 0, logsError = 0;
+  eventos.forEach(function(ev) {
+    const r = registrarLogAsignacion(ev);
+    if (r && r.success) logsOk++; else logsError++;
+  });
+
+  return { cambiosAplicados: cambiosAplicados, logsRegistrados: logsOk, logsConError: logsError };
+}
+
+/**
+ * Asignación en cascada Proyecto→Tramo→RT. Datos se lee para saber qué RTs matchean el
+ * nivel/idTarget; la escritura va íntegra a ASIGNACIONES_EQUIPOS vía _upsertAsignacionesEquipos().
  */
 function asignarEquipoGranular(nivel, idTarget, articuladorEmail, gestorEmail, ejecutorEmail) {
   const lock = LockService.getScriptLock();
@@ -366,90 +591,26 @@ function asignarEquipoGranular(nivel, idTarget, articuladorEmail, gestorEmail, e
     }
 
     const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
-    const sheetName = getConfig('SHEETS.DATOS');
-    const sheet = gestorDatos.getSheet(sheetName);
-    const { headers, rows } = gestorDatos.leerDatos(sheetName);
-
+    const { headers, rows } = gestorDatos.leerDatos(getConfig('SHEETS.DATOS'));
     if (!headers.length) throw new Error('No se pudo leer la hoja Datos');
 
-    const idxArticulador = findColumnIndex(headers, getConfig('COLUMNS.ARTICULADOR_JURIDICO'));
-    const idxGestor = findColumnIndex(headers, getConfig('COLUMNS.GESTOR_JURIDICO'));
-    const idxRT = findColumnIndex(headers, getConfig('COLUMNS.RT'));
+    const cambios = _resolverCambiosPorNivel(headers, rows, nivelUpper, idTarget, articuladorEmail, gestorEmail);
 
-    if (idxArticulador < 0 || idxGestor < 0) {
-      throw new Error('Columnas ARTICULADOR JUIRIDICO / GESTOR JURÍDICO no encontradas en Datos');
-    }
-
-    const rtCol = headers[idxRT];
-    const predicado = _construirPredicadoNivel(nivelUpper, idTarget, headers);
-    const totalFilas = rows.length;
-
-    const colArticuladorSheet = idxArticulador + 1;
-    const colGestorSheet = idxGestor + 1;
-
-    const valoresArticulador = articuladorEmail
-      ? sheet.getRange(2, colArticuladorSheet, totalFilas, 1).getValues()
-      : null;
-    const valoresGestor = gestorEmail
-      ? sheet.getRange(2, colGestorSheet, totalFilas, 1).getValues()
-      : null;
-
-    const eventos = [];
-    let filasAfectadas = 0;
-    const observacion = 'Asignación en cascada por ' + nivelUpper + ': ' + idTarget;
-
-    for (let start = 0; start < totalFilas; start += EQUIPOS_ENGINE.batchSize) {
-      const fin = Math.min(start + EQUIPOS_ENGINE.batchSize, totalFilas);
-      for (let i = start; i < fin; i++) {
-        const row = rows[i];
-        if (!predicado(row)) continue;
-
-        filasAfectadas++;
-        const rtValor = String(row[rtCol] || '');
-
-        if (valoresArticulador) {
-          const anterior = String(valoresArticulador[i][0] || '');
-          if (anterior !== articuladorEmail) {
-            valoresArticulador[i][0] = articuladorEmail;
-            eventos.push({
-              nivel: nivelUpper, idTarget: rtValor, rol: 'ARTICULADOR',
-              usuarioAnterior: anterior, usuarioNuevo: articuladorEmail,
-              ejecutorEmail: ejecutorEmail, observaciones: observacion
-            });
-          }
-        }
-
-        if (valoresGestor) {
-          const anterior = String(valoresGestor[i][0] || '');
-          if (anterior !== gestorEmail) {
-            valoresGestor[i][0] = gestorEmail;
-            eventos.push({
-              nivel: nivelUpper, idTarget: rtValor, rol: 'GESTOR',
-              usuarioAnterior: anterior, usuarioNuevo: gestorEmail,
-              ejecutorEmail: ejecutorEmail, observaciones: observacion
-            });
-          }
-        }
-      }
-    }
-
-    if (valoresArticulador) sheet.getRange(2, colArticuladorSheet, totalFilas, 1).setValues(valoresArticulador);
-    if (valoresGestor) sheet.getRange(2, colGestorSheet, totalFilas, 1).setValues(valoresGestor);
-
-    let logsOk = 0, logsError = 0;
-    eventos.forEach(function(ev) {
-      const r = registrarLogAsignacion(ev);
-      if (r && r.success) logsOk++; else logsError++;
-    });
+    const resultado = cambios.length
+      ? _upsertAsignacionesEquipos(cambios, ejecutorEmail || 'Sistema', {
+          nivel: nivelUpper,
+          observaciones: 'Asignación en cascada por ' + nivelUpper + ': ' + idTarget
+        })
+      : { cambiosAplicados: 0, logsRegistrados: 0, logsConError: 0 };
 
     _invalidarCacheDatosSiExiste();
 
     return {
       success: true,
-      filasCoincidentes: filasAfectadas,
-      cambiosAplicados: eventos.length,
-      logsRegistrados: logsOk,
-      logsConError: logsError
+      filasCoincidentes: cambios.length,
+      cambiosAplicados: resultado.cambiosAplicados,
+      logsRegistrados: resultado.logsRegistrados,
+      logsConError: resultado.logsConError
     };
   } catch (e) {
     console.error('❌ Error en asignarEquipoGranular: ' + e.message);
@@ -460,8 +621,82 @@ function asignarEquipoGranular(nivel, idTarget, articuladorEmail, gestorEmail, e
 }
 
 /**
- * Handover 1-click: reemplaza usuarioOrigen por usuarioDestino en TODAS las filas de Datos
- * donde aparece como Articulador o Gestor (según `rol`), sin importar Proyecto/Tramo.
+ * Guardado en lote del árbol en Modo Borrador (Sprint 6): recibe TODOS los nodos modificados
+ * en un solo payload y los aplica bajo UN ÚNICO LockService — en vez de N llamadas a
+ * asignarEquipoGranular() (que serían N locks secuenciales). `cambiosArray`:
+ * [{nivel, idTarget, articuladorEmail?, gestorEmail?}, ...]. Un nodo inválido no tumba el
+ * lote completo — se reporta en `erroresPorNodo` y el resto sigue procesándose.
+ */
+function asignarEquipoGranularLote(cambiosArray, ejecutorEmail) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(EQUIPOS_ENGINE.lockTimeoutMs);
+  } catch (eLock) {
+    return { success: false, error: 'No se pudo adquirir el lock: ' + eLock.message };
+  }
+
+  try {
+    if (!Array.isArray(cambiosArray) || !cambiosArray.length) {
+      throw new Error('cambiosArray vacío o inválido');
+    }
+
+    const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
+    const { headers, rows } = gestorDatos.leerDatos(getConfig('SHEETS.DATOS'));
+    if (!headers.length) throw new Error('No se pudo leer la hoja Datos');
+
+    const ejecutor = ejecutorEmail || (Session.getActiveUser().getEmail() || 'Sistema');
+    let cambiosConsolidados = [];
+    const erroresPorNodo = [];
+
+    cambiosArray.forEach(function(entrada) {
+      try {
+        const nivelUpper = String(entrada.nivel || '').toUpperCase();
+        if (['PROYECTO', 'TRAMO', 'RT'].indexOf(nivelUpper) < 0) {
+          throw new Error('Nivel inválido: ' + entrada.nivel);
+        }
+        if (!entrada.articuladorEmail && !entrada.gestorEmail) {
+          throw new Error('Nodo sin articuladorEmail ni gestorEmail');
+        }
+        const cambiosEntrada = _resolverCambiosPorNivel(
+          headers, rows, nivelUpper, entrada.idTarget, entrada.articuladorEmail, entrada.gestorEmail
+        );
+        cambiosConsolidados = cambiosConsolidados.concat(cambiosEntrada);
+      } catch (eEntrada) {
+        erroresPorNodo.push({ idTarget: entrada.idTarget, error: eEntrada.message });
+      }
+    });
+
+    const resultado = cambiosConsolidados.length
+      ? _upsertAsignacionesEquipos(cambiosConsolidados, ejecutor, {
+          nivel: 'LOTE',
+          observaciones: 'Guardado en lote (Draft Mode) — ' + cambiosArray.length + ' nodo(s) del árbol.'
+        })
+      : { cambiosAplicados: 0, logsRegistrados: 0, logsConError: 0 };
+
+    _invalidarCacheDatosSiExiste();
+
+    return {
+      success: true,
+      totalNodosRecibidos: cambiosArray.length,
+      totalRTsAfectados: cambiosConsolidados.length,
+      cambiosAplicados: resultado.cambiosAplicados,
+      logsRegistrados: resultado.logsRegistrados,
+      logsConError: resultado.logsConError,
+      erroresPorNodo: erroresPorNodo
+    };
+  } catch (e) {
+    console.error('❌ Error en asignarEquipoGranularLote: ' + e.message);
+    return { success: false, error: e.message };
+  } finally {
+    try { lock.releaseLock(); } catch (er) {}
+  }
+}
+
+/**
+ * Handover 1-click: reemplaza usuarioOrigen por usuarioDestino en TODOS los RT donde aparece
+ * como Articulador o Gestor (según `rol`) en la vista FUSIONADA (ASIGNACIONES_EQUIPOS
+ * override, o Datos si no hay override todavía) — sin importar en cuál de las dos capas
+ * vivía el valor anterior, el resultado siempre se escribe en ASIGNACIONES_EQUIPOS.
  */
 function reasignarUsuarioMasivo(usuarioOrigen, usuarioDestino, rol, ejecutorEmail) {
   const lock = LockService.getScriptLock();
@@ -481,65 +716,50 @@ function reasignarUsuarioMasivo(usuarioOrigen, usuarioDestino, rol, ejecutorEmai
     }
 
     const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
-    const sheetName = getConfig('SHEETS.DATOS');
-    const sheet = gestorDatos.getSheet(sheetName);
-    const { headers, rows } = gestorDatos.leerDatos(sheetName);
-
+    const { headers, rows } = gestorDatos.leerDatos(getConfig('SHEETS.DATOS'));
     if (!headers.length) throw new Error('No se pudo leer la hoja Datos');
 
-    const columnaConfigPath = rolUpper === 'ARTICULADOR' ? 'COLUMNS.ARTICULADOR_JURIDICO' : 'COLUMNS.GESTOR_JURIDICO';
-    const idxColumna = findColumnIndex(headers, getConfig(columnaConfigPath));
     const idxRT = findColumnIndex(headers, getConfig('COLUMNS.RT'));
-
-    if (idxColumna < 0) throw new Error('Columna de ' + rolUpper + ' no encontrada en Datos');
+    const idxArticulador = findColumnIndex(headers, getConfig('COLUMNS.ARTICULADOR_JURIDICO'));
+    const idxGestor = findColumnIndex(headers, getConfig('COLUMNS.GESTOR_JURIDICO'));
+    if (idxRT < 0 || idxArticulador < 0 || idxGestor < 0) {
+      throw new Error('Columnas requeridas no encontradas en Datos');
+    }
 
     const rtCol = headers[idxRT];
-    const colSheet = idxColumna + 1;
-    const totalFilas = rows.length;
-    const valores = sheet.getRange(2, colSheet, totalFilas, 1).getValues();
+    const colArticulador = headers[idxArticulador];
+    const colGestor = headers[idxGestor];
 
-    const eventos = [];
-    let filasAfectadas = 0;
-    const observacion = 'Handover masivo de ' + usuarioOrigen + ' a ' + usuarioDestino;
+    const asignacionesMap = _leerAsignacionesEquipos();
+    const cambios = [];
 
-    for (let start = 0; start < totalFilas; start += EQUIPOS_ENGINE.batchSize) {
-      const fin = Math.min(start + EQUIPOS_ENGINE.batchSize, totalFilas);
-      for (let i = start; i < fin; i++) {
-        const actual = String(valores[i][0] || '');
-        if (actual !== usuarioOrigen) continue;
-
-        valores[i][0] = usuarioDestino;
-        filasAfectadas++;
-
-        eventos.push({
-          nivel: 'RT',
-          idTarget: String(rows[i][rtCol] || ''),
-          rol: rolUpper,
-          usuarioAnterior: usuarioOrigen,
-          usuarioNuevo: usuarioDestino,
-          ejecutorEmail: ejecutorEmail,
-          observaciones: observacion
-        });
+    rows.forEach(function(row) {
+      const rt = String(row[rtCol] || '').trim();
+      if (!rt) return;
+      const fusion = _fusionarAsignacionesConMatriz(rt, row[colArticulador], row[colGestor], asignacionesMap);
+      const valorActual = rolUpper === 'ARTICULADOR' ? fusion.articuladorEmail : fusion.gestorEmail;
+      if (valorActual === usuarioOrigen) {
+        const cambio = { rt: rt };
+        if (rolUpper === 'ARTICULADOR') cambio.articuladorEmail = usuarioDestino;
+        else cambio.gestorEmail = usuarioDestino;
+        cambios.push(cambio);
       }
-    }
-
-    if (filasAfectadas > 0) {
-      sheet.getRange(2, colSheet, totalFilas, 1).setValues(valores);
-    }
-
-    let logsOk = 0, logsError = 0;
-    eventos.forEach(function(ev) {
-      const r = registrarLogAsignacion(ev);
-      if (r && r.success) logsOk++; else logsError++;
     });
+
+    const resultado = cambios.length
+      ? _upsertAsignacionesEquipos(cambios, ejecutorEmail || 'Sistema', {
+          nivel: 'RT',
+          observaciones: 'Handover masivo de ' + usuarioOrigen + ' a ' + usuarioDestino
+        })
+      : { cambiosAplicados: 0, logsRegistrados: 0, logsConError: 0 };
 
     _invalidarCacheDatosSiExiste();
 
     return {
       success: true,
-      filasAfectadas: filasAfectadas,
-      logsRegistrados: logsOk,
-      logsConError: logsError
+      filasAfectadas: cambios.length,
+      logsRegistrados: resultado.logsRegistrados,
+      logsConError: resultado.logsConError
     };
   } catch (e) {
     console.error('❌ Error en reasignarUsuarioMasivo: ' + e.message);
@@ -550,15 +770,11 @@ function reasignarUsuarioMasivo(usuarioOrigen, usuarioDestino, rol, ejecutorEmai
 }
 
 /**
- * Carga de "Línea Cero" (Baseline) — feedback de usuario 2026-08-18: no es un find-and-replace
- * cosmético, es fijar la distribución REAL vigente (quién tiene qué RT hoy, leído de Datos)
- * como punto de partida operativo del módulo de equipos, migrando los nombres libres
- * históricos a sus emails oficiales SOLO donde obtenerMapeoLineaCero() tiene confianza
- * suficiente para escribir sin revisión humana (homologacion_usuarios.js: ENCONTRADO_ACTIVO,
- * ENCONTRADO_SIN_PERFIL, o SIMILITUD_APROXIMADA con puntaje ≥ 0.85). Una vez corrida, el árbol
- * jerárquico (getProyectosConteo/getTramosPorProyecto/getRTsPorTramo) y el filtro RBAC de
- * getDashboardData() (Codigo.js) reconocen de inmediato las asignaciones vigentes, porque
- * ambos ya comparan el email directamente contra la celda de Datos.
+ * Carga de "Línea Cero" (Baseline). Lee Datos (SOLO LECTURA) para encontrar nombres libres
+ * homologables vía obtenerMapeoLineaCero() (ENCONTRADO_ACTIVO, ENCONTRADO_SIN_PERFIL, o
+ * SIMILITUD_APROXIMADA ≥ 0.85), y escribe los emails resueltos en ASIGNACIONES_EQUIPOS — nunca
+ * en Datos. `logPorFila: false` porque esto puede tocar miles de RTs de una vez: se registra
+ * UN solo evento resumen en LOGS_ASIGNACION, no una fila por RT.
  */
 function ejecutarCargaLineaCero() {
   const lock = LockService.getScriptLock();
@@ -576,55 +792,52 @@ function ejecutarCargaLineaCero() {
     const mapeo = mapeoResultado.mapeo;
 
     const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
-    const sheetName = getConfig('SHEETS.DATOS');
-    const sheet = gestorDatos.getSheet(sheetName);
-    const { headers, rows } = gestorDatos.leerDatos(sheetName);
-
+    const { headers, rows } = gestorDatos.leerDatos(getConfig('SHEETS.DATOS'));
     if (!headers.length) throw new Error('No se pudo leer la hoja Datos');
 
+    const idxRT = findColumnIndex(headers, getConfig('COLUMNS.RT'));
     const idxArticulador = findColumnIndex(headers, getConfig('COLUMNS.ARTICULADOR_JURIDICO'));
     const idxGestor = findColumnIndex(headers, getConfig('COLUMNS.GESTOR_JURIDICO'));
-
-    if (idxArticulador < 0 || idxGestor < 0) {
-      throw new Error('Columnas ARTICULADOR JUIRIDICO / GESTOR JURÍDICO no encontradas en Datos');
+    if (idxRT < 0 || idxArticulador < 0 || idxGestor < 0) {
+      throw new Error('Columnas requeridas no encontradas en Datos');
     }
 
-    const totalFilas = rows.length;
-    const colArticuladorSheet = idxArticulador + 1;
-    const colGestorSheet = idxGestor + 1;
+    const rtCol = headers[idxRT];
+    const colArticulador = headers[idxArticulador];
+    const colGestor = headers[idxGestor];
 
-    // Una sola lectura por columna, se parcha en memoria por lotes de 1000, una sola
-    // escritura por columna al final — Directiva 3, mismo patrón que el resto del archivo.
-    const valoresArticulador = totalFilas > 0 ? sheet.getRange(2, colArticuladorSheet, totalFilas, 1).getValues() : [];
-    const valoresGestor = totalFilas > 0 ? sheet.getRange(2, colGestorSheet, totalFilas, 1).getValues() : [];
+    const cambios = [];
+    let candidatosArticulador = 0;
+    let candidatosGestor = 0;
 
-    let cambiosArticulador = 0;
-    let cambiosGestor = 0;
+    rows.forEach(function(row) {
+      const rt = String(row[rtCol] || '').trim();
+      if (!rt) return;
+      const articuladorActual = String(row[colArticulador] || '').trim();
+      const gestorActual = String(row[colGestor] || '').trim();
+      const cambio = { rt: rt };
+      let tieneCambio = false;
 
-    for (let start = 0; start < totalFilas; start += EQUIPOS_ENGINE.batchSize) {
-      const fin = Math.min(start + EQUIPOS_ENGINE.batchSize, totalFilas);
-      for (let i = start; i < fin; i++) {
-        const articuladorActual = String(valoresArticulador[i][0] || '').trim();
-        const emailMapeadoArt = articuladorActual ? mapeo[articuladorActual] : null;
-        if (emailMapeadoArt && emailMapeadoArt !== articuladorActual) {
-          valoresArticulador[i][0] = emailMapeadoArt;
-          cambiosArticulador++;
-        }
-
-        const gestorActual = String(valoresGestor[i][0] || '').trim();
-        const emailMapeadoGes = gestorActual ? mapeo[gestorActual] : null;
-        if (emailMapeadoGes && emailMapeadoGes !== gestorActual) {
-          valoresGestor[i][0] = emailMapeadoGes;
-          cambiosGestor++;
-        }
+      if (articuladorActual && mapeo[articuladorActual]) {
+        cambio.articuladorEmail = mapeo[articuladorActual];
+        tieneCambio = true;
+        candidatosArticulador++;
       }
-    }
+      if (gestorActual && mapeo[gestorActual]) {
+        cambio.gestorEmail = mapeo[gestorActual];
+        tieneCambio = true;
+        candidatosGestor++;
+      }
+      if (tieneCambio) cambios.push(cambio);
+    });
 
-    if (cambiosArticulador > 0) sheet.getRange(2, colArticuladorSheet, totalFilas, 1).setValues(valoresArticulador);
-    if (cambiosGestor > 0) sheet.getRange(2, colGestorSheet, totalFilas, 1).setValues(valoresGestor);
-
-    const totalAsociacionesResueltas = cambiosArticulador + cambiosGestor;
     const ejecutorEmail = Session.getActiveUser().getEmail() || 'Sistema';
+
+    const resultado = cambios.length
+      ? _upsertAsignacionesEquipos(cambios, ejecutorEmail, { logPorFila: false })
+      : { cambiosAplicados: 0 };
+
+    const totalAsociacionesResueltas = resultado.cambiosAplicados;
 
     const logResultado = registrarLogAsignacion({
       nivel: 'GLOBAL',
@@ -634,17 +847,18 @@ function ejecutarCargaLineaCero() {
       usuarioNuevo: '',
       ejecutorEmail: ejecutorEmail,
       observaciones: 'Inicialización de Línea Cero (Baseline) completada — ' + totalAsociacionesResueltas +
-        ' asociaciones resueltas (' + cambiosArticulador + ' Articulador, ' + cambiosGestor + ' Gestor) sobre ' + totalFilas + ' RTs.'
+        ' asociaciones escritas en ASIGNACIONES_EQUIPOS (' + candidatosArticulador + ' candidatas Articulador, ' +
+        candidatosGestor + ' candidatas Gestor) sobre ' + rows.length + ' RTs.'
     });
 
     _invalidarCacheDatosSiExiste();
 
     return {
       success: true,
-      totalRTsProcesados: totalFilas,
+      totalRTsProcesados: rows.length,
       totalAsociacionesResueltas: totalAsociacionesResueltas,
-      cambiosArticulador: cambiosArticulador,
-      cambiosGestor: cambiosGestor,
+      cambiosArticulador: candidatosArticulador,
+      cambiosGestor: candidatosGestor,
       totalNombresMapeados: mapeoResultado.totalMapeados,
       logRegistrado: !!(logResultado && logResultado.success)
     };
