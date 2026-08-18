@@ -23,6 +23,12 @@ const HOMOLOGACION_ENGINE = {
   batchSize: 1000
 };
 
+// ✅ [CONC-BE-15]: forma válida de email genérica (sin restringir dominio) — usada solo
+// para RECONOCER que un valor de Datos ya es un email (y por tanto debe compararse por
+// email, nunca por fuzzy-matching de nombres). La restricción a @idu.gov.co, cuando aplica,
+// vive en gestion_equipos_backend.js (ejecutarCargaLineaCero), no aquí.
+const REGEX_EMAIL_HOMOLOGACION = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /**
  * Normaliza un nombre para comparación: mayúsculas, sin tildes, espacios colapsados.
  * findColumnIndex()/pac_getColIdx() no ignoran tildes — este helper cierra ese gap
@@ -120,14 +126,55 @@ function _tokenSetRatio(nombreNormalizadoA, nombreNormalizadoB) {
 
 /**
  * Busca la mejor coincidencia de `nombreBuscado` en `directorio` (combinado USUARIOS+Grupos).
- * 1. Igualdad exacta normalizada (sin tildes) → ENCONTRADO_ACTIVO / ENCONTRADO_INACTIVO /
- *    ENCONTRADO_SIN_PERFIL (coincide, pero la fila viene solo de Grupos, sin ROL/ACTIVO).
+ * 0. ✅ [CONC-BE-15] — punto ciego original: si `nombreBuscado` YA es un email (Datos puede
+ *    traer el correo directo en vez de un nombre libre), se compara por email, NUNCA por
+ *    fuzzy-matching de nombres — un email contra una lista de nombres propios casi nunca
+ *    supera el umbral de Levenshtein/Token Set Ratio, así que sin este paso el resultado
+ *    terminaba siempre en NO_ENCONTRADO pese a que el dato ya era correcto:
+ *    a. Coincide (case-insensitive) con `u.email` de alguna fila del directorio →
+ *       ENCONTRADO_ACTIVO / ENCONTRADO_INACTIVO (según el `ACTIVO` de esa fila) o
+ *       ENCONTRADO_SIN_PERFIL si la fila viene de una fuente sin perfil completo.
+ *    b. Tiene forma de email válida pero no hay ninguna fila con ese email en el
+ *       directorio → se preserva tal cual (Email → Email) como ENCONTRADO_SIN_PERFIL con
+ *       un `usuario` sintético — más confiable que descartarlo o forzarlo por fuzzy-name.
+ * 1. Igualdad exacta normalizada por NOMBRE (sin tildes) → ENCONTRADO_ACTIVO / INACTIVO /
+ *    SIN_PERFIL (coincide, pero la fila viene solo de Grupos, sin ROL/ACTIVO).
  * 2. Token Set Ratio + Levenshtein sobre nombres normalizados (se toma el mayor de los dos,
  *    porque cubren casos distintos: Levenshtein detecta typos dentro del mismo nombre,
  *    Token Set Ratio detecta nombres informales/incompletos) → SIMILITUD_APROXIMADA si > umbral.
  * 3. Si no hay nada por encima del umbral → NO_ENCONTRADO.
  */
 function _mejorCoincidenciaUsuario(nombreBuscado, directorio) {
+  const valorCrudo = String(nombreBuscado || '').trim();
+
+  if (valorCrudo.indexOf('@') >= 0) {
+    const emailBuscado = valorCrudo.toLowerCase();
+    const porEmail = directorio.find(function(u) {
+      return String(u.email || '').trim().toLowerCase() === emailBuscado;
+    });
+
+    if (porEmail) {
+      const confianza = porEmail.fuente === 'GRUPOS'
+        ? 'ENCONTRADO_SIN_PERFIL'
+        : (_esActivo(porEmail) ? 'ENCONTRADO_ACTIVO' : 'ENCONTRADO_INACTIVO');
+      return { usuario: porEmail, puntaje: 1, confianza: confianza };
+    }
+
+    if (REGEX_EMAIL_HOMOLOGACION.test(valorCrudo)) {
+      return {
+        usuario: {
+          email: valorCrudo, nombre: valorCrudo, rol: '', activo: 'SI',
+          componente: '', fuente: 'DATOS_DIRECTO'
+        },
+        puntaje: 1,
+        confianza: 'ENCONTRADO_SIN_PERFIL'
+      };
+    }
+    // Contiene '@' pero no tiene forma de email válida (ni matchea ningún u.email) —
+    // sigue de largo hacia el fuzzy-matching por nombre normalizado, como cualquier
+    // otro valor no reconocido.
+  }
+
   const nombreNormalizado = _normalizarNombreUsuario(nombreBuscado);
   if (!nombreNormalizado) {
     return { usuario: null, puntaje: 0, confianza: 'NO_ENCONTRADO' };
@@ -292,18 +339,36 @@ function obtenerMapeoLineaCero() {
 
     const CONFIANZAS_AUTOMATIZABLES = ['ENCONTRADO_ACTIVO', 'ENCONTRADO_SIN_PERFIL'];
     const mapeo = {};
+    // ✅ [CONC-BE-15]: contadores solo para observabilidad — ambos casos alimentan el
+    // mismo `mapeo` plano (nombreEnDatos → email), ejecutarCargaLineaCero() lo consulta
+    // igual sin importar de cuál vino. "Por email directo" cubre el caso en que Datos ya
+    // traía el correo (match exacto contra USUARIOS.EMAIL vía _mejorCoincidenciaUsuario,
+    // o preservación Email→Email cuando el email no tenía fila en USUARIOS). "Por nombre"
+    // cubre el flujo histórico de homologación difusa/exacta sobre nombres libres.
+    let totalPorNombre = 0;
+    let totalPorEmailDirecto = 0;
 
     homologacion.articuladores.concat(homologacion.gestores).forEach(function(item) {
       if (!item.email || !item.nombreEnDatos) return;
       const califica = CONFIANZAS_AUTOMATIZABLES.indexOf(item.confianza) >= 0 ||
         (item.confianza === 'SIMILITUD_APROXIMADA' && item.puntaje >= LINEA_CERO_UMBRAL_APROXIMADA);
-      if (califica) mapeo[item.nombreEnDatos] = item.email;
+      if (!califica) return;
+
+      mapeo[item.nombreEnDatos] = item.email;
+
+      if (item.nombreEnDatos.trim().toLowerCase() === String(item.email).trim().toLowerCase()) {
+        totalPorEmailDirecto++;
+      } else {
+        totalPorNombre++;
+      }
     });
 
     return {
       success: true,
       mapeo: mapeo,
-      totalMapeados: Object.keys(mapeo).length
+      totalMapeados: Object.keys(mapeo).length,
+      totalPorNombre: totalPorNombre,
+      totalPorEmailDirecto: totalPorEmailDirecto
     };
   } catch (e) {
     console.error('❌ Error en obtenerMapeoLineaCero: ' + e.message);

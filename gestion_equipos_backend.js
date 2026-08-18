@@ -30,6 +30,14 @@ const EQUIPOS_ENGINE = {
 
 const REGEX_EMAIL_SIMPLE_EQUIPOS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// ✅ [CONC-BE-15]: dominio institucional — usado en ejecutarCargaLineaCero() como
+// verificación directa e independiente de obtenerMapeoLineaCero(). Si Datos ya trae un
+// email @idu.gov.co en Articulador/Gestor, se usa tal cual sin pasar por el mapeo de
+// homologación — defensa en profundidad: el mapeo YA reconoce este caso (ver
+// _mejorCoincidenciaUsuario en homologacion_usuarios.js), pero esta función no debe
+// depender de esa ruta para garantizar la dupla oficial cuando el dato ya es correcto.
+const REGEX_EMAIL_IDU_LINEA_CERO = /^[^\s@]+@idu\.gov\.co$/i;
+
 /**
  * Regla estricta de completitud (Sprint 6, feedback de usuario): un RT solo cuenta como
  * asignado si TIENE Articulador Y Gestor — falta cualquiera de los dos y cuenta como
@@ -833,15 +841,31 @@ function ejecutarCargaLineaCero() {
       const cambio = { rt: rt };
       let tieneCambio = false;
 
-      if (articuladorActual && mapeo[articuladorActual]) {
-        cambio.articuladorEmail = mapeo[articuladorActual];
-        tieneCambio = true;
-        candidatosArticulador++;
+      // Dos condiciones independientes por campo, cualquiera basta: (a) el valor ya ES
+      // un email institucional válido → se usa directo, sin pasar por el mapeo; (b) si no,
+      // se intenta resolver por homologación (nombre libre u otro email vía
+      // obtenerMapeoLineaCero(), que también reconoce email→email — ver _mejorCoincidenciaUsuario).
+      if (articuladorActual) {
+        if (REGEX_EMAIL_IDU_LINEA_CERO.test(articuladorActual)) {
+          cambio.articuladorEmail = articuladorActual;
+          tieneCambio = true;
+          candidatosArticulador++;
+        } else if (mapeo[articuladorActual]) {
+          cambio.articuladorEmail = mapeo[articuladorActual];
+          tieneCambio = true;
+          candidatosArticulador++;
+        }
       }
-      if (gestorActual && mapeo[gestorActual]) {
-        cambio.gestorEmail = mapeo[gestorActual];
-        tieneCambio = true;
-        candidatosGestor++;
+      if (gestorActual) {
+        if (REGEX_EMAIL_IDU_LINEA_CERO.test(gestorActual)) {
+          cambio.gestorEmail = gestorActual;
+          tieneCambio = true;
+          candidatosGestor++;
+        } else if (mapeo[gestorActual]) {
+          cambio.gestorEmail = mapeo[gestorActual];
+          tieneCambio = true;
+          candidatosGestor++;
+        }
       }
 
       if (tieneCambio) {
