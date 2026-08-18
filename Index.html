@@ -733,44 +733,50 @@
                         </div>
                         <div class="modal-body">
                             <div class="alert alert-info py-2 small mb-3"><i class="fas fa-circle-info"></i> El cambio se guarda en un borrador local. No se aplica al servidor hasta que uses "Guardar Todos los Cambios".</div>
-                            <div class="mb-3">
-                                <label class="form-label">Nivel</label>
-                                <select id="equiposNivel" class="form-select" onchange="onEquiposNivelChange()">
-                                    <option value="PROYECTO">Proyecto</option>
-                                    <option value="TRAMO">Tramo</option>
-                                    <option value="RT">RT</option>
-                                </select>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Proyecto</label>
-                                <select id="equiposProyecto" class="form-select" onchange="onEquiposProyectoChange()">
-                                    <option value="">Selecciona un proyecto...</option>
-                                </select>
-                            </div>
-                            <div class="mb-3 d-none" id="grupoEquiposTramo">
-                                <label class="form-label">Tramo</label>
-                                <select id="equiposTramo" class="form-select" onchange="onEquiposTramoChange()">
-                                    <option value="">Selecciona un proyecto primero...</option>
-                                </select>
-                            </div>
-                            <div class="mb-3 d-none" id="grupoEquiposRT">
-                                <label class="form-label">RT</label>
-                                <select id="equiposRT" class="form-select">
-                                    <option value="">Selecciona un tramo primero...</option>
-                                </select>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Articulador</label>
-                                <select id="asignacionEmailArticulador" class="form-select" onchange="handleArticuladorChangeInModal(this.value)">
-                                    <option value="">Selecciona un articulador...</option>
-                                </select>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Gestor</label>
-                                <select id="asignacionEmailGestor" class="form-select" onchange="handleGestorSelectChangeInModal(this.value)">
-                                    <option value="">Selecciona un gestor...</option>
-                                </select>
-                                <div class="form-text">La lista se filtra automáticamente al componente/equipo del Articulador seleccionado.</div>
+                            <!-- ✅ [CONC-FE-14]: cuadrícula de dos columnas — ubicación (Nivel/Proyecto/Tramo/RT)
+                                 a la izquierda, asignación (Articulador/Gestor) a la derecha. Los grupos ocultos
+                                 (d-none) según el Nivel se retiran del flujo flex, así que las filas se
+                                 recomponen solas sin dejar huecos. -->
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Nivel</label>
+                                    <select id="asignacionNivel" class="form-select" onchange="onEquiposNivelChange()">
+                                        <option value="PROYECTO">Proyecto</option>
+                                        <option value="TRAMO">Tramo</option>
+                                        <option value="RT">RT</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Proyecto</label>
+                                    <select id="asignacionProyecto" class="form-select" onchange="onEquiposProyectoChange()">
+                                        <option value="">Selecciona un proyecto...</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 d-none" id="grupoAsignacionTramo">
+                                    <label class="form-label">Tramo</label>
+                                    <select id="asignacionTramo" class="form-select" onchange="onEquiposTramoChange()">
+                                        <option value="">Selecciona un proyecto primero...</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 d-none" id="grupoAsignacionRT">
+                                    <label class="form-label">RT</label>
+                                    <select id="asignacionRT" class="form-select">
+                                        <option value="">Selecciona un tramo primero...</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Articulador</label>
+                                    <select id="asignacionEmailArticulador" class="form-select" onchange="handleArticuladorChangeInModal(this.value)">
+                                        <option value="">Selecciona un articulador...</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Gestor</label>
+                                    <select id="asignacionEmailGestor" class="form-select" onchange="handleGestorSelectChangeInModal(this.value)">
+                                        <option value="">Selecciona un gestor...</option>
+                                    </select>
+                                    <div class="form-text">⭐ = con historial real de trabajo junto al Articulador elegido.</div>
+                                </div>
                             </div>
                         </div>
                         <div class="modal-footer">

@@ -223,6 +223,111 @@ function getUsuariosParaAsignacionEquipos() {
 }
 
 /**
+ * ✅ [CONC-FE-14]: mapa de co-ocurrencia real Articulador -> [Gestores] — quién ha trabajado
+ * efectivamente con quién, según la matriz fusionada (Datos + overlay ASIGNACIONES_EQUIPOS,
+ * vía _leerFilasVisiblesRBACEquipos()/_fusionarAsignacionesConMatriz()). Es HISTÓRICO Y
+ * ACTUAL a la vez porque no distingue origen: cualquier RT cuya pareja Articulador/Gestor
+ * fusionada sea email-email (ambos homologados, `articuladorEsEmail`/`gestorEsEmail`) cuenta,
+ * sin importar si ese valor vino de `Datos` (legado) o de un `ASIGNACIONES_EQUIPOS` reciente.
+ * Alimenta la cascada de sugerencias del modal (handleArticuladorChangeInModal en
+ * app_equipos_js.html) — NO es una jerarquía de reporte formal, es una sugerencia derivada
+ * de patrones de trabajo reales, para reducir el ruido de "todos los gestores del componente"
+ * a "con quién trabajó de verdad este Articulador".
+ *
+ * Respeta el mismo alcance RBAC que el resto del módulo (Articulador/Gestor solo ven su
+ * propio subgrafo; Admin/Editor ven el grafo completo) — no es un endpoint separado sin
+ * filtrar, reutiliza _leerFilasVisiblesRBACEquipos() tal cual.
+ */
+function obtenerMapaRelacionesEquipos() {
+  try {
+    const filas = _leerFilasVisiblesRBACEquipos();
+    const mapa = {};
+
+    filas.forEach(function(f) {
+      if (!f.articuladorEsEmail || !f.gestorEsEmail) return; // solo parejas email-email confiables
+      const claveArticulador = f.articulador.trim().toLowerCase();
+      if (!mapa[claveArticulador]) mapa[claveArticulador] = [];
+      if (mapa[claveArticulador].indexOf(f.gestor) < 0) mapa[claveArticulador].push(f.gestor);
+    });
+
+    Object.keys(mapa).forEach(function(k) { mapa[k].sort(); });
+
+    return { success: true, mapaRelaciones: mapa };
+  } catch (e) {
+    console.error('❌ Error en obtenerMapaRelacionesEquipos: ' + e.message);
+    return { success: false, error: e.message, mapaRelaciones: {} };
+  }
+}
+
+/**
+ * ✅ [CONC-FE-14]: endpoint unificado "todo en un solo viaje" para abrir el modal de
+ * Asignación Granular sin cascada de round-trips (antes: 1 llamada para Proyectos + 1 por
+ * cada expansión de Tramo/RT + 1 para el directorio de Articulador/Gestor). Una sola lectura
+ * de `Datos`/`ASIGNACIONES_EQUIPOS` (_leerFilasVisiblesRBACEquipos(), ya fusionada y RBAC-
+ * filtrada) alimenta simultáneamente Proyectos/Tramos/RTs, y se reutilizan
+ * getUsuariosParaAsignacionEquipos() + obtenerMapaRelacionesEquipos() para el resto.
+ *
+ * `rtsPorTramo` usa clave compuesta `"proyecto||tramo"` (no solo el nombre del tramo) porque
+ * el mismo nombre de tramo puede repetirse en proyectos distintos — una clave plana los
+ * mezclaría. El cliente siempre tiene ambos valores seleccionados a la vez, así que construir
+ * la clave compuesta en `app_equipos_js.html` es trivial.
+ *
+ * Garantiza que `proyectos` nunca venga vacío mientras `Datos` tenga filas: a diferencia del
+ * flujo previo del modal (que dependía de `window.currentData`/`rawData`, poblados solo si el
+ * usuario ya había visitado la pestaña Matriz), este endpoint lee `Datos` directo en el
+ * servidor sin depender de qué otras pestañas visitó el cliente antes.
+ */
+function getProyectosYListaUsuarios() {
+  try {
+    const filas = _leerFilasVisiblesRBACEquipos();
+
+    const proyectosSet = {};
+    const tramosPorProyectoSet = {};
+    const rtsPorTramo = {};
+
+    filas.forEach(function(f) {
+      proyectosSet[f.proyecto] = true;
+
+      if (!tramosPorProyectoSet[f.proyecto]) tramosPorProyectoSet[f.proyecto] = {};
+      tramosPorProyectoSet[f.proyecto][f.tramo] = true;
+
+      const claveRT = f.proyecto + '||' + f.tramo;
+      if (!rtsPorTramo[claveRT]) rtsPorTramo[claveRT] = [];
+      rtsPorTramo[claveRT].push(f.rt);
+    });
+
+    const proyectos = Object.keys(proyectosSet).sort();
+
+    const tramosPorProyecto = {};
+    Object.keys(tramosPorProyectoSet).forEach(function(p) {
+      tramosPorProyecto[p] = Object.keys(tramosPorProyectoSet[p]).sort();
+    });
+
+    Object.keys(rtsPorTramo).forEach(function(k) { rtsPorTramo[k].sort(); });
+
+    const usuarios = getUsuariosParaAsignacionEquipos();
+    const relaciones = obtenerMapaRelacionesEquipos();
+
+    return {
+      success: true,
+      proyectos: proyectos,
+      tramosPorProyecto: tramosPorProyecto,
+      rtsPorTramo: rtsPorTramo,
+      articuladores: usuarios.success ? usuarios.articuladores : [],
+      gestores: usuarios.success ? usuarios.gestores : [],
+      mapaRelaciones: relaciones.success ? relaciones.mapaRelaciones : {}
+    };
+  } catch (e) {
+    console.error('❌ Error en getProyectosYListaUsuarios: ' + e.message);
+    return {
+      success: false, error: e.message,
+      proyectos: [], tramosPorProyecto: {}, rtsPorTramo: {},
+      articuladores: [], gestores: [], mapaRelaciones: {}
+    };
+  }
+}
+
+/**
  * KPIs del tablero de carga: Total RTs, RTs por Asignar (regla estricta: falta Articulador
  * O Gestor), distribución por Articulador/Gestor. `userContext` es solo un hint del cliente —
  * el rol/email real se resuelve SIEMPRE server-side.

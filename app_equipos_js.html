@@ -97,8 +97,57 @@
     pintarTabla(gestorBody, stats.distribucionGestor);
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // ✅ [CONC-FE-14]: catálogo unificado (Proyectos/Tramos/RTs + Articuladores/Gestores +
+  // mapa de relaciones) para el modal de Asignación Granular — un solo endpoint
+  // (getProyectosYListaUsuarios()) en vez de la cascada de round-trips previa
+  // (getProyectosConteo -> getTramosPorProyecto por cada expand -> getRTsPorTramo por
+  // cada expand -> getUsuariosParaAsignacionEquipos). Se precarga en segundo plano al
+  // entrar al módulo para que abrirModalAsignacionGranular() pueda poblar el selector de
+  // Proyecto de forma INSTANTÁNEA (0ms) la primera vez que el usuario hace click en
+  // "editar" — sin este precache, esa primera apertura tendría que esperar un
+  // round-trip completo antes de poder mostrar nada.
+  // ═══════════════════════════════════════════════════════════════════
+  window.catEstructuraEquipos = null; // {proyectos, tramosPorProyecto, rtsPorTramo, articuladores, gestores, mapaRelaciones}
+  let catEstructuraEquiposCargando = false;
+  let catEstructuraEquiposCallbacksPendientes = [];
+
+  function precargarCatEstructuraEquipos() {
+    if (window.catEstructuraEquipos || catEstructuraEquiposCargando) return;
+    catEstructuraEquiposCargando = true;
+    google.script.run
+      .withSuccessHandler(function(result) {
+        catEstructuraEquiposCargando = false;
+        if (result && result.success) {
+          window.catEstructuraEquipos = result;
+        } else {
+          console.warn('⚠️ getProyectosYListaUsuarios() no tuvo éxito: ' + ((result && result.error) || 'sin detalle'));
+        }
+        const callbacks = catEstructuraEquiposCallbacksPendientes;
+        catEstructuraEquiposCallbacksPendientes = [];
+        callbacks.forEach(function(cb) { cb(); });
+      })
+      .withFailureHandler(function(error) {
+        catEstructuraEquiposCargando = false;
+        console.warn('⚠️ Error cargando getProyectosYListaUsuarios(): ' + (error.message || error));
+        const callbacks = catEstructuraEquiposCallbacksPendientes;
+        catEstructuraEquiposCallbacksPendientes = [];
+        callbacks.forEach(function(cb) { cb(); });
+      })
+      .getProyectosYListaUsuarios();
+  }
+
+  // Ejecuta `cb` en cuanto window.catEstructuraEquipos esté disponible: de inmediato si ya
+  // está cargado, o encolado a la respuesta en curso/nueva si no.
+  function conCatEstructuraEquipos(cb) {
+    if (window.catEstructuraEquipos) { cb(); return; }
+    catEstructuraEquiposCallbacksPendientes.push(cb);
+    precargarCatEstructuraEquipos();
+  }
+
   function cargarModuloEquipos() {
     aplicarVisibilidadNavEquipos();
+    precargarCatEstructuraEquipos();
 
     // Pintado optimista desde IndexedDB mientras llega la respuesta fresca del servidor.
     equiposCacheRead().then(function(cached) {
@@ -587,11 +636,6 @@
   // ═══════════════════════════════════════════════════════════════════
   // Formulario de Asignación Granular — cascada Proyecto → Tramo → RT
   // ═══════════════════════════════════════════════════════════════════
-  function equiposDatosBase() {
-    return Array.isArray(window.currentData) && window.currentData.length ? window.currentData
-         : (Array.isArray(window.rawData) ? window.rawData : []);
-  }
-
   function poblarSelectEquipos(selectId, valores, placeholder) {
     const select = document.getElementById(selectId);
     if (!select) return;
@@ -602,79 +646,118 @@
   }
 
   function onEquiposNivelChange() {
-    const nivel = document.getElementById('equiposNivel').value;
-    document.getElementById('grupoEquiposTramo').classList.toggle('d-none', nivel !== 'TRAMO' && nivel !== 'RT');
-    document.getElementById('grupoEquiposRT').classList.toggle('d-none', nivel !== 'RT');
+    const nivel = document.getElementById('asignacionNivel').value;
+    document.getElementById('grupoAsignacionTramo').classList.toggle('d-none', nivel !== 'TRAMO' && nivel !== 'RT');
+    document.getElementById('grupoAsignacionRT').classList.toggle('d-none', nivel !== 'RT');
   }
   window.onEquiposNivelChange = onEquiposNivelChange;
 
+  // ✅ [CONC-FE-14]: las cascadas Proyecto -> Tramo -> RT ahora leen window.catEstructuraEquipos
+  // (un solo payload precargado por getProyectosYListaUsuarios()) en vez de escanear
+  // window.currentData/rawData fila por fila — deja de depender de que el usuario haya
+  // visitado antes la pestaña Matriz, y no repite el escaneo de miles de filas en cada
+  // cambio de selección.
   function onEquiposProyectoChange() {
-    const proyecto = document.getElementById('equiposProyecto').value;
-    const datos = equiposDatosBase();
-    const tramos = proyecto
-      ? Array.from(new Set(datos.filter(function(r) { return r[C.PROYECTO] === proyecto; }).map(function(r) { return r[C.TRAMO]; }))).filter(Boolean).sort()
-      : [];
-    poblarSelectEquipos('equiposTramo', tramos, 'Selecciona un tramo...');
-    poblarSelectEquipos('equiposRT', [], 'Selecciona un tramo primero...');
+    const proyecto = document.getElementById('asignacionProyecto').value;
+    const cat = window.catEstructuraEquipos;
+    const tramos = (proyecto && cat && cat.tramosPorProyecto && cat.tramosPorProyecto[proyecto]) || [];
+    poblarSelectEquipos('asignacionTramo', tramos, 'Selecciona un tramo...');
+    poblarSelectEquipos('asignacionRT', [], 'Selecciona un tramo primero...');
   }
   window.onEquiposProyectoChange = onEquiposProyectoChange;
 
   function onEquiposTramoChange() {
-    const proyecto = document.getElementById('equiposProyecto').value;
-    const tramo = document.getElementById('equiposTramo').value;
-    const datos = equiposDatosBase();
-    const rts = tramo
-      ? Array.from(new Set(datos.filter(function(r) { return r[C.PROYECTO] === proyecto && r[C.TRAMO] === tramo; }).map(function(r) { return r[C.RT]; }))).filter(Boolean).sort()
-      : [];
-    poblarSelectEquipos('equiposRT', rts, 'Selecciona un RT...');
+    const proyecto = document.getElementById('asignacionProyecto').value;
+    const tramo = document.getElementById('asignacionTramo').value;
+    const cat = window.catEstructuraEquipos;
+    // Clave compuesta "proyecto||tramo" — ver comentario de getProyectosYListaUsuarios()
+    // en gestion_equipos_backend.js: el mismo nombre de tramo puede repetirse entre proyectos.
+    const rts = (tramo && cat && cat.rtsPorTramo && cat.rtsPorTramo[proyecto + '||' + tramo]) || [];
+    poblarSelectEquipos('asignacionRT', rts, 'Selecciona un RT...');
   }
   window.onEquiposTramoChange = onEquiposTramoChange;
-
-  // ═══════════════════════════════════════════════════════════════════
-  // ✅ [CONC-FE-13]: directorio Articulador/Gestor para los <select> reactivos del modal
-  // (antes eran <input type="email"> de texto libre, sin validar contra USUARIOS). Se
-  // carga una vez por sesión de módulo desde getUsuariosParaAsignacionEquipos() y se
-  // reutiliza en cada apertura del modal — el roster de USUARIOS no cambia con la
-  // frecuencia suficiente como para justificar un round-trip por click de "editar".
-  // ═══════════════════════════════════════════════════════════════════
-  let usuariosAsignacionCache = null; // { articuladores: [{email,nombre,componente}], gestores: [...] }
 
   function _poblarSelectArticuladorAsignacion() {
     const select = document.getElementById('asignacionEmailArticulador');
     if (!select) return;
-    const lista = (usuariosAsignacionCache && usuariosAsignacionCache.articuladores) || [];
+    const lista = (window.catEstructuraEquipos && window.catEstructuraEquipos.articuladores) || [];
     select.innerHTML = '<option value="">Selecciona un articulador...</option>' +
       lista.map(function(u) {
         return '<option value="' + u.email + '" data-componente="' + (u.componente || '') + '">' + u.nombre + '</option>';
       }).join('');
   }
 
-  // `componente` null/'' => sin filtro (todos los gestores activos). Cuando SÍ hay filtro y
-  // recorta la lista, se agrega la opción de escape "(Todos los gestores)" al final —
-  // seleccionarla dispara handleGestorSelectChangeInModal() para reabrir la lista completa.
-  function _poblarSelectGestorAsignacion(componente) {
+  function _resolverArticuladorPorEmail(articuladorEmail) {
+    const lista = (window.catEstructuraEquipos && window.catEstructuraEquipos.articuladores) || [];
+    const emailLower = String(articuladorEmail || '').trim().toLowerCase();
+    if (!emailLower) return null;
+    return lista.find(function(u) { return String(u.email || '').trim().toLowerCase() === emailLower; }) || null;
+  }
+
+  // ✅ [CONC-FE-14]: cascada de 3 niveles de sugerencia para el Gestor, en orden de
+  // relevancia — 1) "Gestores Asociados al Articulador": co-ocurrencia REAL según
+  // mapaRelaciones (con quién trabajó de verdad, ⭐ como distintivo visual ya que un
+  // <option> nativo no admite badges HTML); 2) "Gestores del Mismo Componente": mismo
+  // equipo organizacional, aunque nunca hayan compartido un RT; 3) "(Ver todos los
+  // gestores)": escape final sin ningún filtro. `articuladorEmail` null/'' => sin
+  // articulador elegido todavía → lista plana completa, sin optgroups.
+  function _poblarSelectGestorAsignacion(articuladorEmail) {
     const select = document.getElementById('asignacionEmailGestor');
     if (!select) return;
-    const todos = (usuariosAsignacionCache && usuariosAsignacionCache.gestores) || [];
-    const filtrados = componente ? todos.filter(function(u) { return u.componente === componente; }) : todos;
+    const cat = window.catEstructuraEquipos;
+    const todos = (cat && cat.gestores) || [];
 
-    let html = '<option value="">Selecciona un gestor...</option>' +
-      filtrados.map(function(u) { return '<option value="' + u.email + '">' + u.nombre + '</option>'; }).join('');
-    if (componente && filtrados.length < todos.length) {
-      html += '<option value="__TODOS_GESTORES__">— (Todos los gestores) —</option>';
+    if (!articuladorEmail) {
+      select.innerHTML = '<option value="">Selecciona un gestor...</option>' +
+        todos.map(function(u) { return '<option value="' + u.email + '">' + u.nombre + '</option>'; }).join('');
+      return;
+    }
+
+    const articulador = _resolverArticuladorPorEmail(articuladorEmail);
+    const componente = articulador ? articulador.componente : null;
+    const emailArtLower = String(articuladorEmail).trim().toLowerCase();
+    const relacionados = (cat && cat.mapaRelaciones && cat.mapaRelaciones[emailArtLower]) || [];
+    const relacionadosSet = {};
+    relacionados.forEach(function(email) { relacionadosSet[String(email).trim().toLowerCase()] = true; });
+
+    function emailLower(u) { return String(u.email || '').trim().toLowerCase(); }
+
+    const tierRelacionados = todos.filter(function(u) { return relacionadosSet[emailLower(u)]; });
+    const tierComponente = componente
+      ? todos.filter(function(u) { return u.componente === componente && !relacionadosSet[emailLower(u)]; })
+      : [];
+    const yaListados = {};
+    tierRelacionados.concat(tierComponente).forEach(function(u) { yaListados[emailLower(u)] = true; });
+    const hayMasGestores = todos.some(function(u) { return !yaListados[emailLower(u)]; });
+
+    function opcion(u, destacar) {
+      const etiqueta = destacar ? '⭐ ' + u.nombre : u.nombre;
+      return '<option value="' + u.email + '">' + etiqueta + '</option>';
+    }
+
+    let html = '<option value="">Selecciona un gestor...</option>';
+    if (tierRelacionados.length) {
+      html += '<optgroup label="Gestores Asociados al Articulador">' +
+        tierRelacionados.map(function(u) { return opcion(u, true); }).join('') + '</optgroup>';
+    }
+    if (tierComponente.length) {
+      html += '<optgroup label="Gestores del Mismo Componente">' +
+        tierComponente.map(function(u) { return opcion(u, false); }).join('') + '</optgroup>';
+    }
+    if (hayMasGestores) {
+      html += '<option value="__TODOS_GESTORES__">— (Ver todos los gestores) —</option>';
     }
     select.innerHTML = html;
   }
 
-  // Cascada: al elegir Articulador, el select de Gestor se recorta a su mismo componente/equipo.
+  // Cascada: al elegir Articulador, el select de Gestor se reordena por relevancia (co-
+  // ocurrencia real > mismo componente > el resto).
   function handleArticuladorChangeInModal(articuladorEmail) {
-    const lista = (usuariosAsignacionCache && usuariosAsignacionCache.articuladores) || [];
-    const articulador = lista.find(function(u) { return u.email === articuladorEmail; });
-    _poblarSelectGestorAsignacion(articulador ? articulador.componente : null);
+    _poblarSelectGestorAsignacion(articuladorEmail || null);
   }
   window.handleArticuladorChangeInModal = handleArticuladorChangeInModal;
 
-  // Escape valve del filtro por componente: "(Todos los gestores)" reabre la lista completa.
+  // Escape valve: "(Ver todos los gestores)" reabre la lista completa, sin filtro ni tiers.
   function handleGestorSelectChangeInModal(valor) {
     if (valor === '__TODOS_GESTORES__') {
       _poblarSelectGestorAsignacion(null);
@@ -694,27 +777,26 @@
 
   function _renderModalAsignacionGranular(nivel, idTarget, pre) {
     const ids = _resolverIdsNodoAsignacion(nivel, idTarget, pre);
+    const cat = window.catEstructuraEquipos;
 
-    const datos = equiposDatosBase();
-    const proyectos = Array.from(new Set(datos.map(function(r) { return r[C.PROYECTO]; }))).filter(Boolean).sort();
-    poblarSelectEquipos('equiposProyecto', proyectos, 'Selecciona un proyecto...');
-    poblarSelectEquipos('equiposTramo', [], 'Selecciona un proyecto primero...');
-    poblarSelectEquipos('equiposRT', [], 'Selecciona un tramo primero...');
+    poblarSelectEquipos('asignacionProyecto', (cat && cat.proyectos) || [], 'Selecciona un proyecto...');
+    poblarSelectEquipos('asignacionTramo', [], 'Selecciona un proyecto primero...');
+    poblarSelectEquipos('asignacionRT', [], 'Selecciona un tramo primero...');
 
-    document.getElementById('equiposNivel').value = nivel || 'PROYECTO';
+    document.getElementById('asignacionNivel').value = nivel || 'PROYECTO';
     _poblarSelectArticuladorAsignacion();
     _poblarSelectGestorAsignacion(null);
     document.getElementById('asignacionEmailArticulador').value = '';
     document.getElementById('asignacionEmailGestor').value = '';
 
     if (ids.proyecto) {
-      document.getElementById('equiposProyecto').value = ids.proyecto;
+      document.getElementById('asignacionProyecto').value = ids.proyecto;
       onEquiposProyectoChange();
       if (ids.tramo) {
-        document.getElementById('equiposTramo').value = ids.tramo;
+        document.getElementById('asignacionTramo').value = ids.tramo;
         onEquiposTramoChange();
         if (ids.rt) {
-          document.getElementById('equiposRT').value = ids.rt;
+          document.getElementById('asignacionRT').value = ids.rt;
         }
       }
     }
@@ -734,9 +816,9 @@
     if (gestorPre) {
       const selectGestor = document.getElementById('asignacionEmailGestor');
       const yaDisponible = Array.prototype.some.call(selectGestor.options, function(o) { return o.value === gestorPre; });
-      // El gestor precargado puede pertenecer a otro componente (equipos mixtos/legado) —
-      // si el filtro por componente del Articulador lo dejó afuera, se reabre la lista
-      // completa para no perder el valor real que traía el nodo.
+      // El gestor precargado puede pertenecer a otro componente/no tener co-ocurrencia
+      // registrada (equipos mixtos/legado) — si los tiers de arriba lo dejaron afuera, se
+      // reabre la lista completa para no perder el valor real que traía el nodo.
       if (!yaDisponible) _poblarSelectGestorAsignacion(null);
       selectGestor.value = gestorPre;
     }
@@ -747,35 +829,26 @@
 
   // `datosPrecalculados` opcional: { proyecto, tramo, articulador, gestor } — usado por los
   // botones del árbol navegable para abrir el modal ya apuntando al nodo exacto que el
-  // usuario clickeó Y con la asignación vigente precargada (Sprint 6 [CONC-FE-13]: antes
-  // solo se precargaba la ubicación, no los valores de Articulador/Gestor ya asignados).
+  // usuario clickeó Y con la asignación vigente precargada.
+  //
+  // ✅ [CONC-FE-14]: si window.catEstructuraEquipos ya está precargado (caso normal — se
+  // dispara en segundo plano desde cargarModuloEquipos()), el modal se puebla y abre al
+  // instante (0ms de espera de red). Si todavía no llegó (click muy rápido tras entrar al
+  // módulo), se muestra un indicador discreto y se abre en cuanto la respuesta llegue —
+  // nunca se abre el modal con selects vacíos por una carrera de tiempos.
   function abrirModalAsignacionGranular(nivel, idTarget, datosPrecalculados) {
     const pre = datosPrecalculados || {};
-    if (usuariosAsignacionCache) {
+    if (window.catEstructuraEquipos) {
       _renderModalAsignacionGranular(nivel, idTarget, pre);
       return;
     }
 
-    google.script.run
-      .withSuccessHandler(function(result) {
-        if (result && result.success) {
-          usuariosAsignacionCache = { articuladores: result.articuladores || [], gestores: result.gestores || [] };
-        } else {
-          usuariosAsignacionCache = { articuladores: [], gestores: [] };
-          if (typeof window.showNotification === 'function') {
-            window.showNotification('Advertencia', 'No fue posible cargar el directorio de Articuladores/Gestores: ' + ((result && result.error) || ''), 'warning');
-          }
-        }
-        _renderModalAsignacionGranular(nivel, idTarget, pre);
-      })
-      .withFailureHandler(function(error) {
-        usuariosAsignacionCache = { articuladores: [], gestores: [] };
-        if (typeof window.showNotification === 'function') {
-          window.showNotification('Advertencia', 'No fue posible cargar el directorio de Articuladores/Gestores: ' + (error.message || error), 'warning');
-        }
-        _renderModalAsignacionGranular(nivel, idTarget, pre);
-      })
-      .getUsuariosParaAsignacionEquipos();
+    if (typeof window.showNotification === 'function') {
+      window.showNotification('Cargando', 'Preparando catálogo de Proyectos y Usuarios...', 'info');
+    }
+    conCatEstructuraEquipos(function() {
+      _renderModalAsignacionGranular(nivel, idTarget, pre);
+    });
   }
   window.abrirModalAsignacionGranular = abrirModalAsignacionGranular;
 
@@ -784,13 +857,13 @@
   // optimista. El envío real al servidor ocurre una sola vez, en lote, desde
   // guardarBorradorEquipos() -> asignarEquipoGranularLote().
   function agregarCambioAlBorrador() {
-    const nivel = document.getElementById('equiposNivel').value;
-    const proyecto = document.getElementById('equiposProyecto').value;
-    const tramo = document.getElementById('equiposTramo').value;
+    const nivel = document.getElementById('asignacionNivel').value;
+    const proyecto = document.getElementById('asignacionProyecto').value;
+    const tramo = document.getElementById('asignacionTramo').value;
     let idTarget = '';
     if (nivel === 'PROYECTO') idTarget = proyecto;
     else if (nivel === 'TRAMO') idTarget = tramo;
-    else if (nivel === 'RT') idTarget = document.getElementById('equiposRT').value;
+    else if (nivel === 'RT') idTarget = document.getElementById('asignacionRT').value;
 
     const articuladorEmail = document.getElementById('asignacionEmailArticulador').value.trim();
     const gestorSeleccionado = document.getElementById('asignacionEmailGestor').value.trim();
