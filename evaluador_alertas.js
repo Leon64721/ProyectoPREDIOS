@@ -331,7 +331,7 @@ class MotorEvaluadorReglas {
    * Acumula las alertas en la memoria antes de escribirlas
    */
   _registrarAlerta(rt, filaMatriz, regla, nivel, mensaje, diasRestantes) {
-    
+
     // Lógica de prioridad para el articulador
     let articuladorFinal = "SIN ASIGNAR";
     if (filaMatriz["ARTICULADOR JUIRIDICO"] && String(filaMatriz["ARTICULADOR JUIRIDICO"]).trim() !== "") {
@@ -340,13 +340,20 @@ class MotorEvaluadorReglas {
         articuladorFinal = filaMatriz["GESTOR JURÍDICO"];
     }
 
+    // ✅ SPRINT5-FASE-C: email de enrutamiento, resuelto directamente del registro evaluado.
+    const articuladorEmail = _resolverEmailDesdeCeldaAlertas(filaMatriz["ARTICULADOR JUIRIDICO"]);
+    const gestorEmail = _resolverEmailDesdeCeldaAlertas(filaMatriz["GESTOR JURÍDICO"]);
+
     this.alertasGeneradas.push({
       RT: rt,
       PROYECTO: filaMatriz["PROYECTO"] || "SIN PROYECTO",
       ARTICULADOR: articuladorFinal,
+      ARTICULADOR_EMAIL: articuladorEmail,
+      GESTOR_EMAIL: gestorEmail,
+      SIN_RESPONSABLE: !articuladorEmail && !gestorEmail,
       FASE: regla.fase,
       REGLA: regla.nombre,
-      NIVEL: nivel, 
+      NIVEL: nivel,
       MENSAJE: mensaje,
       DIAS_RESTANTES: diasRestantes !== null ? Math.round(diasRestantes) : "N/A",
       ESTADO_PREDIAL: filaMatriz["ESTADO PREDIAL AJUSTADO"] || ""
@@ -386,7 +393,7 @@ class MotorEvaluadorReglas {
         hojaAlertas.clear();
       }
 
-      const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "FASE", "REGLA", "DIAS RESTANTES", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
+      const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "ARTICULADOR_EMAIL", "GESTOR_EMAIL", "FASE", "REGLA", "DIAS RESTANTES", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
       hojaAlertas.getRange(1, 1, 1, headers.length).setValues([headers]);
       hojaAlertas.getRange(1, 1, 1, headers.length).setBackground("#c0392b").setFontColor("white").setFontWeight("bold");
 
@@ -406,6 +413,8 @@ class MotorEvaluadorReglas {
         a.RT,
         a.PROYECTO,
         a.ARTICULADOR,
+        a.ARTICULADOR_EMAIL || '',
+        a.GESTOR_EMAIL || '',
         a.FASE,
         a.REGLA,
         a.DIAS_RESTANTES,
@@ -475,6 +484,17 @@ class MotorEvaluadorReglas {
 
 const MAX_ALERTAS_PAYLOAD = 100;
 
+// ✅ SPRINT5-FASE-C: distingue si una celda ARTICULADOR JUIRIDICO/GESTOR JURÍDICO ya fue
+// migrada a email real (post asignarEquipoGranular()/reasignarUsuarioMasivo(), Fase A) o
+// todavía tiene el nombre libre histórico. No re-ejecuta homologación difusa aquí —
+// homologarUsuariosMatriz() ya existe para eso; esto es solo el chequeo barato de "¿ya es
+// un email?" para poder enrutar la notificación sin costo extra por alerta.
+const REGEX_EMAIL_SIMPLE_ALERTAS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function _resolverEmailDesdeCeldaAlertas(valor) {
+  const texto = String(valor || '').trim();
+  return REGEX_EMAIL_SIMPLE_ALERTAS.test(texto) ? texto.toLowerCase() : '';
+}
+
 function _normalizarSeveridadAlertas(valor) {
   const nivel = String(valor || '').toUpperCase();
   if (['CRITICA', 'ALERTA', 'ADVERTENCIA', 'INFO'].includes(nivel)) return nivel;
@@ -520,13 +540,21 @@ function evaluarAlertasDataset(dataset) {
         proyectos.add(proyecto);
         rts.add(rt);
 
+        const articuladorEmail = _resolverEmailDesdeCeldaAlertas(registro['ARTICULADOR JUIRIDICO']);
+        const gestorEmail = _resolverEmailDesdeCeldaAlertas(registro['GESTOR JURÍDICO']);
+
         alertas.push({
           RT: rt,
           PROYECTO: proyecto,
           REGLA: alerta.nombre || alerta.codigo || 'DESCONOCIDA',
           NIVEL: nivel,
           MENSAJE: alerta.mensaje || '',
-          FECHA_EVALUACION: alerta.fechaEvaluacion || new Date().toISOString()
+          FECHA_EVALUACION: alerta.fechaEvaluacion || new Date().toISOString(),
+          // ✅ SPRINT5-FASE-C: enrutamiento — vacío si la celda todavía tiene el nombre libre
+          // histórico (no migrado); SIN_RESPONSABLE marca los RTs que hoy no se pueden notificar.
+          ARTICULADOR_EMAIL: articuladorEmail,
+          GESTOR_EMAIL: gestorEmail,
+          SIN_RESPONSABLE: !articuladorEmail && !gestorEmail
         });
       });
     });

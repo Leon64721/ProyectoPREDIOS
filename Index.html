@@ -108,6 +108,10 @@
                     <div class="menu-section-title">
                         <i class="fas fa-sliders"></i> Administración
                     </div>
+                    <div class="menu-item d-none" id="navEquipos" onclick="showPage('equipos', this)">
+                        <i class="fas fa-users-gear"></i>
+                        <span>Gestión de Equipos</span>
+                    </div>
                     <div class="menu-item" onclick="showPage('permisos', this)">
                         <i class="fas fa-lock"></i>
                         <span>Permisos</span>
@@ -638,6 +642,159 @@
                     <div class="no-data" style="grid-column: 1/-1;">
                         <i class="fas fa-file-pdf"></i>
                         <p>No hay reportes guardados</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ✅ SPRINT5-FASE-B: PÁGINA: GESTIÓN DE EQUIPOS -->
+            <div id="page-equipos" class="page-section">
+              <div id="moduloGestionEquipos">
+                <div class="page-header">
+                    <h2>
+                        <i class="fas fa-users-gear"></i>
+                        Gestión de Equipos y Jerarquía RBAC
+                    </h2>
+                    <div class="page-actions">
+                        <button class="btn-secondary-custom" onclick="cargarModuloEquipos()"><i class="fas fa-rotate"></i> Recargar</button>
+                        <button class="btn-primary-custom" onclick="abrirModalHomologacionEquipos()"><i class="fas fa-user-check"></i> Homologación de Usuarios</button>
+                        <button class="btn-primary-custom" onclick="abrirFormularioAsignacionEquipos()"><i class="fas fa-diagram-project"></i> Asignación Granular</button>
+                        <button class="btn-secondary-custom bg-danger text-white border-0" onclick="abrirModalHandover()"><i class="fas fa-right-left"></i> Handover 1-Click</button>
+                    </div>
+                </div>
+
+                <!-- Tarjetas KPI -->
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6 col-lg-3">
+                        <div class="card shadow-sm h-100">
+                            <div class="card-body text-center">
+                                <div class="text-muted small text-uppercase">Total RTs</div>
+                                <div class="fs-2 fw-bold" id="kpiEquiposTotalRTs">-</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <div class="card shadow-sm h-100 border-warning">
+                            <div class="card-body text-center">
+                                <div class="text-muted small text-uppercase">RTs por Asignar</div>
+                                <div class="fs-2 fw-bold text-warning" id="kpiEquiposPorAsignar">-</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-lg-6">
+                        <div class="card shadow-sm">
+                            <div class="card-header bg-dark text-white"><i class="fas fa-user-tie"></i> Distribución por Articulador</div>
+                            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-striped table-sm mb-0">
+                                    <thead><tr><th>Email</th><th class="text-end">RTs</th></tr></thead>
+                                    <tbody id="tablaDistribucionArticulador">
+                                        <tr><td colspan="2" class="text-center text-muted py-3">Cargando...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="card shadow-sm">
+                            <div class="card-header bg-dark text-white"><i class="fas fa-user-gear"></i> Distribución por Gestor</div>
+                            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-striped table-sm mb-0">
+                                    <thead><tr><th>Email</th><th class="text-end">RTs</th></tr></thead>
+                                    <tbody id="tablaDistribucionGestor">
+                                        <tr><td colspan="2" class="text-center text-muted py-3">Cargando...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ✅ SPRINT5-FASE-B: MODAL — Asignación Granular (Proyecto → Tramo → RT) -->
+            <div class="modal fade" id="modalAsignacionGranular" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header bg-dark text-white">
+                            <h5 class="modal-title"><i class="fas fa-diagram-project"></i> Asignación Granular</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label">Nivel</label>
+                                <select id="equiposNivel" class="form-select" onchange="onEquiposNivelChange()">
+                                    <option value="PROYECTO">Proyecto</option>
+                                    <option value="TRAMO">Tramo</option>
+                                    <option value="RT">RT</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Proyecto</label>
+                                <select id="equiposProyecto" class="form-select" onchange="onEquiposProyectoChange()">
+                                    <option value="">Selecciona un proyecto...</option>
+                                </select>
+                            </div>
+                            <div class="mb-3 d-none" id="grupoEquiposTramo">
+                                <label class="form-label">Tramo</label>
+                                <select id="equiposTramo" class="form-select" onchange="onEquiposTramoChange()">
+                                    <option value="">Selecciona un proyecto primero...</option>
+                                </select>
+                            </div>
+                            <div class="mb-3 d-none" id="grupoEquiposRT">
+                                <label class="form-label">RT</label>
+                                <select id="equiposRT" class="form-select">
+                                    <option value="">Selecciona un tramo primero...</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Email Articulador</label>
+                                <input type="email" id="equiposArticuladorEmail" class="form-control" placeholder="articulador@idu.gov.co">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Email Gestor</label>
+                                <input type="email" id="equiposGestorEmail" class="form-control" placeholder="gestor@idu.gov.co">
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                            <button type="button" class="btn btn-primary" onclick="handleAsignarEquipoGranular()"><i class="fas fa-check"></i> Asignar</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ✅ SPRINT5-FASE-B: MODAL — Handover 1-Click -->
+            <div class="modal fade" id="modalHandoverEquipos" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header bg-danger text-white">
+                            <h5 class="modal-title"><i class="fas fa-right-left"></i> Handover 1-Click</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="text-muted small">Reemplaza globalmente un usuario por otro en todos los RT donde aparece asignado — para salidas/rotación de personal.</p>
+                            <div class="mb-3">
+                                <label class="form-label">Rol</label>
+                                <select id="handoverRol" class="form-select">
+                                    <option value="ARTICULADOR">Articulador</option>
+                                    <option value="GESTOR">Gestor</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Usuario de origen (sale)</label>
+                                <input type="text" id="handoverOrigen" class="form-control" placeholder="nombre o email actual en Datos">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Usuario de destino (entra)</label>
+                                <input type="email" id="handoverDestino" class="form-control" placeholder="nuevo@idu.gov.co">
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                            <button type="button" class="btn btn-danger" onclick="handleReasignarUsuarioMasivo()"><i class="fas fa-check"></i> Reasignar</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1677,6 +1834,7 @@
     <?!= include('app_herramientas_js') ?>
     <?!= include('app_normalizacion_js') ?>
     <?!= include('app_matriz_js') ?>
+    <?!= include('app_equipos_js') ?>
               <!-- ✅ MODAL: NUEVO FILTRO MATRIZ -->
             <div class="modal fade" id="nuevoFiltroModal" tabindex="-1">
                 <div class="modal-dialog modal-lg">

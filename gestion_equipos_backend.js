@@ -16,6 +16,103 @@ const EQUIPOS_ENGINE = {
   lockTimeoutMs: 60000
 };
 
+const REGEX_EMAIL_SIMPLE_EQUIPOS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * KPIs del tablero de carga (Fase B): Total RTs, RTs por Asignar, distribución por
+ * Articulador/Gestor. `userContext` es solo un hint del cliente — el rol/email que
+ * realmente decide el recorte se resuelve SIEMPRE server-side vía Session.getActiveUser()
+ * + getUserRole(), nunca del parámetro (un cliente podría declarar cualquier rol).
+ */
+function getEstadisticasCargaEquipos(userContext) {
+  try {
+    const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
+    const { headers, rows } = gestorDatos.leerDatos(getConfig('SHEETS.DATOS'));
+
+    if (!headers.length) {
+      return { success: false, error: 'No se pudo leer la hoja Datos' };
+    }
+
+    const idxArticulador = findColumnIndex(headers, getConfig('COLUMNS.ARTICULADOR_JURIDICO'));
+    const idxGestor = findColumnIndex(headers, getConfig('COLUMNS.GESTOR_JURIDICO'));
+
+    if (idxArticulador < 0 || idxGestor < 0) {
+      return { success: false, error: 'Columnas ARTICULADOR JUIRIDICO / GESTOR JURÍDICO no encontradas en Datos' };
+    }
+
+    const colArticulador = headers[idxArticulador];
+    const colGestor = headers[idxGestor];
+
+    const currentUserEmail = (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    const rolUsuario = getUserRole(currentUserEmail) || getConfig('ROLES.LECTOR');
+    const esArticulador = rolUsuario === getConfig('ROLES.ARTICULADOR');
+    const esGestor = rolUsuario === getConfig('ROLES.GESTOR');
+
+    const conteoArticulador = {};
+    const conteoGestor = {};
+    const articuladoresDelGestor = new Set(); // solo se usa si esGestor
+    let rtsPorAsignar = 0;
+
+    for (let start = 0; start < rows.length; start += EQUIPOS_ENGINE.batchSize) {
+      const fin = Math.min(start + EQUIPOS_ENGINE.batchSize, rows.length);
+      for (let i = start; i < fin; i++) {
+        const row = rows[i];
+        const articuladorCelda = String(row[colArticulador] || '').trim().toLowerCase();
+        const gestorCelda = String(row[colGestor] || '').trim().toLowerCase();
+        const articuladorEsEmail = REGEX_EMAIL_SIMPLE_EQUIPOS.test(articuladorCelda);
+        const gestorEsEmail = REGEX_EMAIL_SIMPLE_EQUIPOS.test(gestorCelda);
+
+        if (articuladorEsEmail) conteoArticulador[articuladorCelda] = (conteoArticulador[articuladorCelda] || 0) + 1;
+        if (gestorEsEmail) conteoGestor[gestorCelda] = (conteoGestor[gestorCelda] || 0) + 1;
+        if (!articuladorEsEmail && !gestorEsEmail) rtsPorAsignar++;
+
+        if (esGestor && gestorEsEmail && gestorCelda === currentUserEmail && articuladorEsEmail) {
+          articuladoresDelGestor.add(articuladorCelda);
+        }
+      }
+    }
+
+    let distribucionArticulador = Object.keys(conteoArticulador).map(function(email) {
+      return { email: email, totalRTs: conteoArticulador[email] };
+    });
+    let distribucionGestor = Object.keys(conteoGestor).map(function(email) {
+      return { email: email, totalRTs: conteoGestor[email] };
+    });
+
+    // Recorte RBAC: un Articulador solo ve su propia carga (y la de sus Gestores derivada de
+    // Datos); un Gestor solo ve su propia fila y la del/los Articulador(es) bajo los que trabaja.
+    if (esArticulador) {
+      distribucionArticulador = distribucionArticulador.filter(function(d) { return d.email === currentUserEmail; });
+      const gestoresDelArticulador = new Set();
+      for (let i = 0; i < rows.length; i++) {
+        const articuladorCelda = String(rows[i][colArticulador] || '').trim().toLowerCase();
+        const gestorCelda = String(rows[i][colGestor] || '').trim().toLowerCase();
+        if (articuladorCelda === currentUserEmail && REGEX_EMAIL_SIMPLE_EQUIPOS.test(gestorCelda)) {
+          gestoresDelArticulador.add(gestorCelda);
+        }
+      }
+      distribucionGestor = distribucionGestor.filter(function(d) { return gestoresDelArticulador.has(d.email); });
+    } else if (esGestor) {
+      distribucionArticulador = distribucionArticulador.filter(function(d) { return articuladoresDelGestor.has(d.email); });
+      distribucionGestor = distribucionGestor.filter(function(d) { return d.email === currentUserEmail; });
+    }
+
+    distribucionArticulador.sort(function(a, b) { return b.totalRTs - a.totalRTs; });
+    distribucionGestor.sort(function(a, b) { return b.totalRTs - a.totalRTs; });
+
+    return {
+      success: true,
+      totalRTs: rows.length,
+      rtsPorAsignar: (esArticulador || esGestor) ? null : rtsPorAsignar, // cola global — solo visible para Admin/Editor/Lector
+      distribucionArticulador: distribucionArticulador,
+      distribucionGestor: distribucionGestor
+    };
+  } catch (e) {
+    console.error('❌ Error en getEstadisticasCargaEquipos: ' + e.message);
+    return { success: false, error: e.message };
+  }
+}
+
 function _invalidarCacheDatosSiExiste() {
   try {
     if (typeof invalidateDataCache === 'function') invalidateDataCache();

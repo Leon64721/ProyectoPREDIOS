@@ -61,6 +61,7 @@ $(document).ready(function() {
                 currentRole = data.role || currentRole || 'Lector';
                 $('#user-display').text(currentUser);
                 $('#role-display').text(currentRole);
+                if (typeof window.aplicarVisibilidadNavEquipos === 'function') window.aplicarVisibilidadNavEquipos();
             })
             .withFailureHandler(function(error) {
                 console.warn('⚠️ No se pudo hidratar rol en background: ' + (error && error.message ? error.message : error));
@@ -68,6 +69,7 @@ $(document).ready(function() {
                 if (!currentRole) currentRole = 'Lector';
                 $('#user-display').text(currentUser);
                 $('#role-display').text(currentRole);
+                if (typeof window.aplicarVisibilidadNavEquipos === 'function') window.aplicarVisibilidadNavEquipos();
             })
             .getUserAndRole();
     } catch (e) {
@@ -2175,6 +2177,9 @@ function updateKPIs() {
             switch(pageId) {
                 case 'permisos':
                     loadPermissions();
+                    break;
+                case 'equipos':
+                    cargarModuloEquipos();
                     break;
                 case 'reportes':
                     loadReports();

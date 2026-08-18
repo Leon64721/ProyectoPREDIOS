@@ -340,18 +340,36 @@ function getDashboardData() {
       return { success: false, mantenimiento: true, message: "Sistema en mantenimiento" };
     }
 
+    // ✅ SPRINT5-FASE-C: se resuelve el rol ANTES del caché a propósito. CACHE_KEY_DASHBOARD
+    // (cache_backend.js) es una clave FIJA compartida por TODOS los usuarios — correcto para
+    // Admin/Editor/Lector (mismo dataset para todos, ver docstring "clave fija" en ese archivo),
+    // pero un agujero de seguridad real para Articulador/Gestor: sin este guard, el filtro RBAC
+    // de más abajo se calcularía correctamente pero jamás se ejecutaría si otro usuario ya
+    // dejó una respuesta completa en caché — un Articulador vería el dataset de un Admin
+    // durante los 30 minutos de TTL. Por eso Articulador/Gestor se excluyen explícitamente
+    // del caché compartido (ni leen ni escriben en él), a costa de recalcular en cada carga.
+    const currentUserEmailRBAC = (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    const rolUsuarioRBAC = getUserRole(currentUserEmailRBAC) || getConfig('ROLES.LECTOR');
+    const esArticuladorRBAC = rolUsuarioRBAC === getConfig('ROLES.ARTICULADOR');
+    const esGestorRBAC = rolUsuarioRBAC === getConfig('ROLES.GESTOR');
+    const requiereFiltroRBAC = esArticuladorRBAC || esGestorRBAC;
+    const colArticuladorRBAC = getConfig('COLUMNS.ARTICULADOR_JURIDICO', '').toUpperCase().trim();
+    const colGestorRBAC = getConfig('COLUMNS.GESTOR_JURIDICO', '').toUpperCase().trim();
+
     const cache = CacheService.getScriptCache();
-    console.time('dashboard:cacheRead');
-    const cached = getDashboardCachePayload(cache);
-    console.timeEnd('dashboard:cacheRead');
-    if (cached) {
-      try {
-        const cachedResponse = JSON.parse(cached);
-        cachedResponse.user = Session.getActiveUser().getEmail();
-        console.timeEnd('dashboard:total');
-        return cachedResponse;
-      } catch (e) {
-        console.warn('⚠️ Caché de dashboard corrupto, recalculando: ' + e.message);
+    if (!requiereFiltroRBAC) {
+      console.time('dashboard:cacheRead');
+      const cached = getDashboardCachePayload(cache);
+      console.timeEnd('dashboard:cacheRead');
+      if (cached) {
+        try {
+          const cachedResponse = JSON.parse(cached);
+          cachedResponse.user = Session.getActiveUser().getEmail();
+          console.timeEnd('dashboard:total');
+          return cachedResponse;
+        } catch (e) {
+          console.warn('⚠️ Caché de dashboard corrupto, recalculando: ' + e.message);
+        }
       }
     }
 
@@ -400,6 +418,25 @@ function getDashboardData() {
 
         const proyectoIndex = headers.findIndex(h => h.includes('PROYECTO'));
 
+        // ✅ SPRINT5-FASE-C: índices de las columnas de responsables para el filtro RBAC.
+        const idxArticuladorRBAC = headers.indexOf(colArticuladorRBAC);
+        const idxGestorRBAC = headers.indexOf(colGestorRBAC);
+
+        // Un Gestor ve TODOS los RTs del/los Articulador(es) bajo los que él mismo aparece
+        // asignado como Gestor — se deriva de Datos, no de una tabla de reporte separada.
+        // Pre-pasada barata en memoria (mismo usableRows ya leído, sin llamadas extra a Sheets).
+        let articuladoresPermitidosGestorRBAC = null;
+        if (esGestorRBAC && idxGestorRBAC >= 0 && idxArticuladorRBAC >= 0) {
+          articuladoresPermitidosGestorRBAC = new Set();
+          for (let k = 1; k < usableRows.length; k++) {
+            const gestorCeldaPrepass = String(usableRows[k][idxGestorRBAC] || '').trim().toLowerCase();
+            if (gestorCeldaPrepass === currentUserEmailRBAC) {
+              const articuladorCeldaPrepass = String(usableRows[k][idxArticuladorRBAC] || '').trim().toLowerCase();
+              if (articuladorCeldaPrepass) articuladoresPermitidosGestorRBAC.add(articuladorCeldaPrepass);
+            }
+          }
+        }
+
         for (let i = 1; i < usableRows.length; i++) {
           const row = usableRows[i];
           const proyecto = String(row[proyectoIndex] || '').trim();
@@ -418,6 +455,26 @@ function getDashboardData() {
           }
 
           if (!incluirRegistro) continue;
+
+          // ✅ SPRINT5-FASE-C: recorte por jerarquía RBAC (Articulador/Gestor), aplicado sobre
+          // el email ya resuelto en la celda (ver evaluador_alertas.js para la misma lógica de
+          // "¿esta celda ya es un email o sigue siendo el nombre libre histórico?"). Una fila
+          // cuya columna todavía tiene el nombre libre sin migrar simplemente no es visible
+          // para Articulador/Gestor hasta que se homologe/asigne — es el incentivo esperado.
+          if (requiereFiltroRBAC && idxArticuladorRBAC >= 0) {
+            const articuladorCeldaRBAC = String(row[idxArticuladorRBAC] || '').trim().toLowerCase();
+            const gestorCeldaRBAC = idxGestorRBAC >= 0 ? String(row[idxGestorRBAC] || '').trim().toLowerCase() : '';
+            let visiblePorRBAC = false;
+
+            if (esArticuladorRBAC) {
+              visiblePorRBAC = articuladorCeldaRBAC === currentUserEmailRBAC;
+            } else if (esGestorRBAC) {
+              visiblePorRBAC = (gestorCeldaRBAC === currentUserEmailRBAC) ||
+                (articuladoresPermitidosGestorRBAC && articuladoresPermitidosGestorRBAC.has(articuladorCeldaRBAC));
+            }
+
+            if (!visiblePorRBAC) continue;
+          }
 
           const rowObject = { _FILE_ID: id };
           for (let j = 0; j < headers.length; j++) {
@@ -468,12 +525,18 @@ function getDashboardData() {
       alertasResumen: JSON.stringify(alertasResumen)
     };
 
-    try {
-      const serializedResponse = JSON.stringify(cacheableResponse);
-      const writeInfo = putDashboardCachePayload(cache, serializedResponse, 1800);
-      console.log('✅ Cache dashboard actualizado: ' + writeInfo.payloadSize + ' chars en ' + writeInfo.chunkCount + ' chunk(s)');
-    } catch (e) {
-      console.warn('⚠️ No se pudo cachear getDashboardData (posible overflow 100KB de CacheService): ' + e.message);
+    // ✅ SPRINT5-FASE-C: Articulador/Gestor nunca escriben en el caché compartido — su respuesta
+    // ya viene recortada por RBAC, y si se guardara ahí, el próximo Admin/Editor/Lector que
+    // pegara en el mismo TTL de 30 min recibiría por error el subconjunto recortado en vez del
+    // dataset completo (fuga en la dirección opuesta a la que ya se cerró en la lectura).
+    if (!requiereFiltroRBAC) {
+      try {
+        const serializedResponse = JSON.stringify(cacheableResponse);
+        const writeInfo = putDashboardCachePayload(cache, serializedResponse, 1800);
+        console.log('✅ Cache dashboard actualizado: ' + writeInfo.payloadSize + ' chars en ' + writeInfo.chunkCount + ' chunk(s)');
+      } catch (e) {
+        console.warn('⚠️ No se pudo cachear getDashboardData (posible overflow 100KB de CacheService): ' + e.message);
+      }
     }
     console.timeEnd('dashboard:serialize');
 

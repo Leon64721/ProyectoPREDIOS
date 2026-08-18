@@ -1,0 +1,388 @@
+<script>
+(function() {
+  const EQUIPOS_ROLES_CON_ACCESO = ['Administrador', 'Articulador', 'Gestor'];
+  const EQUIPOS_IDB_NAME = 'equipos-cache-v1';
+  const EQUIPOS_IDB_STORE = 'stats';
+
+  // ═══════════════════════════════════════════════════════════════════
+  // IndexedDB (Directiva 1 — cero localStorage). Caché por usuario para
+  // pintado optimista de los KPI mientras se recalcula en el servidor.
+  // ═══════════════════════════════════════════════════════════════════
+  function equiposCacheKey() {
+    return 'equipos_cache_' + (typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'anonimo');
+  }
+
+  function equiposIdbOpen() {
+    return new Promise(function(resolve) {
+      if (!('indexedDB' in window)) return resolve(null);
+      const request = indexedDB.open(EQUIPOS_IDB_NAME, 1);
+      request.onupgradeneeded = function() {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(EQUIPOS_IDB_STORE)) {
+          db.createObjectStore(EQUIPOS_IDB_STORE);
+        }
+      };
+      request.onsuccess = function() { resolve(request.result); };
+      request.onerror = function() { resolve(null); };
+    });
+  }
+
+  function equiposCacheRead() {
+    return equiposIdbOpen().then(function(db) {
+      if (!db) return null;
+      return new Promise(function(resolve) {
+        const tx = db.transaction(EQUIPOS_IDB_STORE, 'readonly');
+        const store = tx.objectStore(EQUIPOS_IDB_STORE);
+        const req = store.get(equiposCacheKey());
+        req.onsuccess = function() { resolve(req.result || null); };
+        req.onerror = function() { resolve(null); };
+      });
+    });
+  }
+
+  function equiposCacheWrite(payload) {
+    return equiposIdbOpen().then(function(db) {
+      if (!db) return false;
+      return new Promise(function(resolve) {
+        const tx = db.transaction(EQUIPOS_IDB_STORE, 'readwrite');
+        const store = tx.objectStore(EQUIPOS_IDB_STORE);
+        store.put({ payload: payload, savedAt: Date.now() }, equiposCacheKey());
+        tx.oncomplete = function() { resolve(true); };
+        tx.onerror = function() { resolve(false); };
+      });
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Visibilidad de navegación por rol — el backend igual filtra los
+  // datos (getDashboardData/getEstadisticasCargaEquipos), esto es solo
+  // higiene de UI para no ofrecer un módulo que el usuario no usará.
+  // ═══════════════════════════════════════════════════════════════════
+  function aplicarVisibilidadNavEquipos() {
+    const nav = document.getElementById('navEquipos');
+    if (!nav) return;
+    if (typeof currentRole !== 'undefined' && EQUIPOS_ROLES_CON_ACCESO.indexOf(currentRole) >= 0) {
+      nav.classList.remove('d-none');
+    } else {
+      nav.classList.add('d-none');
+    }
+  }
+  window.aplicarVisibilidadNavEquipos = aplicarVisibilidadNavEquipos;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // KPIs / Tablero de carga
+  // ═══════════════════════════════════════════════════════════════════
+  function pintarKpisEquipos(stats) {
+    const totalEl = document.getElementById('kpiEquiposTotalRTs');
+    const porAsignarEl = document.getElementById('kpiEquiposPorAsignar');
+    const articuladorBody = document.getElementById('tablaDistribucionArticulador');
+    const gestorBody = document.getElementById('tablaDistribucionGestor');
+
+    if (totalEl) totalEl.textContent = (stats.totalRTs !== undefined && stats.totalRTs !== null) ? stats.totalRTs : '-';
+    if (porAsignarEl) porAsignarEl.textContent = (stats.rtsPorAsignar === null || stats.rtsPorAsignar === undefined) ? 'N/A' : stats.rtsPorAsignar;
+
+    function pintarTabla(tbody, distribucion) {
+      if (!tbody) return;
+      const filas = Array.isArray(distribucion) ? distribucion : [];
+      if (!filas.length) {
+        tbody.innerHTML = '<tr><td colspan="2" class="text-center text-muted py-3">Sin datos</td></tr>';
+        return;
+      }
+      tbody.innerHTML = filas.map(function(d) {
+        return '<tr><td>' + (d.email || '-') + '</td><td class="text-end fw-bold">' + d.totalRTs + '</td></tr>';
+      }).join('');
+    }
+
+    pintarTabla(articuladorBody, stats.distribucionArticulador);
+    pintarTabla(gestorBody, stats.distribucionGestor);
+  }
+
+  function cargarModuloEquipos() {
+    aplicarVisibilidadNavEquipos();
+
+    // Pintado optimista desde IndexedDB mientras llega la respuesta fresca del servidor.
+    equiposCacheRead().then(function(cached) {
+      if (cached && cached.payload && cached.payload.success) {
+        pintarKpisEquipos(cached.payload);
+      }
+    });
+
+    google.script.run
+      .withSuccessHandler(function(stats) {
+        if (stats && stats.success) {
+          pintarKpisEquipos(stats);
+          equiposCacheWrite(stats);
+        } else if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', (stats && stats.error) || 'No fue posible cargar el tablero de carga', 'danger');
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', 'No fue posible cargar el tablero de carga: ' + (error.message || error), 'danger');
+        }
+      })
+      .getEstadisticasCargaEquipos({});
+  }
+  window.cargarModuloEquipos = cargarModuloEquipos;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Modal de Homologación — NO_ENCONTRADO / ENCONTRADO_INACTIVO
+  // ═══════════════════════════════════════════════════════════════════
+  function ensureModalHomologacionEquipos() {
+    if (document.getElementById('modalHomologacionEquipos')) return;
+
+    const modalHtml =
+      '<div class="modal fade" id="modalHomologacionEquipos" tabindex="-1" aria-hidden="true">' +
+        '<div class="modal-dialog modal-lg modal-dialog-scrollable">' +
+          '<div class="modal-content border-0 shadow-lg">' +
+            '<div class="modal-header bg-dark text-white">' +
+              '<h5 class="modal-title"><i class="fas fa-user-check"></i> Homologación de Usuarios</h5>' +
+              '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>' +
+            '</div>' +
+            '<div class="modal-body p-3" id="modalHomologacionEquiposBody"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = modalHtml;
+    document.body.appendChild(wrapper.firstElementChild);
+  }
+
+  function renderHuerfanoItem(item, index) {
+    const badgeColor = item.confianza === 'ENCONTRADO_INACTIVO' ? 'warning' : 'secondary';
+    const sugerenciaTexto = item.coincidenciaSugerida
+      ? ('Sugerencia: ' + item.coincidenciaSugerida + ' (' + (item.email || 'sin email') + ', puntaje ' + item.puntaje + ')')
+      : 'Sin sugerencia automática';
+
+    return (
+      '<div class="border rounded p-3 mb-3 shadow-sm">' +
+        '<div class="d-flex justify-content-between align-items-start mb-2">' +
+          '<div>' +
+            '<span class="badge bg-' + badgeColor + '">' + item.confianza + '</span> ' +
+            '<span class="badge bg-info text-dark">' + item.rol + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="fw-bold text-dark">' + item.nombreEnDatos + '</div>' +
+        '<div class="small text-muted mb-2">' + sugerenciaTexto + '</div>' +
+        '<div class="input-group input-group-sm">' +
+          '<input type="email" class="form-control" id="huerfanoEmail_' + index + '" placeholder="email@idu.gov.co" value="' + (item.email || '') + '">' +
+          '<button class="btn btn-primary" type="button" onclick="window.vincularUsuarioHuerfano(' + index + ')"><i class="fas fa-link"></i> Vincular</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  let ultimosHuerfanos = [];
+
+  function abrirModalHomologacionEquipos() {
+    ensureModalHomologacionEquipos();
+    const body = document.getElementById('modalHomologacionEquiposBody');
+    body.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div><div class="mt-2">Comparando Datos contra USUARIOS...</div></div>';
+
+    const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHomologacionEquipos'));
+    modalInst.show();
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!result || !result.success) {
+          body.innerHTML = '<div class="alert alert-danger">' + ((result && result.error) || 'No fue posible calcular la homologación.') + '</div>';
+          return;
+        }
+        ultimosHuerfanos = Array.isArray(result.huerfanos) ? result.huerfanos : [];
+        if (!ultimosHuerfanos.length) {
+          body.innerHTML = '<div class="text-center text-muted py-4"><i class="fas fa-check-circle text-success fa-2x"></i><div class="mt-2">Sin usuarios huérfanos — todo homologado.</div></div>';
+          return;
+        }
+        body.innerHTML = ultimosHuerfanos.map(renderHuerfanoItem).join('');
+      })
+      .withFailureHandler(function(error) {
+        body.innerHTML = '<div class="alert alert-danger">' + (error.message || error) + '</div>';
+      })
+      .detectarUsuariosHuerfanos();
+  }
+  window.abrirModalHomologacionEquipos = abrirModalHomologacionEquipos;
+
+  // Vincular = reasignarUsuarioMasivo(nombreLibre, emailElegido, rol): la misma función de
+  // handover de Fase A sirve aquí sin cambios — reemplaza CUALQUIER valor literal de la
+  // columna (no solo emails) por el nuevo, exactamente lo que necesita la homologación.
+  function vincularUsuarioHuerfano(index) {
+    const item = ultimosHuerfanos[index];
+    if (!item) return;
+
+    const inputEmail = document.getElementById('huerfanoEmail_' + index);
+    const emailElegido = inputEmail ? inputEmail.value.trim() : '';
+    if (!emailElegido) {
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', 'Ingresa un email válido para vincular.', 'danger');
+      }
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result && result.success) {
+          if (typeof window.showNotification === 'function') {
+            window.showNotification('Éxito', 'Vinculado: ' + result.filasAfectadas + ' fila(s) actualizadas.', 'success');
+          }
+          abrirModalHomologacionEquipos();
+          cargarModuloEquipos();
+        } else if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', (result && result.error) || 'No fue posible vincular.', 'danger');
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', error.message || String(error), 'danger');
+        }
+      })
+      .reasignarUsuarioMasivo(item.nombreEnDatos, emailElegido, item.rol, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
+  }
+  window.vincularUsuarioHuerfano = vincularUsuarioHuerfano;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Formulario de Asignación Granular — cascada Proyecto → Tramo → RT
+  // ═══════════════════════════════════════════════════════════════════
+  function equiposDatosBase() {
+    return Array.isArray(window.currentData) && window.currentData.length ? window.currentData
+         : (Array.isArray(window.rawData) ? window.rawData : []);
+  }
+
+  function poblarSelectEquipos(selectId, valores, placeholder) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    const actual = select.value;
+    select.innerHTML = '<option value="">' + placeholder + '</option>' +
+      valores.map(function(v) { return '<option value="' + v + '">' + v + '</option>'; }).join('');
+    if (valores.indexOf(actual) >= 0) select.value = actual;
+  }
+
+  function onEquiposNivelChange() {
+    const nivel = document.getElementById('equiposNivel').value;
+    document.getElementById('grupoEquiposTramo').classList.toggle('d-none', nivel !== 'TRAMO' && nivel !== 'RT');
+    document.getElementById('grupoEquiposRT').classList.toggle('d-none', nivel !== 'RT');
+  }
+  window.onEquiposNivelChange = onEquiposNivelChange;
+
+  function onEquiposProyectoChange() {
+    const proyecto = document.getElementById('equiposProyecto').value;
+    const datos = equiposDatosBase();
+    const tramos = proyecto
+      ? Array.from(new Set(datos.filter(function(r) { return r[C.PROYECTO] === proyecto; }).map(function(r) { return r[C.TRAMO]; }))).filter(Boolean).sort()
+      : [];
+    poblarSelectEquipos('equiposTramo', tramos, 'Selecciona un tramo...');
+    poblarSelectEquipos('equiposRT', [], 'Selecciona un tramo primero...');
+  }
+  window.onEquiposProyectoChange = onEquiposProyectoChange;
+
+  function onEquiposTramoChange() {
+    const proyecto = document.getElementById('equiposProyecto').value;
+    const tramo = document.getElementById('equiposTramo').value;
+    const datos = equiposDatosBase();
+    const rts = tramo
+      ? Array.from(new Set(datos.filter(function(r) { return r[C.PROYECTO] === proyecto && r[C.TRAMO] === tramo; }).map(function(r) { return r[C.RT]; }))).filter(Boolean).sort()
+      : [];
+    poblarSelectEquipos('equiposRT', rts, 'Selecciona un RT...');
+  }
+  window.onEquiposTramoChange = onEquiposTramoChange;
+
+  function abrirFormularioAsignacionEquipos() {
+    const datos = equiposDatosBase();
+    const proyectos = Array.from(new Set(datos.map(function(r) { return r[C.PROYECTO]; }))).filter(Boolean).sort();
+    poblarSelectEquipos('equiposProyecto', proyectos, 'Selecciona un proyecto...');
+    poblarSelectEquipos('equiposTramo', [], 'Selecciona un proyecto primero...');
+    poblarSelectEquipos('equiposRT', [], 'Selecciona un tramo primero...');
+    onEquiposNivelChange();
+
+    const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAsignacionGranular'));
+    modalInst.show();
+  }
+  window.abrirFormularioAsignacionEquipos = abrirFormularioAsignacionEquipos;
+
+  function handleAsignarEquipoGranular() {
+    const nivel = document.getElementById('equiposNivel').value;
+    let idTarget = '';
+    if (nivel === 'PROYECTO') idTarget = document.getElementById('equiposProyecto').value;
+    else if (nivel === 'TRAMO') idTarget = document.getElementById('equiposTramo').value;
+    else if (nivel === 'RT') idTarget = document.getElementById('equiposRT').value;
+
+    const articuladorEmail = document.getElementById('equiposArticuladorEmail').value.trim();
+    const gestorEmail = document.getElementById('equiposGestorEmail').value.trim();
+
+    if (!idTarget) {
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', 'Selecciona el ' + nivel.toLowerCase() + ' a asignar.', 'danger');
+      }
+      return;
+    }
+    if (!articuladorEmail && !gestorEmail) {
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', 'Indica al menos un Articulador o un Gestor.', 'danger');
+      }
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result && result.success) {
+          if (typeof window.showNotification === 'function') {
+            window.showNotification('Éxito', result.cambiosAplicados + ' cambio(s) aplicados sobre ' + result.filasCoincidentes + ' fila(s) coincidentes.', 'success');
+          }
+          bootstrap.Modal.getInstance(document.getElementById('modalAsignacionGranular')).hide();
+          cargarModuloEquipos();
+        } else if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', (result && result.error) || 'No fue posible asignar.', 'danger');
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', error.message || String(error), 'danger');
+        }
+      })
+      .asignarEquipoGranular(nivel, idTarget, articuladorEmail || null, gestorEmail || null, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
+  }
+  window.handleAsignarEquipoGranular = handleAsignarEquipoGranular;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Handover 1-click
+  // ═══════════════════════════════════════════════════════════════════
+  function abrirModalHandover() {
+    const modalInst = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHandoverEquipos'));
+    modalInst.show();
+  }
+  window.abrirModalHandover = abrirModalHandover;
+
+  function handleReasignarUsuarioMasivo() {
+    const origen = document.getElementById('handoverOrigen').value.trim();
+    const destino = document.getElementById('handoverDestino').value.trim();
+    const rol = document.getElementById('handoverRol').value;
+
+    if (!origen || !destino) {
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', 'Indica el usuario de origen y de destino.', 'danger');
+      }
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result && result.success) {
+          if (typeof window.showNotification === 'function') {
+            window.showNotification('Éxito', 'Handover aplicado: ' + result.filasAfectadas + ' RT(s) reasignados.', 'success');
+          }
+          bootstrap.Modal.getInstance(document.getElementById('modalHandoverEquipos')).hide();
+          cargarModuloEquipos();
+        } else if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', (result && result.error) || 'No fue posible reasignar.', 'danger');
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', error.message || String(error), 'danger');
+        }
+      })
+      .reasignarUsuarioMasivo(origen, destino, rol, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
+  }
+  window.handleReasignarUsuarioMasivo = handleReasignarUsuarioMasivo;
+})();
+</script>
