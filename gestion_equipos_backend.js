@@ -548,3 +548,110 @@ function reasignarUsuarioMasivo(usuarioOrigen, usuarioDestino, rol, ejecutorEmai
     try { lock.releaseLock(); } catch (er) {}
   }
 }
+
+/**
+ * Carga de "Línea Cero" (Baseline) — feedback de usuario 2026-08-18: no es un find-and-replace
+ * cosmético, es fijar la distribución REAL vigente (quién tiene qué RT hoy, leído de Datos)
+ * como punto de partida operativo del módulo de equipos, migrando los nombres libres
+ * históricos a sus emails oficiales SOLO donde obtenerMapeoLineaCero() tiene confianza
+ * suficiente para escribir sin revisión humana (homologacion_usuarios.js: ENCONTRADO_ACTIVO,
+ * ENCONTRADO_SIN_PERFIL, o SIMILITUD_APROXIMADA con puntaje ≥ 0.85). Una vez corrida, el árbol
+ * jerárquico (getProyectosConteo/getTramosPorProyecto/getRTsPorTramo) y el filtro RBAC de
+ * getDashboardData() (Codigo.js) reconocen de inmediato las asignaciones vigentes, porque
+ * ambos ya comparan el email directamente contra la celda de Datos.
+ */
+function ejecutarCargaLineaCero() {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(EQUIPOS_ENGINE.lockTimeoutMs);
+  } catch (eLock) {
+    return { success: false, error: 'No se pudo adquirir el lock: ' + eLock.message };
+  }
+
+  try {
+    const mapeoResultado = obtenerMapeoLineaCero();
+    if (!mapeoResultado.success) {
+      throw new Error('No se pudo calcular el mapeo de homologación: ' + (mapeoResultado.error || ''));
+    }
+    const mapeo = mapeoResultado.mapeo;
+
+    const gestorDatos = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
+    const sheetName = getConfig('SHEETS.DATOS');
+    const sheet = gestorDatos.getSheet(sheetName);
+    const { headers, rows } = gestorDatos.leerDatos(sheetName);
+
+    if (!headers.length) throw new Error('No se pudo leer la hoja Datos');
+
+    const idxArticulador = findColumnIndex(headers, getConfig('COLUMNS.ARTICULADOR_JURIDICO'));
+    const idxGestor = findColumnIndex(headers, getConfig('COLUMNS.GESTOR_JURIDICO'));
+
+    if (idxArticulador < 0 || idxGestor < 0) {
+      throw new Error('Columnas ARTICULADOR JUIRIDICO / GESTOR JURÍDICO no encontradas en Datos');
+    }
+
+    const totalFilas = rows.length;
+    const colArticuladorSheet = idxArticulador + 1;
+    const colGestorSheet = idxGestor + 1;
+
+    // Una sola lectura por columna, se parcha en memoria por lotes de 1000, una sola
+    // escritura por columna al final — Directiva 3, mismo patrón que el resto del archivo.
+    const valoresArticulador = totalFilas > 0 ? sheet.getRange(2, colArticuladorSheet, totalFilas, 1).getValues() : [];
+    const valoresGestor = totalFilas > 0 ? sheet.getRange(2, colGestorSheet, totalFilas, 1).getValues() : [];
+
+    let cambiosArticulador = 0;
+    let cambiosGestor = 0;
+
+    for (let start = 0; start < totalFilas; start += EQUIPOS_ENGINE.batchSize) {
+      const fin = Math.min(start + EQUIPOS_ENGINE.batchSize, totalFilas);
+      for (let i = start; i < fin; i++) {
+        const articuladorActual = String(valoresArticulador[i][0] || '').trim();
+        const emailMapeadoArt = articuladorActual ? mapeo[articuladorActual] : null;
+        if (emailMapeadoArt && emailMapeadoArt !== articuladorActual) {
+          valoresArticulador[i][0] = emailMapeadoArt;
+          cambiosArticulador++;
+        }
+
+        const gestorActual = String(valoresGestor[i][0] || '').trim();
+        const emailMapeadoGes = gestorActual ? mapeo[gestorActual] : null;
+        if (emailMapeadoGes && emailMapeadoGes !== gestorActual) {
+          valoresGestor[i][0] = emailMapeadoGes;
+          cambiosGestor++;
+        }
+      }
+    }
+
+    if (cambiosArticulador > 0) sheet.getRange(2, colArticuladorSheet, totalFilas, 1).setValues(valoresArticulador);
+    if (cambiosGestor > 0) sheet.getRange(2, colGestorSheet, totalFilas, 1).setValues(valoresGestor);
+
+    const totalAsociacionesResueltas = cambiosArticulador + cambiosGestor;
+    const ejecutorEmail = Session.getActiveUser().getEmail() || 'Sistema';
+
+    const logResultado = registrarLogAsignacion({
+      nivel: 'GLOBAL',
+      idTarget: 'TODOS_LOS_RTS',
+      rol: 'ARTICULADOR_Y_GESTOR',
+      usuarioAnterior: '',
+      usuarioNuevo: '',
+      ejecutorEmail: ejecutorEmail,
+      observaciones: 'Inicialización de Línea Cero (Baseline) completada — ' + totalAsociacionesResueltas +
+        ' asociaciones resueltas (' + cambiosArticulador + ' Articulador, ' + cambiosGestor + ' Gestor) sobre ' + totalFilas + ' RTs.'
+    });
+
+    _invalidarCacheDatosSiExiste();
+
+    return {
+      success: true,
+      totalRTsProcesados: totalFilas,
+      totalAsociacionesResueltas: totalAsociacionesResueltas,
+      cambiosArticulador: cambiosArticulador,
+      cambiosGestor: cambiosGestor,
+      totalNombresMapeados: mapeoResultado.totalMapeados,
+      logRegistrado: !!(logResultado && logResultado.success)
+    };
+  } catch (e) {
+    console.error('❌ Error en ejecutarCargaLineaCero: ' + e.message);
+    return { success: false, error: e.message };
+  } finally {
+    try { lock.releaseLock(); } catch (er) {}
+  }
+}

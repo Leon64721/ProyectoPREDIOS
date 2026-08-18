@@ -314,6 +314,48 @@ function detectarUsuariosHuerfanos() {
   }
 }
 
+// Umbral MÁS ESTRICTO que HOMOLOGACION_ENGINE.umbralPuntaje (0.75). Ese 0.75 es para
+// SUGERIR una coincidencia a un humano en el modal de homologación (con revisión antes de
+// vincular). obtenerMapeoLineaCero() en cambio alimenta una escritura AUTOMÁTICA y masiva
+// sobre Datos, sin revisión fila por fila — exige 0.85 para SIMILITUD_APROXIMADA, evitando
+// que una coincidencia dudosa termine asignando un RT a la persona equivocada.
+const LINEA_CERO_UMBRAL_APROXIMADA = 0.85;
+
+/**
+ * Diccionario {nombreViejo → emailOficial} para la carga de Línea Cero (Baseline) del
+ * módulo de equipos — ver ejecutarCargaLineaCero() en gestion_equipos_backend.js. Solo
+ * incluye coincidencias suficientemente confiables para escribirse sin revisión humana:
+ * ENCONTRADO_ACTIVO, ENCONTRADO_SIN_PERFIL (persona real, solo le falta el perfil en
+ * USUARIOS — igual de confiable en cuanto a IDENTIDAD) y SIMILITUD_APROXIMADA con puntaje
+ * ≥ 0.85. Deja fuera ENCONTRADO_INACTIVO (persona ya no activa, no se le debe asignar
+ * trabajo nuevo) y NO_ENCONTRADO.
+ */
+function obtenerMapeoLineaCero() {
+  try {
+    const homologacion = homologarUsuariosMatriz();
+    if (!homologacion.success) return homologacion;
+
+    const CONFIANZAS_AUTOMATIZABLES = ['ENCONTRADO_ACTIVO', 'ENCONTRADO_SIN_PERFIL'];
+    const mapeo = {};
+
+    homologacion.articuladores.concat(homologacion.gestores).forEach(function(item) {
+      if (!item.email || !item.nombreEnDatos) return;
+      const califica = CONFIANZAS_AUTOMATIZABLES.indexOf(item.confianza) >= 0 ||
+        (item.confianza === 'SIMILITUD_APROXIMADA' && item.puntaje >= LINEA_CERO_UMBRAL_APROXIMADA);
+      if (califica) mapeo[item.nombreEnDatos] = item.email;
+    });
+
+    return {
+      success: true,
+      mapeo: mapeo,
+      totalMapeados: Object.keys(mapeo).length
+    };
+  } catch (e) {
+    console.error('❌ Error en obtenerMapeoLineaCero: ' + e.message);
+    return { success: false, error: e.message };
+  }
+}
+
 function _obtenerMiembrosGrupo(grupoEmail) {
   const miembros = [];
   let pageToken = null;

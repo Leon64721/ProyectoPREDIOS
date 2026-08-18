@@ -284,6 +284,56 @@
   window.toggleTramoArbol = toggleTramoArbol;
 
   // ═══════════════════════════════════════════════════════════════════
+  // Carga de Línea Cero (Baseline) — feedback de usuario 2026-08-18: fija la
+  // distribución real vigente de Datos como punto de partida operativo,
+  // migrando nombres libres a emails oficiales homologados con confianza
+  // alta. Operación masiva sobre toda la matriz — se pide confirmación
+  // explícita antes de dispararla. 100% async (google.script.run), sin
+  // ningún bloqueo del hilo del cliente mientras el servidor procesa.
+  // ═══════════════════════════════════════════════════════════════════
+  function handleCargaLineaCero() {
+    const mensaje = 'Esto va a migrar las asignaciones históricas de Articulador/Gestor en la matriz Datos hacia sus emails oficiales homologados (Línea Cero / Baseline). Es una operación masiva sobre toda la matriz y quedará registrada en LOGS_ASIGNACION. ¿Deseas continuar?';
+
+    if (typeof showConfirmation === 'function') {
+      pendingAction = ejecutarCargaLineaCeroConfirmado;
+      showConfirmation(mensaje);
+    } else if (window.confirm(mensaje)) {
+      ejecutarCargaLineaCeroConfirmado();
+    }
+  }
+  window.handleCargaLineaCero = handleCargaLineaCero;
+
+  function ejecutarCargaLineaCeroConfirmado() {
+    if (typeof window.showNotification === 'function') {
+      window.showNotification('Procesando', 'Cargando Línea Cero sobre toda la matriz Datos — puede tardar unos segundos...', 'info');
+    }
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result && result.success) {
+          const advertenciaLog = result.logRegistrado ? '' : ' (LOGS_ASIGNACION no configurado — la migración se aplicó igual, sin registro de auditoría.)';
+          if (typeof window.showNotification === 'function') {
+            window.showNotification(
+              'Línea Cero cargada',
+              result.totalAsociacionesResueltas + ' asociaciones resueltas sobre ' + result.totalRTsProcesados + ' RTs (' +
+                result.cambiosArticulador + ' Articulador, ' + result.cambiosGestor + ' Gestor).' + advertenciaLog,
+              'success'
+            );
+          }
+          cargarModuloEquipos();
+        } else if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', (result && result.error) || 'No fue posible cargar la Línea Cero.', 'danger');
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', error.message || String(error), 'danger');
+        }
+      })
+      .ejecutarCargaLineaCero();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
   // Modal de Homologación — NO_ENCONTRADO / ENCONTRADO_INACTIVO
   // ═══════════════════════════════════════════════════════════════════
   function ensureModalHomologacionEquipos() {
