@@ -2644,3 +2644,119 @@ Todos los call sites existentes (`getConfig('DATA_FILES.LOGS')`, `getConfig('DAT
 - [ ] Revisión manual de permisos de compartición en Drive para los 4 Sheets sensibles (ver 32.4) — pendiente del usuario.
 - [ ] Revisión manual de permisos/acceso del proyecto Apps Script y su Web App deployment (ver 32.4) — pendiente del usuario.
 - [ ] Decisión pendiente del usuario sobre `sembrado_usuarios_grupos.js` (PII de 260 correos) y `consolidacion_colab/uniondatosfinales.py` (Drive folder ID) — fuera del alcance original de esta tarea, solo documentado.
+
+**Nota de continuidad [2026-08-19, sesión Claude Code]:** todo lo de la Sección 32 fue commiteado por una sesión concurrente (`5988745 fix(config): migrate sensitive spreadsheet IDs to Script Properties [SEC-01]`) mientras esta sesión trabajaba en paralelo el flujo de versionamiento (ver ítem 12 de `TODOS.md`). Las 4 Script Properties fueron seteadas y verificadas manualmente por el usuario. Las decisiones pendientes marcadas arriba sobre `sembrado_usuarios_grupos.js` y el Drive folder ID de Colab **sí se resolvieron** más adelante en esta misma sesión — ver Sección 34.
+
+---
+
+## 33. Estrategia de versionamiento Git/GitHub — trunk-based simplificado [2026-08-19]
+
+**Contexto:** repo vinculado a `github.com/Leon64721/ProyectoPREDIOS`, 64+ commits, sin `main`, sin tags, sin protección de rama, con dos incidentes reales ya documentados de edición concurrente entre agentes (`TODOS.md` ítem 12). El usuario pidió diseñar (no implementar de entrada) una estrategia completa de versionamiento vía `/office-hours` + `/plan-eng-review`.
+
+**Proceso:** design doc aprobado en `/office-hours` (modo intraemprendimiento) con 3 enfoques comparados (trunk-based / Git Flow / trunk-based + release efímera); revisión de 4 secciones (Arquitectura, Calidad, Test, Performance) con 7 hallazgos; segunda opinión independiente (Claude subagent, Codex no instalado) que encontró 7 huecos adicionales — incluyendo una contradicción directa con la primera recomendación de arquitectura (el guard de `clasp` propuesto inicialmente era la misma disciplina manual que ya había fallado dos veces).
+
+**Hallazgo raíz confirmado (`.clasp.json:1-16`):** `clasp` no conoce ramas de git — `scriptId` fijo, empuja lo que haya en disco local sin mirar el estado de git. La protección de rama en GitHub no toca este comando. Es la causa exacta del incidente de `TODOS.md` ítem 12.
+
+**Decisiones finales (17 hallazgos resueltos, 0 pendientes):**
+1. Trunk-based simplificado: `main` única rama protegida, ramas cortas por tarea (`feat/<módulo>-<desc>`, `fix/<módulo>-<desc>`), PR obligatorio, **squash-merge**.
+2. Guard mecánico antes de `clasp push`/`deploy` (diseñado como `scripts/clasp-deploy.js`: valida rama==main, `git status` limpio, HEAD==origin/main, corre `validateConfig()`/`diagnosticarSistema()`) — **diseñado, no implementado todavía** como interceptor real del binario (ver 33.1).
+3. `git worktree` por sesión de agente + registro `AGENTS_ACTIVE.md` para prevenir colisión de archivos Y colisión semántica (dos agentes resolviendo la misma tarea distinto, el segundo incidente real de `TODOS.md` ítem 12).
+4. Deploy manual desde `main`, tag solo tras confirmar deploy exitoso — automatización vía Actions diferida a propósito (`TODOS.md` ítem 20).
+5. Convención de commits formalizada (no reemplazada): `tipo(módulo): descripción [TICKET]`, vocabulario cerrado `feat|fix|refactor|chore|docs|test|perf|style|ci`.
+6. Lint Action debe extraer `<script>` de `.html` antes de `node --check` — un linter genérico de solo `.js` no cubre ~90% del frontend real.
+7. Semver ligero (sin promesa de compatibilidad de API) + `DEPLOY_LOG.md` (tag ↔ Deployment ID de Apps Script) para trazabilidad de rollback.
+
+### 33.1 `scripts/clasp-deploy.js` — estado real: diseñado, no implementado
+
+Se investigó viabilidad de interceptar el binario `clasp` real (no solo un script aparte documentado) vía `bin/` local antepuesto al `PATH`. **Probado y confirmado técnicamente viable** en Bash y PowerShell (test con shims falsos, limpiados después) — pero requiere activación manual de `PATH` por sesión (sin `direnv` instalado), lo que reintroduce la misma categoría de disciplina manual que motivó el guard en primer lugar. Interceptar el shim GLOBAL de npm fue descartado por alcance incorrecto (afectaría cualquier otro proyecto Apps Script) y fragilidad (`npm update -g` lo resetearía en silencio). **Decisión: el guard sigue siendo documental por ahora** (enseñar solo `node scripts/clasp-deploy.js ...`, nunca `clasp` crudo) — el archivo `scripts/clasp-deploy.js` en sí **no se llegó a crear** en esta sesión, solo se diseñó su contenido exacto.
+
+---
+
+## 34. Auditoría de seguridad de historial completo y purga con `git filter-repo` [2026-08-19]
+
+**Motivación:** antes de evaluar hacer público el repositorio, se pidió auditar TODO el historial (no solo HEAD) — no solo repetir lo de la Sección 32 (estado actual), sino confirmar qué queda recuperable vía `git log -p --all`.
+
+### 34.1 Hallazgos de la auditoría completa (79-80 commits, `--all`)
+
+- **Corrección de un error propio:** la sesión había concluido antes que el repo era "público" (`git ls-remote` sin prompt de credenciales) — se confirmó que estaba MAL fundamentado: Git Credential Manager autenticaba en silencio con la sesión guardada. Con `-c credential.helper=` (sin credenciales) el repo **requiere autenticación → es privado**. La API de GitHub también devuelve `404` sin auth (vs `200` contra un repo público de control). Implicación: branch protection en repos privados requiere GitHub Pro/Team/Enterprise en plan Free.
+- Los 4 IDs de la Sección 32 confirmados en el historial: introducidos en `c6cbeed`/`2244236`/`37a2a35`, removidos de HEAD en `5988745` — pero siguen 100% recuperables en el historial hasta la purga (ver 34.2).
+- **Hallazgo nuevo — 5º ID sin migrar:** `DRIVE_FOLDER_ID = '1r7EedYJ1KYhH955KDRpXocbjH_tbLj04'` en `consolidacion_colab/uniondatosfinales.py:51` (introducido en `24f29ed`), ya documentado como pendiente en la Sección 32.1 pero seguía hardcodeado, vigente en HEAD.
+- **Hallazgo más grave de toda la auditoría — PII masiva vigente en HEAD:** `sembrado_usuarios_grupos.js` (introducido en `7a8e96e`) contenía `DIRECTORIO_OFICIAL_SEMBRADO`: **260 registros reales** con `{ email, nombre completo, componente }` de empleados del IDU (DTDP/STAP) — dato personal bajo Ley 1581/2012. Confirmado que `ejecutarSembradoInicialUsuarios()` seguía `[EJECUCIÓN PENDIENTE]` (la hoja `USUARIOS` real nunca llegó a recibir estos registros).
+- Grep de emails en contenido de diffs (no metadata autor): bajó de ~270 direcciones `@idu.gov.co` individuales a un puñado de cuentas genéricas/departamentales tras la purga (ver 34.2).
+- gitleaks (ruleset default, `--all`): 1 único hallazgo, falso positivo ya conocido (`GRUPOS_DIRECTORIO_CACHE_KEY`, no es secreto) — el ruleset default **no detecta ninguno** de los 5 IDs ni el directorio de 260 correos (ni por vendor rule ni por entropía). `password`/`api_key`/`apikey`/`secret`: 0 coincidencias reales. `token`: 7 commits, todos benignos (paginación de API, nombre de algoritmo de fuzzy matching). Ningún archivo de credenciales (`.env`, `credentials.json`, etc.) fue commiteado jamás.
+- **Hallazgo aparte, investigado y descartado como riesgo:** commit huérfano `4d70a00` ("Agent host session ... baseline checkpoint") no es ancestro de ninguna rama — resultó ser un checkpoint local de Claude Code (`refs/agents/<uuid>/checkpoints/...`). Confirmado con `git ls-remote origin` que nunca llegó al remoto y no hay refspec que lo empuje.
+
+**Veredicto de la auditoría: REQUIERE LIMPIEZA antes de hacer público** (no por los 4 IDs ya migrados en código — por el archivo de PII y el 5º ID, ambos vigentes en HEAD en el momento de la auditoría).
+
+### 34.2 Reescritura de historial ejecutada
+
+Backup completo del repo creado antes de cualquier operación destructiva: `Aplicación de Predios.backup-20260819-152609` (directorio hermano, mismo HEAD, íntegro).
+
+**Corrección de un plan propuesto por el usuario antes de ejecutar:** el archivo `filter-strings.txt` inicial para `git filter-repo --replace-text` contenía 4 de 5 IDs **inventados** (0 coincidencias reales en el historial, patrón de alfabeto cíclico, no extraídos de nada real) — se verificó cada uno contra el historial antes de correr nada. Además, `--replace-text` no es la herramienta correcta para 260 strings de PII individuales. Plan corregido y ejecutado:
+
+```bash
+git filter-repo --path sembrado_usuarios_grupos.js --invert-paths \
+  --replace-text /tmp/filter-strings.txt --force
+```
+
+con los 5 IDs reales en `filter-strings.txt` (confirmados con `-S` antes de correr) y remoción completa de `sembrado_usuarios_grupos.js` de TODO el historial (no solo redacción de texto). Tras la reescritura: `sembrado_usuarios_grupos.js` recreado como commit nuevo con `DIRECTORIO_OFICIAL_SEMBRADO = []` (array vacío, sin `module.exports`/CommonJS — el proyecto no usa ese patrón, GAS no tiene sistema de módulos, se verificó que `module.exports` habría roto el deploy con `ReferenceError`).
+
+**Verificación post-rewrite (contra `origin/main`, no solo local):**
+- Los 5 IDs reales → `0` menciones en todo el historial reescrito, confirmado también vía `git log --oneline origin/main -S"<id>"` tras el push.
+- `sembrado_usuarios_grupos.js` con datos reales → no existe en ningún commit; solo el stub sanitizado.
+- `git fsck` → íntegro, sin errores.
+- gitleaks re-ejecutado sobre las 80 commits reescritas → mismo único falso positivo de siempre, nada nuevo.
+- Emails `@idu.gov.co` individuales → de ~270 a 14, y esos 14 son placeholders obvios (`juan.perez@`, `correo@`) o buzones departamentales ya documentados en `CLAUDE.md` (`dtdp@`, `sistemasdtdp@`, `stap@`) — el único nombre real que queda es `fabian.montanez@idu.gov.co`, contacto de soporte ya listado a propósito en `CLAUDE.md`.
+
+`git-filter-repo` removió el remote `origin` automáticamente (comportamiento estándar de seguridad) — se re-agregó, se hizo `git fetch origin main` para obtener un ref de tracking fresco (necesario para que `--force-with-lease` tuviera con qué comparar), y se confirmó que `origin/main` no había cambiado por terceros antes del force-push.
+
+### 34.3 Migración a `main` y limpieza de ramas remotas
+
+- `main` creada desde el HEAD ya migrado (Sección 32) y pusheada.
+- `origin/main` reescrita con `git push --force-with-lease` tras la purga.
+- `origin/cleanup/remove-pii-and-ids` (rama intermedia usada para los primeros commits de sanitización) borrada — ya no aportaba nada no incluido en `main`.
+- `origin/fix/qa-saveTracking-batch-lock` (rama vieja, default original) — **no se pudo borrar hasta que el usuario cambió el default branch a `main` en GitHub** (confirmado con `git ls-remote --symref origin HEAD` antes de intentar, ya que GitHub rechaza borrar la rama default). Una vez confirmado el cambio, se borró local y remota.
+- Estado final: `main` es la única rama, local y remota, default en GitHub, historial limpio confirmado directamente contra `origin`.
+
+---
+
+## 35. Tooling de CI/CD — Husky, commitlint, GitHub Actions, README/CONTRIBUTING [2026-08-19]
+
+**Corrección de premisa antes de ejecutar:** el pedido original describía "mi proyecto Node.js" de "predicción de precios de predios" — ninguna de las dos cosas es cierta (confirmado: cero `package.json` en el repo antes de esta tarea; cero funcionalidad de ML/predicción de precios en todo el código). Se confirmó con el usuario adaptar el tooling al proyecto real (gestión de predios IDU, Apps Script/clasp) en vez de generar documentación falsa.
+
+**Archivos creados:**
+- `package.json` — deja explícito que Node es solo tooling de dev, no el runtime de la app.
+- `scripts/lint-html-scripts.js` — extrae `<script>` de cada `.html` (neutralizando scriptlets GAS `<?= ?>`/`<?!= ?>` como `null` antes de chequear, ya que no son JS válido tal cual pero el resto del bloque sí debe validarse) y corre `node --check` sobre eso + todos los `.js`. Probado contra el repo real (49/49 bloques válidos) y con un archivo roto a propósito para confirmar que sigue detectando errores reales.
+- `commitlint.config.js` — extiende `@commitlint/config-conventional`, vocabulario cerrado `feat|fix|refactor|chore|docs|test|perf|style|ci`.
+- `.husky/commit-msg` — corre `commitlint` + valida sufijo `[TICKET]`/`[sin-ticket]` obligatorio. Probado end-to-end (mensaje válido pasa, sin ticket falla) y validado en commits reales del repo (`cee207b`, `e886c00`, etc. — el propio hook se auto-validó en producción).
+- `.github/workflows/test.yml` (`pr-checks`) — 4 jobs: `lint` (JS/HTML), `lint-python` (sintaxis de `consolidacion_colab/`), `commitlint` (título del PR, ya que la merge strategy es squash-merge), `secret-scan` (gitleaks-action). Trigger: `pull_request` hacia `main` únicamente, no en cada push a rama de trabajo (decisión ya tomada en la Sección 33 para no generar ruido en pushes intermedios de agentes). YAML validado (4 jobs parseados correctamente).
+- `README.md`, `CONTRIBUTING.md` — documentación real del proyecto (stack GAS/clasp, mapa de archivos, flujo de ramas trunk-based, convención de commits, checklist de deploy manual).
+- `.gitignore` ampliado con `node_modules/`, `.husky/_/`, `npm-debug.log*`.
+
+**Nota sobre Husky v9:** el comando `husky install` (v8) está deprecado — la versión instalada (9.1.7) usa `"prepare": "husky"` solamente. Se usó `npx husky init` y se verificó la sintaxis correcta en `package.json` antes de continuar.
+
+**Commits:** `cee207b` (setup completo, rama `main`), `e886c00`/`8fe6011`/`40f4e7d` (rama `feat/verificacion-ci-cd`, cambio de prueba + 2 commits vacíos de re-disparo de checks).
+
+---
+
+## 36. Verificación del pipeline CI/CD — estado abierto al cierre [2026-08-19]
+
+**Objetivo:** confirmar en vivo que los 4 checks de `pr-checks.yml` corren correctamente sobre un PR real.
+
+**Ejecutado:**
+- Rama `feat/verificacion-ci-cd` creada desde `main`, cambio trivial en `README.md`, commit y push (`e886c00`).
+- Se corrigió una premisa incorrecta del usuario sobre un job mal nombrado ("Validar titulo del PR" sin tilde) — el archivo real ya tenía la tilde correcta (`Validar título del PR`); no se hizo ningún cambio porque no había nada que corregir.
+- Dos commits vacíos adicionales (`8fe6011`, `40f4e7d`) para re-disparar el workflow, pedidos por el usuario sin que se reportara ningún error específico de los checks.
+
+**Bloqueador identificado, sin resolver al cierre de esta sesión:**
+- El workflow dispara solo en evento `pull_request` — **nunca se confirmó que el PR llegara a crearse** (se entregó un link pre-rellenado a `https://github.com/Leon64721/ProyectoPREDIOS/compare/main...feat/verificacion-ci-cd`, pero el usuario nunca confirmó haberlo abierto). Si el PR no existe, ningún push a la rama dispara los checks, sin importar cuántos commits vacíos se hagan — esto explicaría por completo el patrón de "re-disparar" sin resultado.
+- Se instaló `gh` CLI (binario oficial descargado a `scratchpad/gh-bin/`, mismo patrón que `gitleaks` — `choco`/`brew`/`apt-get` no aplican en este entorno Windows) para poder verificar el estado del PR/Actions directamente en vez de depender de que el usuario reportara manualmente. Dos intentos de autenticación:
+  1. `gh auth login --with-token` reutilizando la credencial que ya usa `git` (vía `git credential fill`, sin exponerla en ningún output) → rechazado, el token no tiene el scope `read:org` que `gh` exige.
+  2. `gh auth login --web` (device flow) → código de un solo uso generado dos veces (`7408-0D7A`, luego `5CC2-40FD`), ninguno fue ingresado a tiempo por el usuario — el segundo intento expiró (`context deadline exceeded`, confirmado por notificación de tarea en background).
+- **Al cierre de esta sesión: no hay confirmación de que exista un PR abierto, y no hay visibilidad programática sobre el estado real de los 4 checks.** La sesión se detuvo explícitamente a pedir esa confirmación en vez de seguir repitiendo commits vacíos sin diagnóstico.
+
+**Pendiente explícito para la próxima sesión:**
+1. Confirmar si el PR de `feat/verificacion-ci-cd` → `main` existe; si no, crearlo.
+2. Si se retoma la verificación de `gh` CLI: generar un nuevo código de device-flow y completarlo a tiempo (~15 min de ventana), o autenticar con un token que sí tenga el scope `read:org`.
+3. Una vez el PR exista y los checks corran, revisar resultado real de los 4 jobs y cerrar la verificación del pipeline.
+4. Retomar branch protection en `main` (bloqueado al cierre de la sesión anterior por la duda de plan de pago en GitHub — sin resolver si era el selector de rama default, ya gratuito, o la sección de protección de rama en repos privados, que sí requiere plan pago).
