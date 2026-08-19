@@ -48,7 +48,7 @@ except Exception as e:
 
 # ═══════════════════════════════════════════════════════════════════════════════════
 # DRIVE REMOTO Y CONFIGURACIÓN DE RUTAS
-DRIVE_FOLDER_ID = '***REMOVED***'
+DRIVE_FOLDER_ID = os.getenv('COLAB_DRIVE_FOLDER_ID', 'SET_ME_IN_ENV')
 DRIVE_MEMORIA_FILENAME = 'diccionario_columnas_v21.json'
 DRIVE_CONFIG_MAPEO_FILENAME = 'config_mapeo_columnas_v21.json'
 DRIVE_OUTPUT_FILENAME = 'CONSOLIDADO_SNAPSHOT_V21.csv'
