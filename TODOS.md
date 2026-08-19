@@ -477,3 +477,19 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 **Context:** Ver el plan de versionamiento Git/GitHub del 2026-08-19 (decisión "Arquitectura 3" del `/plan-eng-review`) para el razonamiento completo.
 
 **Depends on / blocked by:** Depende del ítem 12 (wrapper de `clasp` con guard + health checks) implementado y validado en producción primero.
+
+---
+
+## 21. Verificar en vivo el pipeline CI/CD (`pr-checks.yml`) — [BLOQUEADO, hallado 2026-08-19]
+
+**What:** Confirmar que los 4 jobs de `.github/workflows/test.yml` (`lint`, `lint-python`, `commitlint`, `secret-scan`) corren correctamente sobre un PR real de `feat/verificacion-ci-cd` → `main`, y cerrar esa rama (mergear o descartar) una vez verificado.
+
+**Why:** El tooling de CI/CD (Husky, commitlint, GitHub Actions) se instaló y probó en aislamiento (`node --check`, tests manuales del hook, YAML validado) en la sesión del 2026-08-19, pero nunca se confirmó en un PR real porque el workflow dispara solo en evento `pull_request` y no hay confirmación de que el PR llegara a crearse — se entregó un link pre-rellenado pero nunca se confirmó el clic en "Create pull request". Esto explicaría por completo el patrón de varios commits vacíos de "re-disparar checks" sin ningún resultado reportado.
+
+**Pros:** Cierra la brecha entre "tooling instalado" y "tooling verificado en producción"; da la primera evidencia real de que el pipeline sirve para lo que se diseñó.
+
+**Cons:** Requiere o bien que el usuario confirme manualmente el estado del PR/Actions, o completar la autenticación de `gh` CLI (dos intentos de device-flow expiraron sin que se ingresara el código a tiempo).
+
+**Context:** Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 36 para el detalle completo, incluyendo los dos códigos de device-flow generados y por qué expiraron.
+
+**Depends on / blocked by:** Ninguno técnico — solo falta la confirmación humana de si el PR existe, o completar el login de `gh` (`gh auth login --web`, código válido ~15 min).
