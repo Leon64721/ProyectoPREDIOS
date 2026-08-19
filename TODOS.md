@@ -278,9 +278,11 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 
 ---
 
-## 12. Coordinación entre agentes concurrentes sobre el mismo `@HEAD` de `clasp` — [PENDIENTE, hallado 2026-08-06]
+## 12. Coordinación entre agentes concurrentes sobre el mismo `@HEAD` de `clasp` — [EN RESOLUCIÓN, plan de versionamiento 2026-08-19]
 
-**What:** Establecer un protocolo (aunque sea informal — un aviso en el chat, un archivo lock, o simplemente coordinar turnos) antes de que más de una sesión de agente (Claude Code, GitHub Copilot, o cualquier otra) ejecute `clasp push` sobre el mismo deployment `@HEAD` en una ventana de tiempo cercana.
+**En resolución:** Diseñado (no implementado aún) en la sesión de `/plan-eng-review` del 2026-08-19 sobre estrategia de versionamiento Git/GitHub. Solución de tres capas: (1) wrapper que intercepta el binario `clasp` para forzar guard de rama/estado + health checks de Apps Script antes de cualquier `push`/`deploy` real; (2) `git worktree` por sesión de agente para eliminar colisión de archivos en el mismo checkout; (3) registro simple de "tarea en progreso" para prevenir colisión semántica (dos agentes resolviendo la misma tarea de forma distinta, como ocurrió en la segunda ocurrencia del 2026-08-06). No marcar [COMPLETADO] hasta implementar y verificar en la práctica — diseñar no es lo mismo que cerrar, siguiendo la disciplina ya establecida en este backlog.
+
+**What (original, para referencia):** Establecer un protocolo (aunque sea informal — un aviso en el chat, un archivo lock, o simplemente coordinar turnos) antes de que más de una sesión de agente (Claude Code, GitHub Copilot, o cualquier otra) ejecute `clasp push` sobre el mismo deployment `@HEAD` en una ventana de tiempo cercana.
 
 **Why:** Durante la depuración de un `SyntaxError` en Fase 5c, se descubrió que una sesión de GitHub Copilot había editado `Index.html` (eliminando por accidente la línea `<?!= include('app_permisos_js') ?>`, con un diagnóstico basado en el estado desactualizado del repo — creía que `Index.html` todavía incluía `app_js`, retirado desde la Fase 4 de CONC-FE-02) y había ejecutado su propio `clasp push`, todo esto en el working tree local sin commitear, de forma concurrente con esta sesión de Claude Code. El `clasp push --force` de esta sesión estuvo a punto de volver a desplegar esa versión rota sin darse cuenta — se detectó por revisar `git status`/`git diff` antes de comitear, no porque el proceso lo hubiera prevenido. Ver `DOCUMENTACION_TECNICA_VIVA.md` Sección 12.15-12.16 para el detalle completo.
 
@@ -459,3 +461,19 @@ Confirmado por grep dirigido: **cero llamadas cruzadas** entre matriz/alertas/pe
 **Context:** ver `ARCHITECTURE_V5.md` completo para el detalle técnico de cada punto y la tabla de riesgo por punto.
 
 **Depends on / blocked by:** ninguno para Fase A. Fase B depende de una ronda de diseño adicional (`asignarEquipoGranularLote`) antes de poder construirse.
+
+---
+
+## 20. Automatizar `clasp push`/deploy vía GitHub Actions al mergear a `main` — [DIFERIDO, plan de versionamiento 2026-08-19]
+
+**What:** Reemplazar el deploy manual (humano corriendo el wrapper de `clasp` desde `main` tras cada merge) por un GitHub Action que ejecute el mismo wrapper automáticamente en cada merge a `main`.
+
+**Why:** Diferido deliberadamente en la sesión de `/plan-eng-review` del 2026-08-19: automatizar el deploy hoy saltaría el checklist humano final antes de tocar producción gubernamental (`validateConfig()`, `diagnosticarSistema()`, revisión de hoja `Permisos`). Una vez el wrapper de `clasp` (ítem 12) ejecute esas mismas validaciones de forma programática — y quede probado en producción real durante al menos unas semanas — automatizar deja de saltarse ninguna garantía y se vuelve una mejora de velocidad segura.
+
+**Pros:** Deploy más rápido y consistente, sin pasos manuales que un humano pueda olvidar.
+
+**Cons:** Tocar producción de una entidad pública sin un humano confirmando en el momento sigue siendo una decisión que vale la pena revisitar con calma, no apurar — incluso con las validaciones automatizadas.
+
+**Context:** Ver el plan de versionamiento Git/GitHub del 2026-08-19 (decisión "Arquitectura 3" del `/plan-eng-review`) para el razonamiento completo.
+
+**Depends on / blocked by:** Depende del ítem 12 (wrapper de `clasp` con guard + health checks) implementado y validado en producción primero.
