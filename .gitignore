@@ -3,3 +3,6 @@
 
 # graphify — salida generada del grafo de conocimiento (graphify extract/tree/cluster-only)
 graphify-out/
+
+# gitleaks — artefacto de escaneo de secretos, no es código versionable
+gitleaks-report.json
