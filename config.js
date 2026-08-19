@@ -284,6 +284,53 @@ function getConfigProperty(key, fallback = null) {
 }
 
 /**
+ * ✅ SEGURIDAD [2026-08-19] [SEC-01]: valida explícitamente que las 4 Script
+ * Properties sensibles (IDs de spreadsheet que ya no viven en el código
+ * versionado tras la migración) estén seteadas. A diferencia de
+ * validateConfig()/diagnosticarSistema(), esta función SÍ cubre las 4 —
+ * incluyendo PAC_SPREADSHEET_ID, que vive en pac_config.js/PAC_CONFIG (fuera
+ * del objeto CONFIG) y por eso no aparece en CONFIG_SENSITIVE_PROPERTY_MAP.
+ * No imprime el valor completo en el log — solo presencia y longitud, para
+ * no exponer el ID en los logs de Stackdriver.
+ * @returns {{success: boolean, faltantes?: string[]}}
+ */
+function verificarScriptProperties() {
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('🔐 VERIFICANDO SCRIPT PROPERTIES SENSIBLES');
+  console.log('═══════════════════════════════════════════════════════');
+
+  const propiedadesSensibles = [
+    CONFIG_SENSITIVE_PROPERTY_MAP['DATA_FILES.LOGS'],      // DATA_FILES_LOGS_ID
+    CONFIG_SENSITIVE_PROPERTY_MAP['DATA_FILES.USUARIOS'],  // DATA_FILES_USUARIOS_ID
+    CONFIG_SENSITIVE_PROPERTY_MAP['MAESTRO_PERMISOS'],     // MAESTRO_PERMISOS_ID
+    'PAC_SPREADSHEET_ID' // pac_config.js/PAC_CONFIG — no vive en CONFIG_SENSITIVE_PROPERTY_MAP
+  ];
+
+  const props = PropertiesService.getScriptProperties();
+  const faltantes = [];
+
+  propiedadesSensibles.forEach(key => {
+    const value = props.getProperty(key);
+    if (value === null || value === undefined || value === '') {
+      console.error(`  ❌ ${key}: FALTA`);
+      faltantes.push(key);
+    } else {
+      console.log(`  ✅ ${key}: OK (${value.length} caracteres)`);
+    }
+  });
+
+  console.log('═══════════════════════════════════════════════════════');
+
+  if (faltantes.length > 0) {
+    console.error(`❌ Faltan ${faltantes.length} Script Properties sensibles: ${faltantes.join(', ')}`);
+    return { success: false, faltantes: faltantes };
+  }
+
+  console.log('✅ Las 4 Script Properties sensibles están configuradas');
+  return { success: true };
+}
+
+/**
  * ✅ MEJORADO: Obtiene valor de configuración con validación completa
  * @param {string} path - Ruta de la configuración (ej: 'SHEETS.DATOS')
  * @param {*} defaultValue - Valor por defecto si no encuentra
@@ -410,6 +457,16 @@ function validateConfig() {
     
     const required = [
       'DATA_FILES.PRINCIPAL',
+      // ✅ SEGURIDAD [2026-08-19] [SEC-01]: DATA_FILES.LOGS y DATA_FILES.USUARIOS
+      // se resuelven vía Script Properties (CONFIG_SENSITIVE_PROPERTY_MAP) desde la
+      // migración de IDs sensibles — agregadas aquí para que validateConfig() falle
+      // de forma explícita si alguna Script Property falta, en vez de dejarlo pasar
+      // en silencio como ocurría antes del fix. PAC_SPREADSHEET_ID NO se agrega
+      // aquí a propósito: vive en pac_config.js/PAC_CONFIG, un objeto y archivo
+      // distinto — validateConfig() se mantiene enfocado solo en CONFIG
+      // (config.js). Se verifica junto con las otras 3 en verificarScriptProperties().
+      'DATA_FILES.LOGS',
+      'DATA_FILES.USUARIOS',
       'SHEETS.DATOS',
       'SHEETS.PERMISOS',
       'SHEETS.LOGS',
@@ -493,7 +550,11 @@ function diagnosticarSistema() {
     console.log('  DATA_FILES.PRINCIPAL:', CONFIG.DATA_FILES.PRINCIPAL);
     console.log('  DATA_FILES.SECUNDARIOS:', CONFIG.DATA_FILES.SECUNDARIOS);
     console.log('  DATA_FILES_IDS:', CONFIG.DATA_FILES_IDS);
-    console.log('  MAESTRO_PERMISOS:', CONFIG.MAESTRO_PERMISOS);
+    // ✅ SEGURIDAD [2026-08-19] [SEC-01]: antes leía CONFIG.MAESTRO_PERMISOS crudo,
+    // que desde la migración a Script Properties siempre es '' — daba un falso
+    // negativo aunque la Script Property estuviera bien seteada. getConfig()
+    // resuelve el valor real (ver CONFIG_SENSITIVE_PROPERTY_MAP más arriba).
+    console.log('  MAESTRO_PERMISOS:', getConfig('MAESTRO_PERMISOS'));
     
     // 3. Validar configuración
     console.log('\n🔍 VALIDANDO CONFIGURACIÓN:');
