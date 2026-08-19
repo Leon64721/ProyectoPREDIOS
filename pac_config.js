@@ -3,9 +3,16 @@
 // Optimizado para performance + reemplazos + filtros desde MATRIZ
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ⚠️ SEGURIDAD [2026-08-19]: SS_PADRE_ID y PAC_SPREADSHEET_ID ya NO están hardcodeados
+// — este repo estuvo público en GitHub y esos IDs quedaron expuestos. Se resuelven en
+// runtime desde Script Properties (getConfigProperty(), definida en config.js — misma
+// Apps Script project, ambos archivos comparten scope global). SS_PADRE_ID reutiliza la
+// MISMA Script Property que CONFIG.MAESTRO_PERMISOS en config.js (es el mismo
+// spreadsheet, no un ID distinto) — no crear una property nueva para este valor. Ver
+// DOCUMENTACION_TECNICA_VIVA.md, sección "Migración de IDs sensibles a Script Properties".
 const PAC_CONFIG = {
-  SS_PADRE_ID: '***REMOVED***',
-  PAC_SPREADSHEET_ID: '***REMOVED***',
+  SS_PADRE_ID: getConfigProperty('MAESTRO_PERMISOS_ID', ''),
+  PAC_SPREADSHEET_ID: getConfigProperty('PAC_SPREADSHEET_ID', ''),
 
   // --- ⚠️ AGREGAR ESTE BLOQUE FALTANTE ⚠️ ---
   HOJAS_INTERNAS: {

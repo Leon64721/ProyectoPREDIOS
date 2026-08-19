@@ -2547,3 +2547,100 @@ Se invocó `/qa-only` sobre la URL de deployment provista por el usuario (`https
 - [ ] `clasp push` ya fue ejecutado por la otra sesión (30.7) — el deployment `/dev` probado en 31.4 debería reflejar ya ambos conjuntos de cambios (Capa A+B y el fix de 31.2), pendiente de confirmar visualmente una vez resuelto el bloqueo de autenticación.
 
 **Impacto en producción:** el fix de 31.2 vive en el mismo archivo que ya fue desplegado a `/dev` por la sesión de 30.7 esta misma noche — no hay forma de confirmar en este documento si el fix específico de 31.2 ya está en producción sin la QA de 31.4. Ningún commit fue creado por esta sesión.
+
+## 32. [2026-08-19] Migración de IDs sensibles a Script Properties (repo estuvo público en GitHub)
+
+**Contexto:** este repositorio (`origin` = `https://github.com/Leon64721/ProyectoPREDIOS.git`) estuvo público durante un periodo antes de cambiarse a privado. Mientras estuvo público, `config.js` y `pac_config.js` exponían IDs reales de Spreadsheet en texto plano, y `.clasp.json` exponía el `scriptId` real del proyecto Apps Script. Se trata todo como comprometido (pudo ser indexado/cacheado por terceros) aunque el repo ya sea privado hoy.
+
+**Archivo(s) intervenido(s):** `config.js`, `pac_config.js`, `auditoria.js`. Solo lectura/auditoría (sin cambios de código) sobre el resto del repo, incluyendo historial completo de `git log -p --all`.
+
+### 32.1 Auditoría de exposición (historial completo, no solo HEAD)
+
+Búsqueda con `git log -p --all` (excluyendo binarios `.docx`/`.pdf`) sobre patrones de ID de Spreadsheet, `scriptId`, emails y claves de API/tokens. Resultado:
+
+**IDs de Spreadsheet/Drive/Script expuestos, actualmente en uso (vigentes, requieren rotación de exposición vía Script Properties):**
+
+**Nota:** los IDs de esta sección están enmascarados (primeros 6 + últimos 4 caracteres) a propósito — mostrarlos completos en un `.md` versionado recrearía el mismo problema que esta migración busca resolver. El valor real de cada uno vive únicamente en Script Properties (ver 32.2); quien necesite el valor completo debe consultarlo ahí, no en este documento.
+
+| Valor (enmascarado) | Dónde vivía (antes de esta sesión) | Qué es |
+|---|---|---|
+| `1DCKjc...PL2Q` | `config.js` → `CONFIG.DATA_FILES.LOGS` | Spreadsheet BD_OPERACIONAL_PREDIOS (logs de auditoría) |
+| `1F1jqh...UGOY` | `config.js` → `CONFIG.DATA_FILES.USUARIOS` | Directorio de identidad/rol de usuarios |
+| `1mCPBU...D5ZQ` | `config.js` → `CONFIG.MAESTRO_PERMISOS` **y** `pac_config.js` → `PAC_CONFIG.SS_PADRE_ID` (duplicado, mismo ID en dos archivos) | Spreadsheet maestro de permisos/PAC padre |
+| `1i4QtK...Ye9A` | `pac_config.js` → `PAC_CONFIG.PAC_SPREADSHEET_ID` | Spreadsheet externo del módulo PAC |
+| `17Syj1...H69h` | `.clasp.json` → `scriptId` | scriptId del proyecto Apps Script actual (producción) |
+
+**IDs expuestos solo en historial (ya no están en el código vigente, no requieren acción de migración pero quedan documentados; también enmascarados):**
+
+- `16gqzy...4qZo` — `scriptId` anterior en `.clasp.json` (commit `37a2a35`, reemplazado en `24f29ed`; el mensaje de ese commit lo describe como un proyecto de dev/test distinto, no producción).
+- `1mCPBU...D5ZQ` también vivió como `CONFIG.DATA_FILES.PRINCIPAL` en `37a2a35`, antes de vaciarse en `24f29ed` — mismo ID que `MAESTRO_PERMISOS`, ya cubierto arriba.
+
+**Hallazgo adicional fuera del alcance original de esta tarea (no se tocó código, solo se documenta):**
+
+- `consolidacion_colab/uniondatosfinales.py:51` → `DRIVE_FOLDER_ID = '***REMOVED***'`. Es un script de Google Colab (no forma parte del proyecto Apps Script, no se sube con `clasp push`, corre bajo la cuenta de Google del usuario vía `google.colab.auth`). `PropertiesService` no aplica a este runtime. Queda pendiente de decisión del usuario: mover a un input de formulario de Colab, a un archivo de config local no versionado, o aceptar el riesgo (ver tabla de rotación en la sección 32.4).
+- `sembrado_usuarios_grupos.js` contiene ~260 correos institucionales `@idu.gov.co` hardcodeados (datos de siembra/semilla del directorio de usuarios). No son credenciales, pero sí son PII institucional que quedó expuesta mientras el repo era público. No se tocó — es un archivo de datos funcional (seed data), no un secreto de configuración; requeriría una decisión de producto (¿mover el directorio a la hoja `USUARIOS` y dejar de versionarlo como código?) que excede el alcance de esta tarea.
+- No se encontraron API keys, tokens (`AIza…`, `sk-…`, `ya29.…`) ni claves privadas (`BEGIN PRIVATE KEY`) en ningún commit del historial.
+
+### 32.2 Migración aplicada (código)
+
+Se creó `getConfigProperty(key, fallback)` en `config.js` — lee el valor desde `PropertiesService.getScriptProperties()`, con fallback explícito y log de advertencia si la property no está seteada. `getConfig()` ahora resuelve automáticamente las siguientes rutas desde Script Properties antes de devolver el valor hardcodeado del código (que quedó en `''` a propósito):
+
+| Ruta de `getConfig()` | Script Property |
+|---|---|
+| `DATA_FILES.LOGS` | `DATA_FILES_LOGS_ID` |
+| `DATA_FILES.USUARIOS` | `DATA_FILES_USUARIOS_ID` |
+| `DATA_FILES.PRINCIPAL` | `DATA_FILES_PRINCIPAL_ID` (si vacía, sigue cayendo al spreadsheet activo como antes) |
+| `MAESTRO_PERMISOS` | `MAESTRO_PERMISOS_ID` |
+
+En `pac_config.js`, `PAC_CONFIG.SS_PADRE_ID` y `PAC_CONFIG.PAC_SPREADSHEET_ID` se resuelven igual, llamando a `getConfigProperty()` directamente (misma Apps Script project, scope global compartido con `config.js`; los nombres de función declarados con `function` se hoistean globalmente sin importar el orden de archivos, por lo que no hay dependencia de orden de carga). `SS_PADRE_ID` reutiliza la property `MAESTRO_PERMISOS_ID` (es el mismo spreadsheet que `CONFIG.MAESTRO_PERMISOS`, confirmado en 32.1) — no se creó una property nueva para ese valor.
+
+Se actualizó también el diagnóstico en `auditoria.js` (`_obtenerGestorLogs()`): antes solo detectaba el placeholder literal `'ID_SPREADSHEET_LOGS_AQUI'`; ahora también detecta `logsId` vacío/falsy (caso esperado si la Script Property `DATA_FILES_LOGS_ID` aún no se ha seteado) y referencia la property por nombre en el mensaje de error.
+
+Todos los call sites existentes (`getConfig('DATA_FILES.LOGS')`, `getConfig('DATA_FILES.USUARIOS')`, `getConfig('MAESTRO_PERMISOS')`, `getConfig('DATA_FILES.PRINCIPAL')`, `PAC_CONFIG.SS_PADRE_ID`, `PAC_CONFIG.PAC_SPREADSHEET_ID`) se verificaron con `git grep` antes del cambio — ninguno accede a `CONFIG.DATA_FILES.LOGS`/`CONFIG.MAESTRO_PERMISOS` directamente (bypaseando `getConfig()`), salvo los propios `console.log` de diagnóstico dentro de `config.js` (`diagnosticarSistema()`, que ya resuelve el ID real por separado vía `getConfig()` unas líneas después para abrir el spreadsheet).
+
+**Cómo setear las Script Properties la primera vez:**
+
+- **Vía editor de Apps Script:** abrir el proyecto → ⚙️ (Configuración del proyecto) o el menú "Editor" → "Propiedades del proyecto" → pestaña "Propiedades del script" → "Añadir propiedad de script" → pegar el `key` (ej. `DATA_FILES_LOGS_ID`) y el `value` (el ID real del spreadsheet) → Guardar. Repetir para cada clave de la tabla de arriba.
+- **Vía `clasp`** (requiere `clasp login` ya hecho y Apps Script API habilitada): no existe un comando `clasp` directo para Script Properties; usar `clasp run` contra una función de setup temporal, por ejemplo:
+  ```js
+  function _setupScriptPropertiesUnaVez() {
+    PropertiesService.getScriptProperties().setProperties({
+      'DATA_FILES_LOGS_ID': 'PEGAR_ID_REAL_AQUI',
+      'DATA_FILES_USUARIOS_ID': 'PEGAR_ID_REAL_AQUI',
+      'MAESTRO_PERMISOS_ID': 'PEGAR_ID_REAL_AQUI',
+      'PAC_SPREADSHEET_ID': 'PEGAR_ID_REAL_AQUI'
+      // 'DATA_FILES_PRINCIPAL_ID': solo si se llena PRINCIPAL en el futuro
+    });
+  }
+  ```
+  Ejecutar una vez desde el editor de Apps Script (o `clasp run _setupScriptPropertiesUnaVez`), confirmar con `diagnosticarSistema()`, y luego **borrar o comentar la función** (no dejar los IDs reales en una función de setup versionada — el valor debe existir solo en Script Properties, no en el código).
+- **Verificación:** ejecutar `diagnosticarSistema()` — debe imprimir los IDs resueltos y `success: true`. Si falta alguna property, `getConfigProperty()` deja un `console.warn` explícito con el nombre exacto de la clave faltante.
+
+### 32.3 `.gitignore` / `.claspignore`
+
+- `.gitignore` existe (`.gstack/`, `graphify-out/`) pero no excluye `config.js`, `pac_config.js` ni `.clasp.json` — y no debe hacerlo: son código fuente (lógica de la app), no secretos, una vez aplicada la migración de 32.2. Los valores sensibles ya no viven en esos archivos, así que pueden seguir versionados sin riesgo adicional.
+- No existe `.claspignore` en la raíz. No se creó uno en esta sesión — no hay valores sensibles que excluir del push de `clasp` después de esta migración (los IDs viven en Script Properties, que `clasp push` nunca toca).
+
+### 32.4 Rotación real — pendiente manual del usuario
+
+| Elemento | ¿Se puede/debe rotar? | Recomendación |
+|---|---|---|
+| `DATA_FILES.LOGS` (`1DCKjc...PL2Q`) | Bajo riesgo — es un sheet de logs internos, no contiene credenciales, solo trazabilidad de acciones. No es necesario regenerar el spreadsheet. | Revisar en Google Drive los permisos de compartición de ese Sheet (Compartir → Acceso general) y confirmar que NO esté en "Cualquier persona con el enlace" — debe ser solo los usuarios/grupo institucional que ya lo usan. Si al revisar aparece compartido más ampliamente de lo esperado, ahí sí conviene restringir el acceso (no regenerar el ID). |
+| `DATA_FILES.USUARIOS`, `MAESTRO_PERMISOS`/`SS_PADRE_ID`, `PAC_SPREADSHEET_ID` | Mismo criterio que LOGS: son datos operativos internos (directorio de usuarios, permisos, PAC), no secretos de autenticación en sí mismos. El riesgo real de tener el ID expuesto es que alguien con el enlace correcto podría *intentar* abrir el archivo — pero Google Sheets exige de todas formas que la cuenta tenga permiso explícito o que el archivo esté compartido de forma abierta. | Mismo tratamiento: revisar permisos de compartición de cada Sheet en Drive, no regenerar IDs salvo que la revisión muestre que quedaron compartidos más ampliamente de lo previsto. |
+| `scriptId` de Apps Script (`17Syj1...`) | No se puede "rotar" sin recrear el proyecto completo (perdiendo triggers instalados, deployments, historial de versiones y la URL del Web App actual). | Riesgo real bajo: conocer el `scriptId` por sí solo no da acceso a nadie — Apps Script exige que la cuenta de Google tenga permiso de edición/ejecución explícito sobre ese proyecto (o que el Web App esté desplegado con acceso "Cualquiera"). Acción recomendada: revisar en el editor de Apps Script (⋮ → "Compartir" o "Ver acceso") quién tiene permisos de edición sobre el proyecto, y confirmar que el Web App desplegado (`Deploy` → `Manage deployments`) tenga el `access` esperado (`DOMAIN`, no `ANYONE`, salvo que sea intencional). No recrear el proyecto salvo evidencia concreta de acceso no autorizado. |
+| `scriptId` anterior (`16gqzy8nb...`, dev/test) | Igual que el anterior — no rotable sin recrear. | Si ese proyecto de dev/test sigue existiendo, aplicar la misma revisión de permisos que al de producción; si ya no se usa, considerar eliminarlo desde script.google.com (no solo dejarlo huérfano). |
+| Correos `fabian.montanez@idu.gov.co` / `sistemasdtdp@idu.gov.co` (mensaje de mantenimiento en `config.js`) | No rotable — son direcciones de contacto institucional público, no credenciales. | Ninguna acción necesaria; su exposición no representa un riesgo de seguridad (son correos de soporte visibles también fuera del código). |
+| ~260 correos `@idu.gov.co` en `sembrado_usuarios_grupos.js` (seed data) | No es una credencial rotable, pero sí es PII institucional. | Fuera del alcance de esta tarea (ver 32.1). Si se decide actuar, la opción más limpia es dejar de versionar la lista como código y moverla a la hoja `USUARIOS` en Drive (que ya es su fuente de verdad según `ARCHITECTURE_V4.md` Sección 6.1), dejando `sembrado_usuarios_grupos.js` como un importador puntual sin datos hardcodeados. |
+| `DRIVE_FOLDER_ID` en `consolidacion_colab/uniondatosfinales.py` | No es GAS, no aplica `PropertiesService`. | Pendiente de decisión del usuario (ver 32.1) — no se tocó en esta sesión. |
+
+### 32.5 Estado pendiente al cierre
+
+- [x] Auditoría completa de `git log -p --all` por IDs, `scriptId`, emails y patrones de API key/token.
+- [x] `getConfigProperty()` creada y `getConfig()`/`pac_config.js` migrados para las 5 claves sensibles identificadas.
+- [x] Diagnóstico de `auditoria.js` actualizado para no depender del placeholder literal.
+- [x] Documentado el procedimiento de setup de Script Properties (editor + `clasp run`).
+- [ ] **No se hizo commit todavía** (pedido explícito del usuario) — diff mostrado para revisión, pendiente confirmación antes de `git add`/`git commit`.
+- [ ] Setear las 4 Script Properties reales (`DATA_FILES_LOGS_ID`, `DATA_FILES_USUARIOS_ID`, `MAESTRO_PERMISOS_ID`, `PAC_SPREADSHEET_ID`) en el proyecto de Apps Script — sin esto, `diagnosticarSistema()`/auditoría/PAC quedan deshabilitados hasta que el usuario las configure manualmente (paso que esta sesión no puede ejecutar por sí misma, requiere acceso al editor de Apps Script del usuario).
+- [ ] Revisión manual de permisos de compartición en Drive para los 4 Sheets sensibles (ver 32.4) — pendiente del usuario.
+- [ ] Revisión manual de permisos/acceso del proyecto Apps Script y su Web App deployment (ver 32.4) — pendiente del usuario.
+- [ ] Decisión pendiente del usuario sobre `sembrado_usuarios_grupos.js` (PII de 260 correos) y `consolidacion_colab/uniondatosfinales.py` (Drive folder ID) — fuera del alcance original de esta tarea, solo documentado.

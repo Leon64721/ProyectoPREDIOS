@@ -13,20 +13,28 @@ const CONFIG = {
   },
 
   // ✅ ARCHIVOS DE DATOS (ESTRUCTURA ORIGINAL + COMPATIBILIDAD)
+  // ⚠️ SEGURIDAD [2026-08-19]: los IDs de spreadsheet reales de LOGS, USUARIOS y
+  // MAESTRO_PERMISOS ya NO viven aquí en texto plano — este repo estuvo público en
+  // GitHub y esos IDs quedaron expuestos. Ahora se resuelven en runtime desde
+  // Script Properties (ver getConfigProperty() más abajo y getConfig(), que hace el
+  // lookup automáticamente para estas claves). Los valores '' de aquí son solo el
+  // fallback si la Script Property correspondiente no está seteada — ver
+  // DOCUMENTACION_TECNICA_VIVA.md sección "Migración de IDs sensibles a Script
+  // Properties" para el procedimiento de setup.
   DATA_FILES: {
-    PRINCIPAL: '', // Usar el Spreadsheet activo si no se especifica otro ID
+    PRINCIPAL: '', // Usar el Spreadsheet activo si no se especifica otro ID (o Script Property DATA_FILES_PRINCIPAL_ID)
     SECUNDARIOS: [],
     STAGING: '', // ID de Dato 2 / Staging para validaciones y promoción manual
-    LOGS: '***REMOVED***', // ✅ FASE 5b: spreadsheet separado (BD_OPERACIONAL_PREDIOS) para logs de auditoría (registrarAccion/getUserLogs)
-    USUARIOS: '***REMOVED***', // ✅ SPRINT5-FASE-A: directorio de identidad/rol (EMAIL/ROL/NOMBRE/ACTIVO/COMPONENTE), spreadsheet separado — ver ARCHITECTURE_V4.md Sección 6.1
+    LOGS: '', // ✅ FASE 5b: spreadsheet separado (BD_OPERACIONAL_PREDIOS) para logs de auditoría (registrarAccion/getUserLogs) — ID real en Script Property DATA_FILES_LOGS_ID
+    USUARIOS: '', // ✅ SPRINT5-FASE-A: directorio de identidad/rol (EMAIL/ROL/NOMBRE/ACTIVO/COMPONENTE), spreadsheet separado — ver ARCHITECTURE_V4.md Sección 6.1 — ID real en Script Property DATA_FILES_USUARIOS_ID
     LOGS_ASIGNACION: 'ID_SPREADSHEET_LOGS_ASIGNACION_AQUI' // ⚠️ SPRINT5-FASE-A: placeholder sin reemplazar — crear spreadsheet dedicado y pegar su ID aquí antes de operar en producción (registrarLogAsignacion() se autodeshabilita mientras esto siga así, ver auditoria.js:31 para el mismo patrón)
   },
-  
+
   // ✅ NUEVO: Compatibilidad con código que usa DATA_FILES_IDS
   DATA_FILES_IDS: [],
-  
-  // ✅ COMPATIBILIDAD: Alias para código antiguo
-  MAESTRO_PERMISOS: '***REMOVED***',
+
+  // ✅ COMPATIBILIDAD: Alias para código antiguo — ID real en Script Property MAESTRO_PERMISOS_ID (ver nota de seguridad arriba)
+  MAESTRO_PERMISOS: '',
   
   // ✅ HOJAS DE CÁLCULO (V1 + V2 + NUEVAS) - SIN CAMBIOS
   SHEETS: {
@@ -235,6 +243,47 @@ const CONFIG = {
  */
 
 /**
+ * ✅ SEGURIDAD [2026-08-19]: mapa de rutas de CONFIG cuyo valor real vive en Script
+ * Properties (no en el código versionado). getConfig() consulta esta tabla antes de
+ * devolver el valor hardcodeado (que para estas claves es '' a propósito).
+ */
+const CONFIG_SENSITIVE_PROPERTY_MAP = {
+  'DATA_FILES.LOGS': 'DATA_FILES_LOGS_ID',
+  'DATA_FILES.USUARIOS': 'DATA_FILES_USUARIOS_ID',
+  'DATA_FILES.PRINCIPAL': 'DATA_FILES_PRINCIPAL_ID',
+  'MAESTRO_PERMISOS': 'MAESTRO_PERMISOS_ID'
+};
+
+/**
+ * ✅ SEGURIDAD [2026-08-19]: lee un valor sensible (típicamente un ID de Spreadsheet)
+ * desde Script Properties en vez de tenerlo hardcodeado en el código fuente
+ * versionado. Usar para cualquier ID que no deba quedar expuesto si el repositorio
+ * se vuelve público (aunque sea temporalmente).
+ *
+ * Cómo setear la Script Property la primera vez: ver DOCUMENTACION_TECNICA_VIVA.md,
+ * sección "Migración de IDs sensibles a Script Properties".
+ *
+ * @param {string} key - Nombre de la Script Property (ej: 'DATA_FILES_LOGS_ID')
+ * @param {*} [fallback=null] - Valor a devolver si la propiedad no está seteada
+ * @returns {*} El valor de la propiedad, o fallback si no existe/está vacío
+ */
+function getConfigProperty(key, fallback = null) {
+  try {
+    const value = PropertiesService.getScriptProperties().getProperty(key);
+    if (value === null || value === undefined || value === '') {
+      if (fallback === null || fallback === undefined || fallback === '') {
+        console.warn(`⚠️ getConfigProperty: Script Property '${key}' no está seteada. Configúrala en Extensiones ▸ Propiedades del proyecto ▸ Propiedades del script (o vía clasp), ver DOCUMENTACION_TECNICA_VIVA.md.`);
+      }
+      return fallback;
+    }
+    return value;
+  } catch (e) {
+    console.error(`❌ Error leyendo Script Property '${key}': ${e.message}`);
+    return fallback;
+  }
+}
+
+/**
  * ✅ MEJORADO: Obtiene valor de configuración con validación completa
  * @param {string} path - Ruta de la configuración (ej: 'SHEETS.DATOS')
  * @param {*} defaultValue - Valor por defecto si no encuentra
@@ -284,8 +333,19 @@ function getConfig(path, defaultValue = null) {
       value = value[key];
     }
     
-    // ✅ Si solicitamos el archivo principal y no hay valor configurado,
-    // usar el spreadsheet activo como fallback para staging y pruebas locales.
+    // ✅ SEGURIDAD [2026-08-19]: para rutas sensibles, resolver primero desde Script
+    // Properties antes de aplicar cualquier otro fallback (el valor hardcodeado en
+    // CONFIG para estas claves es '' a propósito, ver CONFIG_SENSITIVE_PROPERTY_MAP).
+    if (CONFIG_SENSITIVE_PROPERTY_MAP[path] && (value === null || value === undefined || value === '')) {
+      const fromProperties = getConfigProperty(CONFIG_SENSITIVE_PROPERTY_MAP[path]);
+      if (fromProperties) {
+        value = fromProperties;
+      }
+    }
+
+    // ✅ Si solicitamos el archivo principal y no hay valor configurado (ni en código
+    // ni en Script Properties), usar el spreadsheet activo como fallback para
+    // staging y pruebas locales.
     if (path === 'DATA_FILES.PRINCIPAL' && (value === null || value === undefined || value === '')) {
       try {
         const activeId = SpreadsheetApp.getActiveSpreadsheet().getId();

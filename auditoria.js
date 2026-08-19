@@ -22,14 +22,15 @@
       _obtenerGestorLogs() {
         if (!this._gestorLogs) {
           const logsId = getConfig('DATA_FILES.LOGS');
-          // ✅ FASE 5b: sin esto, un ID de placeholder sin reemplazar falla dentro de
+          // ✅ FASE 5b: sin esto, un ID vacío o de placeholder falla dentro de
           // SpreadsheetApp.openById() con un mensaje genérico de Apps Script — este log
-          // hace explícito EN LOS LOGS DEL SERVIDOR que la causa es un placeholder sin
-          // configurar, no un problema de permisos o de red. El registro sigue
-          // degradando a { success: false } / [] como antes; esto solo mejora el
-          // diagnóstico.
-          if (logsId === 'ID_SPREADSHEET_LOGS_AQUI') {
-            console.error('❌ CONFIG.DATA_FILES.LOGS sigue en el valor de placeholder — la auditoría (registrarAccion/getUserLogs) está deshabilitada hasta que se configure un ID de spreadsheet real en config.js.');
+          // hace explícito EN LOS LOGS DEL SERVIDOR que la causa es que falta configurar
+          // el ID, no un problema de permisos o de red. El registro sigue degradando a
+          // { success: false } / [] como antes; esto solo mejora el diagnóstico.
+          // ✅ SEGURIDAD [2026-08-19]: el ID real ya no vive en config.js, se lee desde
+          // la Script Property DATA_FILES_LOGS_ID (ver getConfig()/getConfigProperty()).
+          if (!logsId || logsId === 'ID_SPREADSHEET_LOGS_AQUI') {
+            console.error('❌ DATA_FILES.LOGS no está configurado — falta setear la Script Property DATA_FILES_LOGS_ID. La auditoría (registrarAccion/getUserLogs) está deshabilitada hasta entonces. Ver DOCUMENTACION_TECNICA_VIVA.md.');
           }
           this._gestorLogs = new GestorDatos(logsId);
         }
