@@ -1,0 +1,55 @@
+name: pr-checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint JS/HTML (incluye <script> embebido)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # Sin npm ci: el proyecto no tiene devDependencies con lockfile propio del
+      # runtime de la app (Apps Script) — el script de lint no depende de nada
+      # instalado, solo de Node built-in (child_process/fs).
+      - run: node scripts/lint-html-scripts.js
+
+  lint-python:
+    name: Sintaxis Python (consolidacion_colab)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: |
+          find consolidacion_colab -name '*.py' -print0 | xargs -0 -n1 python -m py_compile
+
+  commitlint:
+    name: Validar título del PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      # Merge strategy del repo es squash-merge: el título del PR se vuelve el
+      # mensaje del commit final en main, así que se valida el título, no cada
+      # commit individual del PR.
+      - run: echo "${{ github.event.pull_request.title }}" | npx commitlint
+
+  secret-scan:
+    name: Escaneo de secretos (diff del PR)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

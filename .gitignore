@@ -6,3 +6,9 @@ graphify-out/
 
 # gitleaks — artefacto de escaneo de secretos, no es código versionable
 gitleaks-report.json
+
+# Node.js — solo tooling de desarrollo (lint/husky/commitlint), no es el runtime
+# de la app (eso es Google Apps Script/clasp) — node_modules nunca se despliega.
+node_modules/
+.husky/_/
+npm-debug.log*

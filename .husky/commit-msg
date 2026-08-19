@@ -1,0 +1,10 @@
+npx --no -- commitlint --edit "$1" || exit 1
+
+# Sufijo de ticket obligatorio en la primera línea: [CONC-XX-##] o [sin-ticket]
+# para trabajo suelto — ver CONTRIBUTING.md.
+head -n1 "$1" | grep -qE '\[[A-Za-z0-9._-]+\]\s*$' || {
+  echo ""
+  echo "❌ El commit debe terminar con un sufijo de ticket, ej: [CONC-FE-17] o [sin-ticket]."
+  echo "   Formato completo: tipo(módulo): descripción [TICKET]"
+  exit 1
+}

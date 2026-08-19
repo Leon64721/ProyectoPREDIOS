@@ -1,0 +1,15 @@
+{
+  "name": "aplicacion-de-predios",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tooling de desarrollo (lint, git hooks, commitlint) para APLICACIÓN DE PREDIOS. El runtime de la aplicación es Google Apps Script/clasp, no Node.js — estas dependencias son solo herramientas de desarrollo local y CI, nunca se despliegan.",
+  "scripts": {
+    "lint": "node scripts/lint-html-scripts.js",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
+    "husky": "^9.1.7"
+  }
+}
