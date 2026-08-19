@@ -266,3 +266,19 @@
   global.buildInstitutionHeader = buildInstitutionHeader;
   global.generarPlantillaAsignacionCSV = generarPlantillaAsignacionCSV;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
+
+/**
+ * ✅ HOTFIX [CONC-FE-17b]: wrapper de nivel superior REAL. `google.script.run` en Apps
+ * Script solo puede invocar funciones declaradas con `function nombre(...) {}` en el
+ * ámbito superior de algún archivo del proyecto — las detecta por análisis estático del
+ * código fuente, no consultando `globalThis` en tiempo de ejecución. El `global.foo = foo`
+ * dentro del IIFE de arriba sirve para llamadas JS normales entre archivos server-side
+ * (p.ej. otro .js referenciando `EXPORT_BACKEND.generarPlantillaAsignacionCSV(...)`
+ * directamente, que sí resuelve por scope de JS puro), pero el puente cliente-servidor de
+ * `google.script.run` no lo descubre así — de ahí el error real en producción:
+ * "google.script.run...generarPlantillaAsignacionCSV is not a function". Esta función
+ * plana, fuera del IIFE, es la que realmente queda expuesta a google.script.run.
+ */
+function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {
+  return EXPORT_BACKEND.generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto);
+}
