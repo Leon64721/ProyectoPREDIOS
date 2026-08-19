@@ -44,3 +44,5 @@ Trunk-based simplificado: `main` protegida, una rama corta por tarea (`feat/<mó
 ## Contacto / soporte
 
 `fabian.montanez@idu.gov.co`, `sistemasdtdp@idu.gov.co`
+
+<!-- verificación CI/CD -->
