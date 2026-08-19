@@ -2415,7 +2415,9 @@ function aplicarFiltroAdhoc() {
     .withSuccessHandler(res => {
       if (!res || !res.success) {
         showAlert('El filtro se aplicó en pantalla, pero no se pudo guardar para otros usuarios: ' + (res && res.error), 'warning');
+        return;
       }
+      refreshData();
     })
     .withFailureHandler(err => {
       showAlert('El filtro se aplicó en pantalla, pero no se pudo guardar para otros usuarios: ' + err.message, 'warning');
@@ -2435,7 +2437,7 @@ function restablecerFiltroAdhoc() {
     .withSuccessHandler(res => {
         window.filtroMatrizActivoGlobal = null;
         showAlert('Filtro eliminado. Se han cargado todos los proyectos.', 'success');
-        loadDashboardData(); // Refresca y trae todos los registros
+        refreshData(); // Purga caches y trae todos los registros
     })
     .withFailureHandler(err => { hideLoader(); showAlert('Error: '+err.message, 'danger'); })
     .activarFiltroMatriz('', currentUser);
@@ -2477,7 +2479,7 @@ function activarAgrupacion(id) {
       let result = typeof res === 'string' ? JSON.parse(res) : res;
       if (result.success) {
         showAlert(`Agrupación activada para todos los usuarios`, 'success');
-        loadDashboardData(); // Descarga todo de nuevo ya filtrado
+        refreshData(); // Purga caches y descarga todo de nuevo ya filtrado
       }
     })
     .withFailureHandler(err => { hideLoader(); showAlert('Error: '+err.message, 'danger'); })
@@ -2550,7 +2552,7 @@ function guardarEditarFiltroMatriz() {
         bootstrap.Modal.getInstance(document.getElementById('editarFiltroModal')).hide();
         if (window.filtroMatrizActivoGlobal && window.filtroMatrizActivoGlobal.id === id) {
             showAlert('Agrupación actualizada. Recargando datos...', 'success');
-            loadDashboardData();
+            refreshData();
         } else {
             hideLoader();
             showAlert('Actualizado exitosamente', 'success');

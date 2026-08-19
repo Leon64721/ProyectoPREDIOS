@@ -28,6 +28,55 @@ const EQUIPOS_ENGINE = {
   lockTimeoutMs: 60000
 };
 
+const EQUIPOS_CACHE = {
+  versionKey: 'equipos_cache_version',
+  ttlResumenSeg: 120,
+  ttlMesaSeg: 120
+};
+
+function _getEquiposCacheVersion() {
+  const props = PropertiesService.getScriptProperties();
+  const raw = String(props.getProperty(EQUIPOS_CACHE.versionKey) || '').trim();
+  return raw || '1';
+}
+
+function _bumpEquiposCacheVersion() {
+  const props = PropertiesService.getScriptProperties();
+  const next = String(Date.now());
+  props.setProperty(EQUIPOS_CACHE.versionKey, next);
+  return next;
+}
+
+function _cacheGetJSONEquipos(key) {
+  try {
+    const raw = CacheService.getScriptCache().get(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+function _cachePutJSONEquipos(key, value, ttlSeconds) {
+  try {
+    const raw = JSON.stringify(value);
+    // CacheService: hard limit ~100KB por item
+    if (raw.length > 90000) return false;
+    CacheService.getScriptCache().put(key, raw, ttlSeconds || EQUIPOS_CACHE.ttlResumenSeg);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function _hashEquiposKeyPart(texto) {
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(texto || ''));
+  return digest.map(function(b) {
+    const v = (b + 256) % 256;
+    return (v < 16 ? '0' : '') + v.toString(16);
+  }).join('');
+}
+
 const REGEX_EMAIL_SIMPLE_EQUIPOS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // ✅ [CONC-BE-15]: dominio institucional — usado en ejecutarCargaLineaCero() como
@@ -478,6 +527,425 @@ function getEstadisticasCargaEquipos(userContext) {
   }
 }
 
+function _estadoAsignacionFilaEquipo(fila) {
+  if (!fila.articuladorEsEmail && !fila.gestorEsEmail) return 'SIN_ASIGNAR';
+  if (!fila.articuladorEsEmail) return 'SIN_ARTICULADOR';
+  if (!fila.gestorEsEmail) return 'SIN_GESTOR';
+  return 'COMPLETO';
+}
+
+function _esEmailValidoEquipo(valor) {
+  const txt = String(valor || '').trim().toLowerCase();
+  return !!txt && txt.indexOf('@') > 0;
+}
+
+function _normalizarActivoRelacionEquipo(valor) {
+  const txt = String(valor == null ? '' : valor).trim().toUpperCase();
+  if (!txt) return true;
+  return ['SI', 'SÍ', 'TRUE', '1', 'ACTIVO', 'ACTIVA'].indexOf(txt) >= 0;
+}
+
+/**
+ * Relación formal opcional Articulador -> Gestores.
+ * Si la hoja EQUIPOS_TRABAJO no existe o no tiene columnas esperadas, retorna null para
+ * que el llamador use derivación por asignaciones efectivas.
+ */
+function _leerRelacionesFormalesEquiposTrabajo() {
+  try {
+    const gestor = new GestorDatos(getConfig('DATA_FILES.PRINCIPAL'));
+    const sheet = gestor.getSheet('EQUIPOS_TRABAJO');
+    if (!sheet) return null;
+
+    const values = sheet.getDataRange().getValues();
+    if (!values || values.length < 2) return null;
+
+    const headers = values[0].map(function(h) { return String(h || '').trim().toUpperCase(); });
+    const idxArt = headers.indexOf('ARTICULADOR_EMAIL');
+    const idxGes = headers.indexOf('GESTOR_EMAIL');
+    const idxActivo = headers.indexOf('ACTIVO');
+    if (idxArt < 0 || idxGes < 0) return null;
+
+    const relaciones = {};
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] || [];
+      const activo = idxActivo >= 0 ? _normalizarActivoRelacionEquipo(row[idxActivo]) : true;
+      if (!activo) continue;
+
+      const art = String(row[idxArt] || '').trim().toLowerCase();
+      const ges = String(row[idxGes] || '').trim().toLowerCase();
+      if (!_esEmailValidoEquipo(art) || !_esEmailValidoEquipo(ges)) continue;
+      if (!relaciones[art]) relaciones[art] = {};
+      relaciones[art][ges] = true;
+    }
+    return relaciones;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Resumen liviano para la entrada del módulo "Gestión de Equipos".
+ * Devuelve KPIs y agregado por proyecto (sin cargar RTs de detalle).
+ */
+function getResumenGestionEquipos() {
+  try {
+    const currentUserEmail = (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    const rolUsuario = getUserRole(currentUserEmail) || getConfig('ROLES.LECTOR');
+    const version = _getEquiposCacheVersion();
+    const cacheKey = [
+      'ge:resumen',
+      'v' + version,
+      'u' + _hashEquiposKeyPart(currentUserEmail || 'anon'),
+      'r' + _hashEquiposKeyPart(rolUsuario)
+    ].join(':');
+    const cached = _cacheGetJSONEquipos(cacheKey);
+    if (cached && cached.success) return cached;
+
+    const filas = _leerFilasVisiblesRBACEquipos();
+
+    const porProyecto = {};
+    const gestoresGlobal = {};
+
+    let totalAsignados = 0;
+    let totalSinAsignar = 0;
+
+    filas.forEach(function(f) {
+      if (!porProyecto[f.proyecto]) {
+        porProyecto[f.proyecto] = {
+          proyecto: f.proyecto,
+          totalRTs: 0,
+          asignados: 0,
+          sinAsignar: 0,
+          _gestores: {},
+          _articuladores: {}
+        };
+      }
+      const p = porProyecto[f.proyecto];
+      p.totalRTs++;
+
+      if (f.esCompleto) {
+        p.asignados++;
+        totalAsignados++;
+      } else {
+        p.sinAsignar++;
+        totalSinAsignar++;
+      }
+
+      if (f.gestorEsEmail) {
+        p._gestores[f.gestor.toLowerCase()] = true;
+        gestoresGlobal[f.gestor.toLowerCase()] = true;
+      }
+      if (f.articuladorEsEmail) p._articuladores[f.articulador.toLowerCase()] = true;
+    });
+
+    const proyectos = Object.keys(porProyecto).sort().map(function(nombreProyecto) {
+      const p = porProyecto[nombreProyecto];
+      return {
+        proyecto: p.proyecto,
+        totalRTs: p.totalRTs,
+        asignados: p.asignados,
+        sinAsignar: p.sinAsignar,
+        gestores: Object.keys(p._gestores).length,
+        articuladores: Object.keys(p._articuladores).length
+      };
+    });
+
+    const conteoPorProyecto = {};
+    proyectos.forEach(function(p) {
+      conteoPorProyecto[p.proyecto] = {
+        totalRTs: p.totalRTs,
+        asignados: p.asignados,
+        sinAsignar: p.sinAsignar,
+        gestores: p.gestores,
+        articuladores: p.articuladores
+      };
+    });
+
+    const result = {
+      success: true,
+      usuario: currentUserEmail,
+      rol: rolUsuario,
+      totalRTs: filas.length,
+      totalAsignados: totalAsignados,
+      totalSinAsignar: totalSinAsignar,
+      totalGestores: Object.keys(gestoresGlobal).length,
+      proyectosVisibles: proyectos.length,
+      conteoPorProyecto: conteoPorProyecto,
+      proyectos: proyectos
+    };
+    _cachePutJSONEquipos(cacheKey, result, EQUIPOS_CACHE.ttlResumenSeg);
+    return result;
+  } catch (e) {
+    console.error('❌ Error en getResumenGestionEquipos: ' + e.message);
+    return {
+      success: false,
+      error: e.message,
+      usuario: '',
+      rol: '',
+      totalRTs: 0,
+      totalAsignados: 0,
+      totalSinAsignar: 0,
+      totalGestores: 0,
+      proyectosVisibles: 0,
+      conteoPorProyecto: {},
+      proyectos: []
+    };
+  }
+}
+
+/**
+ * Mesa de asignación de un proyecto específico.
+ * Devuelve solo filas visibles del proyecto seleccionado.
+ */
+function getMesaAsignacionProyecto(payload) {
+  try {
+    const p = payload || {};
+    const proyecto = String(p.proyecto || '').trim();
+    const includeCatalogos = p.includeCatalogos !== false;
+    if (!proyecto) throw new Error('Proyecto requerido para abrir la mesa de asignación.');
+    const currentUserEmail = (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    const rolUsuario = getUserRole(currentUserEmail) || getConfig('ROLES.LECTOR');
+    const version = _getEquiposCacheVersion();
+    const cacheKey = [
+      'ge:mesa',
+      'v' + version,
+      'u' + _hashEquiposKeyPart(currentUserEmail || 'anon'),
+      'r' + _hashEquiposKeyPart(rolUsuario),
+      'p' + _hashEquiposKeyPart(proyecto),
+      includeCatalogos ? 'cat1' : 'cat0'
+    ].join(':');
+    const cached = _cacheGetJSONEquipos(cacheKey);
+    if (cached && cached.success) return cached;
+
+    const filasProyecto = _leerFilasVisiblesRBACEquipos().filter(function(f) {
+      return f.proyecto === proyecto;
+    });
+
+    const usuarios = getUsuariosParaAsignacionEquipos();
+    const articuladoresCatalogo = usuarios.success ? usuarios.articuladores : [];
+    const gestoresCatalogo = usuarios.success ? usuarios.gestores : [];
+    const nombrePorEmail = {};
+    articuladoresCatalogo.concat(gestoresCatalogo).forEach(function(u) {
+      nombrePorEmail[String(u.email || '').toLowerCase()] = u.nombre || '';
+    });
+
+    const tramosSet = {};
+    const articuladoresSet = {};
+    const gestoresSet = {};
+    const relaciones = {};
+
+    let rows = filasProyecto.map(function(f) {
+      const estado = _estadoAsignacionFilaEquipo(f);
+      const artKey = f.articuladorEsEmail ? f.articulador.toLowerCase() : '';
+      const gesKey = f.gestorEsEmail ? f.gestor.toLowerCase() : '';
+
+      tramosSet[f.tramo] = true;
+      if (artKey) articuladoresSet[artKey] = true;
+      if (gesKey) gestoresSet[gesKey] = true;
+      if (artKey && gesKey) {
+        if (!relaciones[artKey]) relaciones[artKey] = {};
+        relaciones[artKey][gesKey] = true;
+      }
+
+      return {
+        rt: f.rt,
+        proyecto: f.proyecto,
+        tramo: f.tramo,
+        articuladorEmail: artKey,
+        gestorEmail: gesKey,
+        estadoAsignacion: estado
+      };
+    });
+
+    rows.sort(function(a, b) {
+      const aSin = a.estadoAsignacion === 'SIN_ASIGNAR' ? 1 : 0;
+      const bSin = b.estadoAsignacion === 'SIN_ASIGNAR' ? 1 : 0;
+      if (aSin !== bSin) return aSin - bSin; // SIN_ASIGNAR al final
+
+      const artA = a.articuladorEmail || '~~~~';
+      const artB = b.articuladorEmail || '~~~~';
+      if (artA !== artB) return artA.localeCompare(artB);
+      if (a.proyecto !== b.proyecto) return a.proyecto.localeCompare(b.proyecto);
+      if (a.tramo !== b.tramo) return a.tramo.localeCompare(b.tramo);
+      return String(a.rt || '').localeCompare(String(b.rt || ''));
+    });
+
+    if (!includeCatalogos) {
+      const lite = {
+        success: true,
+        proyecto: proyecto,
+        rows: rows
+      };
+      _cachePutJSONEquipos(cacheKey, lite, EQUIPOS_CACHE.ttlMesaSeg);
+      return lite;
+    }
+
+    const relacionesFormales = _leerRelacionesFormalesEquiposTrabajo();
+    if (relacionesFormales) {
+      Object.keys(relacionesFormales).forEach(function(artEmail) {
+        if (!relaciones[artEmail]) relaciones[artEmail] = {};
+        Object.keys(relacionesFormales[artEmail]).forEach(function(gesEmail) {
+          relaciones[artEmail][gesEmail] = true;
+        });
+      });
+    }
+
+    const articuladores = Object.keys(articuladoresSet).sort().map(function(email) {
+      return { email: email, nombre: nombrePorEmail[email] || email };
+    });
+
+    const gestoresDerivados = {};
+    Object.keys(relaciones).forEach(function(artEmail) {
+      Object.keys(relaciones[artEmail]).forEach(function(gesEmail) {
+        gestoresDerivados[gesEmail + '||' + artEmail] = {
+          email: gesEmail,
+          nombre: nombrePorEmail[gesEmail] || gesEmail,
+          articuladorEmail: artEmail
+        };
+      });
+    });
+
+    // Complemento: gestores activos del catálogo sin relación explícita en este proyecto.
+    gestoresCatalogo.forEach(function(g) {
+      const email = String(g.email || '').toLowerCase();
+      if (!email) return;
+      const keyGlobal = email + '||';
+      if (!gestoresDerivados[keyGlobal]) {
+        gestoresDerivados[keyGlobal] = {
+          email: email,
+          nombre: g.nombre || email,
+          articuladorEmail: ''
+        };
+      }
+    });
+
+    const gestores = Object.keys(gestoresDerivados).map(function(k) {
+      return gestoresDerivados[k];
+    }).sort(function(a, b) {
+      if (a.articuladorEmail && !b.articuladorEmail) return -1;
+      if (!a.articuladorEmail && b.articuladorEmail) return 1;
+      if (a.articuladorEmail !== b.articuladorEmail) return a.articuladorEmail.localeCompare(b.articuladorEmail);
+      return a.email.localeCompare(b.email);
+    });
+
+    const relacionesGestores = {};
+    Object.keys(relaciones).forEach(function(artEmail) {
+      relacionesGestores[artEmail] = Object.keys(relaciones[artEmail]).sort();
+    });
+
+    const result = {
+      success: true,
+      proyecto: proyecto,
+      tramos: Object.keys(tramosSet).sort(),
+      articuladores: articuladores,
+      gestores: gestores,
+      relacionesGestores: relacionesGestores,
+      rows: rows
+    };
+    _cachePutJSONEquipos(cacheKey, result, EQUIPOS_CACHE.ttlMesaSeg);
+    return result;
+  } catch (e) {
+    console.error('❌ Error en getMesaAsignacionProyecto: ' + e.message);
+    return {
+      success: false,
+      error: e.message,
+      proyecto: '',
+      tramos: [],
+      articuladores: [],
+      gestores: [],
+      relacionesGestores: {},
+      rows: []
+    };
+  }
+}
+
+/**
+ * Búsqueda de RTs para la mesa (máximo 20 resultados).
+ */
+function buscarRTGestionEquipos(payload) {
+  try {
+    const p = payload || {};
+    const query = String(p.query || p.rt || '').trim().toLowerCase();
+    const proyecto = String(p.proyecto || '').trim();
+    if (!query) return { success: true, resultados: [] };
+
+    let filas = _leerFilasVisiblesRBACEquipos();
+    if (proyecto) filas = filas.filter(function(f) { return f.proyecto === proyecto; });
+
+    const resultados = [];
+    for (let i = 0; i < filas.length; i++) {
+      const f = filas[i];
+      const rtLower = String(f.rt || '').toLowerCase();
+      if (rtLower.indexOf(query) < 0) continue;
+      resultados.push({
+        rt: f.rt,
+        proyecto: f.proyecto,
+        tramo: f.tramo,
+        articuladorEmail: f.articuladorEsEmail ? f.articulador : '',
+        gestorEmail: f.gestorEsEmail ? f.gestor : '',
+        estadoAsignacion: _estadoAsignacionFilaEquipo(f)
+      });
+      if (resultados.length >= 20) break;
+    }
+
+    return { success: true, resultados: resultados };
+  } catch (e) {
+    console.error('❌ Error en buscarRTGestionEquipos: ' + e.message);
+    return { success: false, error: e.message, resultados: [] };
+  }
+}
+
+/**
+ * Gestores sugeridos para un articulador dentro del alcance RBAC actual.
+ */
+function getGestoresPorArticulador(payload) {
+  try {
+    const p = payload || {};
+    const articuladorEmail = String(p.articuladorEmail || '').trim().toLowerCase();
+    const proyecto = String(p.proyecto || '').trim();
+
+    let filas = _leerFilasVisiblesRBACEquipos();
+    if (proyecto) filas = filas.filter(function(f) { return f.proyecto === proyecto; });
+    if (articuladorEmail) filas = filas.filter(function(f) {
+      return f.articuladorEsEmail && f.articulador.toLowerCase() === articuladorEmail;
+    });
+
+    const gestoresSet = {};
+    filas.forEach(function(f) {
+      if (f.gestorEsEmail) gestoresSet[f.gestor.toLowerCase()] = true;
+    });
+
+    const relacionesFormales = _leerRelacionesFormalesEquiposTrabajo();
+    if (relacionesFormales && articuladorEmail && relacionesFormales[articuladorEmail]) {
+      Object.keys(relacionesFormales[articuladorEmail]).forEach(function(gesEmail) {
+        gestoresSet[gesEmail] = true;
+      });
+    }
+
+    const usuarios = getUsuariosParaAsignacionEquipos();
+    const gestoresCatalogo = usuarios.success ? usuarios.gestores : [];
+    const nombrePorEmail = {};
+    gestoresCatalogo.forEach(function(g) { nombrePorEmail[String(g.email || '').toLowerCase()] = g.nombre || ''; });
+
+    let gestores = Object.keys(gestoresSet).map(function(email) {
+      return { email: email, nombre: nombrePorEmail[email] || email, articuladorEmail: articuladorEmail };
+    });
+
+    if (!gestores.length) {
+      gestores = gestoresCatalogo.map(function(g) {
+        const email = String(g.email || '').toLowerCase();
+        return { email: email, nombre: g.nombre || email, articuladorEmail: articuladorEmail };
+      });
+    }
+
+    gestores.sort(function(a, b) { return a.email.localeCompare(b.email); });
+    return { success: true, articuladorEmail: articuladorEmail, gestores: gestores };
+  } catch (e) {
+    console.error('❌ Error en getGestoresPorArticulador: ' + e.message);
+    return { success: false, error: e.message, articuladorEmail: '', gestores: [] };
+  }
+}
+
 /**
  * Nivel 1 del árbol de asignación: lista de Proyectos con conteo de RTs y de RTs sin asignar
  * (regla estricta). Carga liviana — Tramos/RTs se piden bajo demanda al expandir un nodo.
@@ -651,6 +1119,11 @@ function _invalidarCacheDatosSiExiste() {
   } catch (e) {
     console.warn('⚠️ No se pudo invalidar caché tras asignación: ' + e.message);
   }
+  try {
+    _bumpEquiposCacheVersion();
+  } catch (e2) {
+    console.warn('⚠️ No se pudo actualizar versión de caché de equipos: ' + e2.message);
+  }
 }
 
 function _asegurarHojaLogsAsignacion(gestor, sheetName) {
@@ -735,14 +1208,17 @@ function _resolverCambiosPorNivel(headers, rows, nivelUpper, idTarget, articulad
   const predicado = _construirPredicadoNivel(nivelUpper, idTarget, headers);
   const rtCol = headers[idxRT];
   const cambios = [];
+  const opciones = arguments.length >= 7 ? arguments[6] : null;
+  const hasArt = !!(opciones && opciones.hasArticulador) || (arguments.length >= 5 && articuladorEmail !== undefined);
+  const hasGes = !!(opciones && opciones.hasGestor) || (arguments.length >= 6 && gestorEmail !== undefined);
 
   rows.forEach(function(row) {
     if (!predicado(row)) return;
     const rt = String(row[rtCol] || '').trim();
     if (!rt) return;
     const cambio = { rt: rt };
-    if (articuladorEmail) cambio.articuladorEmail = articuladorEmail;
-    if (gestorEmail) cambio.gestorEmail = gestorEmail;
+    if (hasArt) cambio.articuladorEmail = String(articuladorEmail == null ? '' : articuladorEmail).trim().toLowerCase();
+    if (hasGes) cambio.gestorEmail = String(gestorEmail == null ? '' : gestorEmail).trim().toLowerCase();
     cambios.push(cambio);
   });
 
@@ -804,9 +1280,11 @@ function _upsertAsignacionesEquipos(cambios, ejecutorEmail, contexto) {
       const rt = String(cambio.rt || '').trim();
       if (!rt) continue;
 
-      const tieneArticulador = !!cambio.articuladorEmail;
-      const tieneGestor = !!cambio.gestorEmail;
+      const tieneArticulador = Object.prototype.hasOwnProperty.call(cambio, 'articuladorEmail');
+      const tieneGestor = Object.prototype.hasOwnProperty.call(cambio, 'gestorEmail');
       if (!tieneArticulador && !tieneGestor) continue;
+      const nuevoArt = tieneArticulador ? String(cambio.articuladorEmail || '').trim().toLowerCase() : '';
+      const nuevoGes = tieneGestor ? String(cambio.gestorEmail || '').trim().toLowerCase() : '';
 
       const filaIdx = indicePorRT[rt];
       let tocado = false;
@@ -816,8 +1294,8 @@ function _upsertAsignacionesEquipos(cambios, ejecutorEmail, contexto) {
       if (filaIdx === undefined) {
         const filaNueva = new Array(headers.length).fill('');
         filaNueva[idxRT] = rt;
-        if (tieneArticulador) filaNueva[idxArt] = cambio.articuladorEmail;
-        if (tieneGestor) filaNueva[idxGes] = cambio.gestorEmail;
+        if (tieneArticulador) filaNueva[idxArt] = nuevoArt;
+        if (tieneGestor) filaNueva[idxGes] = nuevoGes;
         filaNueva[idxFecha] = ahora;
         filaNueva[idxEjecutor] = ejecutorEmail || 'Sistema';
         filasNuevas.push(filaNueva);
@@ -827,16 +1305,16 @@ function _upsertAsignacionesEquipos(cambios, ejecutorEmail, contexto) {
       } else {
         if (tieneArticulador) {
           usuarioAnteriorArt = String(colArtValores[filaIdx][0] || '');
-          if (usuarioAnteriorArt !== cambio.articuladorEmail) {
-            colArtValores[filaIdx][0] = cambio.articuladorEmail;
+          if (usuarioAnteriorArt !== nuevoArt) {
+            colArtValores[filaIdx][0] = nuevoArt;
             tocado = true;
             tocoArticulador = true;
           }
         }
         if (tieneGestor) {
           usuarioAnteriorGes = String(colGesValores[filaIdx][0] || '');
-          if (usuarioAnteriorGes !== cambio.gestorEmail) {
-            colGesValores[filaIdx][0] = cambio.gestorEmail;
+          if (usuarioAnteriorGes !== nuevoGes) {
+            colGesValores[filaIdx][0] = nuevoGes;
             tocado = true;
             tocoGestor = true;
           }
@@ -853,14 +1331,14 @@ function _upsertAsignacionesEquipos(cambios, ejecutorEmail, contexto) {
           if (tieneArticulador) {
             eventos.push({
               nivel: ctx.nivel || 'RT', idTarget: rt, rol: 'ARTICULADOR',
-              usuarioAnterior: usuarioAnteriorArt, usuarioNuevo: cambio.articuladorEmail,
+              usuarioAnterior: usuarioAnteriorArt, usuarioNuevo: nuevoArt,
               ejecutorEmail: ejecutorEmail, observaciones: ctx.observaciones || ('Asignación sobre RT ' + rt)
             });
           }
           if (tieneGestor) {
             eventos.push({
               nivel: ctx.nivel || 'RT', idTarget: rt, rol: 'GESTOR',
-              usuarioAnterior: usuarioAnteriorGes, usuarioNuevo: cambio.gestorEmail,
+              usuarioAnterior: usuarioAnteriorGes, usuarioNuevo: nuevoGes,
               ejecutorEmail: ejecutorEmail, observaciones: ctx.observaciones || ('Asignación sobre RT ' + rt)
             });
           }
@@ -973,11 +1451,14 @@ function asignarEquipoGranularLote(cambiosArray, ejecutorEmail) {
         if (['PROYECTO', 'TRAMO', 'RT'].indexOf(nivelUpper) < 0) {
           throw new Error('Nivel inválido: ' + entrada.nivel);
         }
-        if (!entrada.articuladorEmail && !entrada.gestorEmail) {
+        const hasArt = Object.prototype.hasOwnProperty.call(entrada, 'articuladorEmail');
+        const hasGes = Object.prototype.hasOwnProperty.call(entrada, 'gestorEmail');
+        if (!hasArt && !hasGes) {
           throw new Error('Nodo sin articuladorEmail ni gestorEmail');
         }
         const cambiosEntrada = _resolverCambiosPorNivel(
-          headers, rows, nivelUpper, entrada.idTarget, entrada.articuladorEmail, entrada.gestorEmail
+          headers, rows, nivelUpper, entrada.idTarget, entrada.articuladorEmail, entrada.gestorEmail,
+          { hasArticulador: hasArt, hasGestor: hasGes }
         );
         cambiosConsolidados = cambiosConsolidados.concat(cambiosEntrada);
       } catch (eEntrada) {

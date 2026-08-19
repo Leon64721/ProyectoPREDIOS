@@ -697,74 +697,196 @@ function aplicarFiltrosAlertas() {
 }
 
 // Exporta SÓLO las alertas que cumplan con los filtros activos actualmente en pantalla
-// ✅ Exportar Excel (Envío por correo o descarga local)
+function obtenerFiltrosActivosAlertas() {
+    return {
+        nivel: filtroNivelActivo,
+        regla: document.getElementById('filterAlertaRegla').value,
+        proyecto: document.getElementById('filterAlertaProyecto').value,
+        articulador: document.getElementById('filterAlertaArticulador').value,
+        usuario: (typeof currentUser !== 'undefined' ? currentUser : '')
+    };
+}
+
+function obtenerAlertasFiltradasActuales(filtrosActivos) {
+    return alertasGlobales.filter(a => {
+        if (filtrosActivos.nivel !== 'ALL' && a.NIVEL !== filtrosActivos.nivel) return false;
+        if (filtrosActivos.regla !== 'ALL' && a.REGLA !== filtrosActivos.regla) return false;
+        if (filtrosActivos.proyecto !== 'ALL' && a.PROYECTO !== filtrosActivos.proyecto) return false;
+        if (filtrosActivos.articulador !== 'ALL' && a.ARTICULADOR !== filtrosActivos.articulador) return false;
+        return true;
+    });
+}
+
+function descargarAlertasCsvLocal(alertasFiltradas, filtrosActivos) {
+    if (!alertasFiltradas.length) {
+        showToast('No hay resultados bajo estos filtros para exportar.', 'warning');
+        return;
+    }
+
+    const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "FASE", "REGLA", "DIAS RESTANTES", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
+    let csvContent = headers.join(';') + '\n';
+
+    alertasFiltradas.forEach(a => {
+        const row = [
+            `"${a.TIMESTAMP}"`, `"${a.NIVEL}"`, `"${a.RT}"`, `"${a.PROYECTO}"`, `"${a.ARTICULADOR}"`,
+            `"${a.FASE}"`, `"${a.REGLA}"`, `"${a.DIAS_RESTANTES}"`,
+            `"${String(a.MENSAJE).replace(/"/g, '""')}"`, `"${a.ESTADO_PREDIAL}"`
+        ];
+        csvContent += row.join(';') + '\n';
+    });
+
+    const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Alertas_Tempranas_${filtrosActivos.nivel}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function ensureModalConfiguracionReporteAlertas() {
+    let modal = document.getElementById('modalConfigReporteAlertas');
+    if (modal) return modal;
+
+    const html = `
+      <div class="modal fade" id="modalConfigReporteAlertas" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+          <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-dark text-white">
+              <h5 class="modal-title"><i class="fas fa-paper-plane me-2"></i>Enviar Reporte de Alertas</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body">
+              <div class="alert alert-info py-2 mb-3">
+                Se enviarán solo las alertas visibles por filtros activos y Filtro Matriz.
+              </div>
+              <div class="mb-3">
+                <label class="form-label fw-bold">Modo de envío</label>
+                <select class="form-select" id="reporteAlertasModo">
+                  <option value="EMAIL_UNICO">Enviar a correo específico</option>
+                  <option value="GESTOR_Y_ARTICULADOR">Enviar por gestor (copia al articulador)</option>
+                  <option value="DESCARGAR_CSV">Descargar CSV local</option>
+                </select>
+              </div>
+              <div class="row g-2">
+                <div class="col-md-6" id="grupoCorreoDestino">
+                  <label class="form-label fw-bold">Correo destino</label>
+                  <input type="email" class="form-control" id="reporteAlertasCorreoDestino" placeholder="usuario@dominio.gov.co">
+                </div>
+                <div class="col-md-6" id="grupoCorreoRespaldo" style="display:none;">
+                  <label class="form-label fw-bold">Correo respaldo (gestor sin asignar)</label>
+                  <input type="email" class="form-control" id="reporteAlertasCorreoRespaldo" placeholder="respaldo@dominio.gov.co">
+                </div>
+              </div>
+              <div class="mt-3">
+                <label class="form-label fw-bold">CC adicional (opcional)</label>
+                <input type="text" class="form-control" id="reporteAlertasCc" placeholder="correo1@dominio.gov.co, correo2@dominio.gov.co">
+              </div>
+              <div class="form-check mt-2" id="grupoCheckArticulador" style="display:none;">
+                <input class="form-check-input" type="checkbox" id="reporteAlertasCcArticulador" checked>
+                <label class="form-check-label" for="reporteAlertasCcArticulador">
+                  Incluir articulador jurídico en copia
+                </label>
+              </div>
+              <div class="mt-3 border rounded p-2 bg-light small" id="resumenFiltrosReporteAlertas"></div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="button" class="btn btn-primary" id="btnConfirmarReporteAlertas">Enviar / Exportar</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    document.body.appendChild(wrapper.firstElementChild);
+    modal = document.getElementById('modalConfigReporteAlertas');
+    return modal;
+}
+
+function actualizarVistaModoReporteAlertas() {
+    const modo = document.getElementById('reporteAlertasModo').value;
+    const isGestor = modo === 'GESTOR_Y_ARTICULADOR';
+    const isCsv = modo === 'DESCARGAR_CSV';
+
+    document.getElementById('grupoCorreoRespaldo').style.display = isGestor ? '' : 'none';
+    document.getElementById('grupoCheckArticulador').style.display = isGestor ? '' : 'none';
+    document.getElementById('grupoCorreoDestino').style.display = isCsv ? 'none' : '';
+}
+
 function exportarAlertasExcel() {
     if (alertasGlobales.length === 0) {
         showToast('No hay alertas para exportar', 'warning');
         return;
     }
 
-    const email = prompt("Ingrese el correo electrónico para enviar el reporte en formato Excel (.xlsx).\n\nSi solo desea descargar un CSV localmente, deje este campo vacío y presione Aceptar:");
+    const filtrosActivos = obtenerFiltrosActivosAlertas();
+    const alertasFiltradas = obtenerAlertasFiltradasActuales(filtrosActivos);
+    if (!alertasFiltradas.length) {
+        showToast('No hay alertas visibles con los filtros actuales.', 'warning');
+        return;
+    }
 
-    // Si presiona Cancelar (email === null), no hacemos nada.
-    if (email === null) return;
+    const modal = ensureModalConfiguracionReporteAlertas();
+    const resumen = document.getElementById('resumenFiltrosReporteAlertas');
+    resumen.innerHTML = `
+      <div><b>Alertas a procesar:</b> ${alertasFiltradas.length}</div>
+      <div><b>Nivel:</b> ${filtrosActivos.nivel}</div>
+      <div><b>Regla:</b> ${filtrosActivos.regla}</div>
+      <div><b>Proyecto:</b> ${filtrosActivos.proyecto}</div>
+      <div><b>Articulador:</b> ${filtrosActivos.articulador}</div>
+    `;
 
-    // Capturamos el estado actual de los filtros
-    const filtrosActivos = {
-        nivel: filtroNivelActivo,
-        regla: document.getElementById('filterAlertaRegla').value,
-        proyecto: document.getElementById('filterAlertaProyecto').value,
-        articulador: document.getElementById('filterAlertaArticulador').value
-    };
+    const modoSel = document.getElementById('reporteAlertasModo');
+    const btnConfirmar = document.getElementById('btnConfirmarReporteAlertas');
+    modoSel.onchange = actualizarVistaModoReporteAlertas;
+    actualizarVistaModoReporteAlertas();
 
-    if (email.trim() !== "") {
-        // Enviar por correo vía Backend (.xlsx)
-        showLoader("Generando Excel y enviando correo...");
-        google.script.run
-            .withSuccessHandler(res => {
-                hideLoader();
-                if(res.success) showToast(res.message, 'success');
-                else showToast("Error: " + res.error, 'danger');
-            })
-            .withFailureHandler(onError)
-            .procesarReporteAlertas(email.trim(), filtrosActivos);
-    } else {
-        // Descarga Local (CSV) - Tu código original
-        const alertasFiltradas = alertasGlobales.filter(a => {
-            if (filtrosActivos.nivel !== 'ALL' && a.NIVEL !== filtrosActivos.nivel) return false;
-            if (filtrosActivos.regla !== 'ALL' && a.REGLA !== filtrosActivos.regla) return false;
-            if (filtrosActivos.proyecto !== 'ALL' && a.PROYECTO !== filtrosActivos.proyecto) return false;
-            if (filtrosActivos.articulador !== 'ALL' && a.ARTICULADOR !== filtrosActivos.articulador) return false;
-            return true;
-        });
-
-        if (alertasFiltradas.length === 0) {
-            showToast('No hay resultados bajo estos filtros para exportar.', 'warning');
+    btnConfirmar.onclick = function() {
+        const modo = modoSel.value;
+        if (modo === 'DESCARGAR_CSV') {
+            descargarAlertasCsvLocal(alertasFiltradas, filtrosActivos);
+            bootstrap.Modal.getInstance(modal).hide();
             return;
         }
 
-        showToast('Descargando archivo CSV local...', 'info');
-        const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "FASE", "REGLA", "DIAS RESTANTES", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
-        let csvContent = headers.join(';') + '\n';
+        const correoDestino = (document.getElementById('reporteAlertasCorreoDestino').value || '').trim();
+        const correoRespaldo = (document.getElementById('reporteAlertasCorreoRespaldo').value || '').trim();
+        const cc = (document.getElementById('reporteAlertasCc').value || '').trim();
+        const incluirArt = document.getElementById('reporteAlertasCcArticulador').checked;
 
-        alertasFiltradas.forEach(a => {
-            const row = [
-                `"${a.TIMESTAMP}"`, `"${a.NIVEL}"`, `"${a.RT}"`, `"${a.PROYECTO}"`, `"${a.ARTICULADOR}"`,
-                `"${a.FASE}"`, `"${a.REGLA}"`, `"${a.DIAS_RESTANTES}"`,
-                `"${String(a.MENSAJE).replace(/"/g, '""')}"`, `"${a.ESTADO_PREDIAL}"`
-            ];
-            csvContent += row.join(';') + '\n';
-        });
+        if (!correoDestino) {
+            showToast('Debes indicar un correo destino.', 'warning');
+            return;
+        }
 
-        const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = `Alertas_Tempranas_${filtrosActivos.nivel}_${new Date().toISOString().split('T')[0]}.csv`;
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
+        const payload = {
+            modoEnvio: modo,
+            emailDestino: correoDestino,
+            correoRespaldo: correoRespaldo,
+            ccEmails: cc,
+            incluirArticuladorEnCopia: incluirArt,
+            filtros: filtrosActivos
+        };
+
+        showLoader('Generando reporte y enviando correo...');
+        google.script.run
+            .withSuccessHandler(function(res) {
+                hideLoader();
+                if (res && res.success) {
+                    showToast(res.message || 'Reporte enviado correctamente', 'success');
+                    bootstrap.Modal.getInstance(modal).hide();
+                } else {
+                    showToast('Error: ' + (res && res.error ? res.error : 'No se pudo enviar el reporte'), 'danger');
+                }
+            })
+            .withFailureHandler(onError)
+            .procesarReporteAlertas(payload);
+    };
+
+    bootstrap.Modal.getOrCreateInstance(modal).show();
 }
 
 // ✅ Programar el reporte recurrente

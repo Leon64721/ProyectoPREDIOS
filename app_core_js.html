@@ -562,12 +562,22 @@ function copyToClipboard(text) {
 // ═══════════════════════════════════════════════════════════════════════════════════
 
 function showPage(pageId, element) {
+    const targetSelector = '#page-' + pageId;
+    const alreadyActive = $(targetSelector).hasClass('active');
+    if (alreadyActive) {
+        if (element) {
+            $('.menu-item').removeClass('active');
+            $(element).addClass('active');
+        }
+        return;
+    }
+
     // Guardar estado antes de cambiar de página
     saveNavigationState();
 
     $('.page-section').removeClass('active');
     $('.menu-item').removeClass('active');
-    $('#page-' + pageId).addClass('active');
+    $(targetSelector).addClass('active');
     if (element) $(element).addClass('active');
 
     console.log('📄 Navegando a: ' + pageId);
@@ -934,14 +944,34 @@ function purgarCacheIndexedDB(dbName, storeName, key) {
     });
 }
 
+function limpiarStoreIndexedDB(dbName, storeName) {
+    return new Promise(function(resolve) {
+        if (!('indexedDB' in window)) { resolve(); return; }
+        const request = indexedDB.open(dbName, 1);
+        request.onupgradeneeded = function() {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName);
+        };
+        request.onsuccess = function() {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(storeName)) { resolve(); return; }
+            const tx = db.transaction(storeName, 'readwrite');
+            tx.objectStore(storeName).clear();
+            tx.oncomplete = function() { resolve(); };
+            tx.onerror = function() { resolve(); };
+        };
+        request.onerror = function() { resolve(); };
+    });
+}
+
 /**
  * ✅ SPRINT6 [CONC-BE-12]: "Recargar" pasa de "recargar" a "purgar y recargar". Antes solo
  * llamaba a loadDashboardData(), que podía devolver EXACTAMENTE los mismos datos: el caché
  * del servidor (CacheService, hasta 30 min de TTL) seguía vigente, y el pintado optimista de
  * loadDashboardData() repinta primero desde el mismo snapshot de IndexedDB antes de que
- * llegue la red. Ahora: (1) invalida CacheService server-side, (2) en paralelo limpia
- * dashboard-cache-v1 Y equipos-cache-v1 en IndexedDB, (3) solo entonces recarga — garantiza
- * un cache-miss real en las dos capas. Ver ARCHITECTURE_V5.md Sección 0.3 para el diagnóstico.
+ * llegue la red. Ahora: (1) invalida TODO el caché server-side (dashboard + PAC + CacheStore),
+ * (2) en paralelo limpia los stores de IndexedDB usados por tablero/equipos/exportes/
+ * normalización, (3) solo entonces recarga — garantiza cache-miss real en todas las capas.
  */
 function refreshData() {
     console.log('🔄 Recargando datos (purga completa server + IndexedDB)...');
@@ -949,10 +979,14 @@ function refreshData() {
     const hasReliableIdentity = typeof CURRENT_USER_EMAIL !== 'undefined' && !!CURRENT_USER_EMAIL;
     const dashboardKey = hasReliableIdentity ? ('dashboardData_' + CURRENT_USER_EMAIL) : null;
     const equiposKey = hasReliableIdentity ? ('equipos_cache_' + CURRENT_USER_EMAIL) : null;
+    const normalizacionDashboardKey = hasReliableIdentity ? ('normalizacion_map_' + CURRENT_USER_EMAIL) : null;
 
     const purgaLocal = Promise.all([
         dashboardKey ? purgarCacheIndexedDB('dashboard-cache-v1', 'dashboard-cache-store', dashboardKey) : Promise.resolve(),
-        equiposKey ? purgarCacheIndexedDB('equipos-cache-v1', 'stats', equiposKey) : Promise.resolve()
+        normalizacionDashboardKey ? purgarCacheIndexedDB('dashboard-cache-v1', 'dashboard-cache-store', normalizacionDashboardKey) : Promise.resolve(),
+        equiposKey ? purgarCacheIndexedDB('equipos-cache-v1', 'stats', equiposKey) : Promise.resolve(),
+        limpiarStoreIndexedDB('export-cache-v1', 'snapshots'),
+        limpiarStoreIndexedDB('normalizacion_ui_cache', 'normalizacion_map')
     ]);
 
     google.script.run
@@ -969,7 +1003,7 @@ function refreshData() {
                 loadDashboardData();
             });
         })
-        .invalidateDataCache();
+        .invalidateAllCaches();
 }
 
 function showAbout() {

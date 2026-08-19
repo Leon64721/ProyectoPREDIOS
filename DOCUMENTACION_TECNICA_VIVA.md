@@ -2060,3 +2060,490 @@ pandoc DOCUMENTACION_TECNICA_VIVA.md -o Documento_Tecnico_Aplicacion_Predios.doc
 **Evidencia de despliegue:** `npx clasp push --force` → `Pushed 50 files`.
 
 **Depends on / blocked by:** ninguno — a diferencia de las Secciones 23/24, este build no requiere ejecución manual de una función "seed"; toma efecto de inmediato en cuanto un usuario interactúa con el módulo de Equipos o la Matriz. La hoja `ASIGNACIONES_EQUIPOS` se crea automáticamente (con encabezados y estilo) la primera vez que se escribe una asignación, vía `_asegurarHojaAsignacionesEquipos()`.
+
+## 26. Ajuste de Alertas Tempranas + política de recarga total de caché [2026-08-18]
+
+**Archivo(s) intervenido(s):**
+- `evaluador_alertas.js`
+- `cache_backend.js`
+- `app_core_js.html`
+- `app_matriz_js.html`
+
+**Propósito de los archivos y alcance del cambio (pre-cambio):**
+- `evaluador_alertas.js`: expone `obtenerAlertasWeb()` para pintar la bandeja de Alertas Tempranas en frontend.
+- `cache_backend.js`: centraliza invalidación de caché server-side (CacheService + materializaciones auxiliares).
+- `app_core_js.html`: define `refreshData()` (botón de recarga junto al usuario/salida) y utilidades de caché local.
+- `app_matriz_js.html`: aplica/activa/restablece Filtro Matriz y gatilla recargas del tablero.
+
+**Motivo de la intervención:**
+1) asegurar que Alertas Tempranas respete el Filtro Matriz activo;  
+2) evitar falsos positivos por snapshots en caché al cambiar filtros;  
+3) convertir "Recargar" en una purga integral (server + IndexedDB) para que el usuario vea cambios efectivos inmediatamente.
+
+**Cambios técnicos realizados:**
+1. `evaluador_alertas.js::obtenerAlertasWeb()`
+   - Se incorporó lectura de `GestorFiltroMatriz().obtenerProyectosVisibles()`.
+   - Se filtra el contenido de `ALERTAS_ACTIVAS` por `PROYECTO` usando la misma semántica del filtro activo (`todos` / `proyectos incluidos` / `proyectos excluidos`).
+   - Resultado: la bandeja de Alertas Tempranas ya no muestra predios fuera del alcance del Filtro Matriz activo.
+
+2. `cache_backend.js`
+   - Se agregó `invalidateAllCaches()` para recarga manual completa:
+     - purga dashboard cache (`invalidateDataCache()`),
+     - rota versión de caché PAC (`_bumpPacCacheVersion`),
+     - limpia `CacheStore` (`_clearCacheStoreSheet`).
+   - Se mantiene `invalidateDataCache()` para invalidaciones transaccionales existentes, sin romper llamadas previas.
+
+3. `app_core_js.html::refreshData()`
+   - Se cambió la llamada server-side de `invalidateDataCache()` a `invalidateAllCaches()`.
+   - Se amplió la purga local con `limpiarStoreIndexedDB()` + claves específicas:
+     - `dashboard-cache-v1/dashboard-cache-store` (`dashboardData_<email>`),
+     - `dashboard-cache-v1/dashboard-cache-store` (`normalizacion_map_<email>`),
+     - `equipos-cache-v1/stats`,
+     - `export-cache-v1/snapshots` (clear),
+     - `normalizacion_ui_cache/normalizacion_map` (clear).
+   - Resultado: el botón de recarga del sidebar fuerza cache-miss real en todas las capas relevantes de cliente y servidor.
+
+4. `app_matriz_js.html`
+   - En operaciones que modifican filtro efectivo (`aplicarFiltroAdhoc`, `restablecerFiltroAdhoc`, `activarAgrupacion`, edición de filtro activo), se reemplazó la recarga directa por `refreshData()` para purga integral antes de repintar.
+   - Resultado: cambios de Filtro Matriz no quedan "tapados" por snapshots antiguos.
+
+**Validación ejecutada:**
+- [x] `node --check evaluador_alertas.js`
+- [x] `node --check cache_backend.js`
+- [x] Validación de sintaxis JS embebido (extracción de `<script>` + `vm.Script`) en `app_core_js.html` y `app_matriz_js.html` (OK en ambos).
+
+**Impacto funcional:**
+- Alertas Tempranas ahora se alinea con el Filtro Matriz activo.
+- El botón de recarga junto al usuario/salida pasa a una estrategia de invalidación total de caché, evitando que ajustes recientes sigan mostrando datos anteriores.
+- Se preserva la agilidad de consulta con caché en flujo normal, pero con recarga fuerte cuando el usuario explícitamente exige actualización integral.
+
+## 27. Mejora avanzada del envío de reportes de Alertas Tempranas [2026-08-18]
+
+**Archivo(s) intervenido(s):**
+- `Codigo.js`
+- `app_alertas_js.html`
+- `Index.html`
+
+**Motivo de la intervención:**
+- El flujo previo usaba `prompt()` simple, sin configuración de destinatarios avanzada.
+- El adjunto se enviaba como CSV plano (sin cuadrícula real), aunque la UI lo presentaba como “Excel”.
+- Se requería respetar estrictamente Filtro Matriz + filtros activos al enviar.
+- Se pidió envío flexible: correo único, o envío por gestor con copia al articulador, más CC adicional.
+- Se pidió incorporar `OBSERVACIONES` (hoja `Datos`) al reporte adjunto.
+
+**Cambios técnicos realizados:**
+1. **Backend de envío rediseñado (`Codigo.js::procesarReporteAlertas`)**
+   - Se amplió la firma para aceptar un objeto de configuración (`modoEnvio`, `emailDestino`, `correoRespaldo`, `ccEmails`, `incluirArticuladorEnCopia`, `filtros`), manteniendo compatibilidad con la firma anterior.
+   - Se aplica doble filtro antes del envío:
+     - Filtro Matriz activo (proyectos visibles).
+     - Filtros de UI (`nivel`, `regla`, `proyecto`, `articulador`).
+   - Se agregaron helpers internos:
+     - `_normalizarListaCorreos`,
+     - `_esCorreoValidoAlertas`,
+     - `_obtenerObservacionesPorRT`,
+     - `_buildResumenHtmlAgrupado`,
+     - `_buildAlertasEmailAttachmentGrid`.
+
+2. **Adjunto “bonito” con cuadrícula**
+   - Se reemplazó el CSV plano por un adjunto tabular con grid (`.xls` HTML compatible con Excel).
+   - Incluye columnas:
+     `TIMESTAMP, NIVEL, RT, PROYECTO, ARTICULADOR, ARTICULADOR_EMAIL, GESTOR_EMAIL, FASE, REGLA, DIAS RESTANTES, MENSAJE, ESTADO PREDIAL ACTUAL, OBSERVACIONES`.
+   - `OBSERVACIONES` se completa leyendo por RT desde hoja `Datos` en los archivos conectados.
+
+3. **Envío por gestor/articulador**
+   - Modo `GESTOR_Y_ARTICULADOR`: agrupa alertas por `GESTOR_EMAIL`.
+   - Cada gestor recibe su reporte; si no hay gestor válido se enruta a correo de respaldo.
+   - Opcionalmente incluye al articulador como CC por alerta.
+   - Soporta CC adicional manual.
+   - En el resumen del correo, cuando no hay gestor se rotula como `GESTOR SIN ASIGNAR`.
+
+4. **Frontend de configuración (`app_alertas_js.html`)**
+   - `exportarAlertasExcel()` ahora abre modal de configuración (en vez de `prompt()`).
+   - Se añadieron utilidades:
+     - `obtenerFiltrosActivosAlertas`,
+     - `obtenerAlertasFiltradasActuales`,
+     - `descargarAlertasCsvLocal`,
+     - `ensureModalConfiguracionReporteAlertas`,
+     - `actualizarVistaModoReporteAlertas`.
+   - El modal permite:
+     - modo de envío (correo único / por gestor+articulador / descarga CSV),
+     - correo destino,
+     - correo de respaldo para gestor sin asignar,
+     - CC adicional,
+     - checkbox para incluir articulador en copia.
+
+5. **Ajuste de texto en UI (`Index.html`)**
+   - Botón renombrado de **“Exportar a Excel”** a **“Enviar Reporte”** para reflejar el nuevo flujo.
+
+**Validación ejecutada:**
+- [x] `node --check Codigo.js`
+- [x] `node --check evaluador_alertas.js`
+- [x] Validación de scripts embebidos en `app_alertas_js.html` e `Index.html` con `vm.Script` (OK)
+
+**Impacto funcional:**
+- El reporte deja de salir “plano” y pasa a formato tabular con cuadrícula y mejor presentación.
+- El envío ahora respeta Filtro Matriz + filtros activos de la pantalla.
+- Se habilita segmentación operativa real por gestor/articulador, con CC controlado y fallback para casos sin gestor.
+- Se incorpora `OBSERVACIONES` en el adjunto para contexto jurídico adicional por predio.
+
+## 28. Ajuste visual del correo y reorden de agrupación jerárquica [2026-08-18]
+
+**Archivo intervenido:**
+- `Codigo.js` (`_buildResumenHtmlAgrupado`)
+
+**Motivo del ajuste:**
+- Retroalimentación de usuario: el correo quedó demasiado plano comparado con la versión anterior.
+- Se pidió volver a una presentación más visual (colores/tarjetas) y cambiar el orden de agrupación.
+
+**Cambios realizados:**
+- Se rediseñó el bloque HTML del correo con:
+  - cabecera en gradiente,
+  - tarjetas por tipo de alerta,
+  - badges de color por severidad,
+  - secciones internas con borde y mejor jerarquía visual.
+- Se cambió la agrupación a:
+  1) **tipo de alerta** (nivel + regla),
+  2) **articulador**,
+  3) **gestor**.
+- Se mantiene el adjunto tabular con cuadrícula y `OBSERVACIONES` sin cambios.
+
+**Validación ejecutada:**
+- [x] `node --check Codigo.js`
+
+**Impacto funcional:**
+- El correo recupera una presentación más clara y ejecutiva.
+- La lectura operativa queda alineada al orden solicitado por negocio: tipo de alerta → articulador → gestor.
+
+## 29. Rediseño integral de "Gestión de Equipos" (entrada liviana + mesa por proyecto) [2026-08-19]
+
+**Archivos intervenidos:**
+- `gestion_equipos_backend.js`
+- `app_equipos_js.html`
+
+**Objetivo funcional implementado:**
+- Reemplazar la carga inicial pesada del módulo por una entrada rápida basada en resumen.
+- Mover la operación principal a una **mesa de asignación** por proyecto (tabla editable tipo Excel), con guardado batch.
+- Mantener RBAC, mantener `Datos` solo lectura y mantener `ASIGNACIONES_EQUIPOS` como destino de escritura por `asignarEquipoGranularLote()`.
+
+### 29.1 Backend (`gestion_equipos_backend.js`)
+
+Se agregaron endpoints nuevos orientados a rendimiento y operación:
+
+1. `getResumenGestionEquipos()`
+   - Lee filas visibles con `_leerFilasVisiblesRBACEquipos()` (respeta RBAC).
+   - Devuelve KPIs globales:
+     - `totalRTs`,
+     - `totalAsignados`,
+     - `totalSinAsignar`,
+     - `totalGestores`.
+   - Agrupa por proyecto y retorna solo resumen (sin RTs de detalle):
+     - `proyecto`, `totalRTs`, `asignados`, `sinAsignar`, `gestores`, `articuladores`.
+
+2. `getMesaAsignacionProyecto(payload)`
+   - Requiere `payload.proyecto`.
+   - Devuelve solo filas visibles del proyecto seleccionado:
+     - `rt`, `proyecto`, `tramo`, `articuladorEmail`, `gestorEmail`, `estadoAsignacion`.
+   - Devuelve catálogos para filtros/edición:
+     - `tramos`, `articuladores`, `gestores`.
+   - Construye relación derivada `relacionesGestores` (articulador → gestores observados) a partir de asignaciones efectivas, y la complementa con gestores activos del directorio para no bloquear operación cuando falte relación explícita.
+
+3. `buscarRTGestionEquipos(payload)` (nuevo)
+   - Búsqueda de RT en alcance RBAC, opcional por proyecto, límite de 20 resultados.
+
+4. `getGestoresPorArticulador(payload)` (nuevo)
+   - Deriva gestores por articulador dentro del alcance RBAC.
+   - Si no hay relación derivada, usa fallback de gestores activos de `USUARIOS`.
+
+### 29.2 Frontend (`app_equipos_js.html`)
+
+Se reemplazó la entrada del módulo:
+
+- `cargarModuloEquipos()` ahora ejecuta:
+  - `aplicarVisibilidadNavEquipos()`
+  - `inicializarMesaGestionEquipos()`
+
+Se implementaron funciones principales del nuevo flujo:
+
+- `inicializarMesaGestionEquipos()`
+- `renderShellGestionEquipos()`
+- `cargarResumenGestionEquipos()`
+- `renderResumenGestionEquipos(result)`
+- `abrirMesaProyecto(proyecto)`
+- `renderMesaAsignacionProyecto(data)`
+- `renderFiltrosMesaEquipos(data)`
+- `renderTablaMesaEquipos()`
+- `aplicarFiltrosMesaEquipos()`
+- `toggleSeleccionFilaEquipo(rt, checked)`
+- `aplicarGestorASeleccionados()`
+- `cambiarGestorFila(rt, gestorEmail)`
+- `registrarCambioMesaEquipos(rt, articuladorEmail, gestorEmail)`
+- `actualizarCargaGestoresLocal()`
+- `guardarCambiosMesaEquipos()`
+- `descartarCambiosMesaEquipos()`
+
+Comportamiento implementado:
+
+1. **Entrada liviana (una llamada inicial):**
+   - No precarga automática de árbol, índice inverso global ni equipos consolidados.
+   - Carga inicial enfocada en resumen/KPIs y tabla de proyectos.
+
+2. **Mesa por proyecto (operación principal):**
+   - Tabla editable con paginación (`250` filas por página).
+   - Filtros por tramo, articulador, gestor, estado y RT.
+   - Selección de filas + asignación masiva de gestor.
+   - Cambio por fila con lista de gestores filtrada por articulador (cuando existe relación derivada).
+
+3. **Panel lateral operativo:**
+   - Carga local por gestor recalculada en tiempo real ante cambios en memoria.
+
+4. **Guardado batch:**
+   - Acumulación en `mesaEquiposCambios`.
+   - Persistencia en una sola llamada a `asignarEquipoGranularLote(...)`.
+   - Sin escritura directa sobre `Datos`.
+
+5. **Vistas secundarias bajo demanda:**
+   - Árbol de asignación y acordeón de equipos se mantienen compatibles, pero ya no cargan al entrar.
+
+6. **Creación rápida de gestor desde la mesa:**
+   - Alta in-line vía `crearUsuarioRapidoBackend(...)` y recarga de la mesa del proyecto.
+
+### 29.3 Validaciones ejecutadas
+
+- [x] Verificación sintáctica de backend: `new Function(...)` sobre `gestion_equipos_backend.js` (OK).
+- [x] Verificación sintáctica del script embebido: extracción de `<script>` + `new Function(...)` sobre `app_equipos_js.html` (OK).
+- [x] `problems` sin errores en ambos archivos.
+- [x] `graphify update .` ejecutado para mantener grafo de conocimiento actualizado.
+
+### 29.4 Impacto funcional
+
+- El módulo abre más rápido porque la carga inicial ya no dispara múltiples endpoints pesados.
+- La asignación operativa pasa a una experiencia de tabla, más directa para articuladores.
+- Se conserva compatibilidad con vistas/herramientas legacy, pero con carga bajo demanda.
+- Se mantiene consistencia del modelo de seguridad (RBAC) y del modelo de persistencia (batch en `ASIGNACIONES_EQUIPOS`).
+
+## 30. Fase 6/7 — Mesa agrupada + ajustes backend de lote/relaciones [2026-08-19]
+
+**Archivos intervenidos:**
+- `app_equipos_js.html`
+- `gestion_equipos_backend.js`
+
+### 30.1 Frontend (`app_equipos_js.html`)
+
+Se evolucionó la mesa editable para operación agrupada y acciones masivas adicionales:
+
+- **Agrupación visual en tabla por jerarquía:**
+  1) Articulador  
+  2) Proyecto  
+  3) Tramo  
+  4) RT  
+  - y bloque final **`SIN ASIGNACIÓN`** para RTs sin gestor efectivo.
+
+- **Métricas por grupo** renderizadas en cabeceras:
+  - total RTs,
+  - asignados,
+  - sin gestor,
+  - cambios pendientes.
+
+- **Nuevas acciones de operación:**
+  - aplicar gestor a seleccionados (existente, mantenida),
+  - **aplicar gestor al tramo filtrado** (nueva),
+  - **limpiar asignación de seleccionados** (nueva),
+  - guardar/descartar lote (mantenidas).
+
+- **Ordenamiento de filas en cliente (`_compararFilasMesa`)**:
+  - sin asignación al final,
+  - luego articulador/proyecto/tramo/rt ascendente.
+
+### 30.2 Backend (`gestion_equipos_backend.js`)
+
+Se fortaleció el contrato para soportar la mesa agrupada y operaciones de limpieza:
+
+1. **`getResumenGestionEquipos()`**
+   - Se añadieron:
+     - `proyectosVisibles`,
+     - `conteoPorProyecto` (mapa liviano por proyecto).
+
+2. **`getMesaAsignacionProyecto(payload)`**
+   - Se añadió `includeCatalogos` (default compatible).
+   - Se ordenan filas por articulador/proyecto/tramo/rt con **`SIN_ASIGNAR` al final**.
+   - Si `includeCatalogos === false`, respuesta liviana con `rows` únicamente.
+
+3. **Relación Articulador→Gestor**
+   - Se añadió lectura formal opcional desde hoja `EQUIPOS_TRABAJO`:
+     - `_leerRelacionesFormalesEquiposTrabajo()`.
+   - Si existe, se fusiona con relaciones derivadas efectivas.
+   - Si no existe, el sistema sigue funcionando con derivación actual (compatibilidad).
+
+4. **`asignarEquipoGranularLote` / `_resolverCambiosPorNivel` / `_upsertAsignacionesEquipos`**
+   - Se habilitó **clear explícito** (enviar campo presente vacío) con `hasOwnProperty`.
+   - Se conserva lock único (`LockService`) y escritura por lote (`setValues`), sin escritura fila a fila.
+
+### 30.3 Validación ejecutada
+
+- [x] Parse JS/sintaxis OK:
+  - `app_equipos_js.html`
+  - `gestion_equipos_backend.js`
+- [x] `problems` sin errores en ambos archivos.
+
+### 30.4 Impacto funcional
+
+- La mesa de equipos pasa de lista plana a una estructura operativa jerárquica para articuladores.
+- Se habilitan acciones masivas más cercanas al flujo real (tramo filtrado y limpieza de seleccionados).
+- El backend mantiene `Datos` en solo lectura y endurece el guardado batch para casos de desasignación explícita.
+
+### 30.5 Ajuste UX de selector "Nuevo gestor" por prioridad de contexto [2026-08-19]
+
+**Archivo intervenido:**
+- `app_equipos_js.html`
+
+**Motivo:**
+- Retroalimentación de operación: al elegir `Nuevo gestor`, la lista debía priorizar mejor el contexto de la fila.
+
+**Regla aplicada en `_gestoresDisponiblesParaArticulador(...)`:**
+1. Si la fila tiene articulador con relación disponible, mostrar primero (y de forma prioritaria) gestores de ese articulador.
+2. Si no hay articulador (o no hay relación), usar gestores detectados en el proyecto actual.
+3. Si tampoco hay gestores de proyecto, fallback a todos los gestores activos disponibles.
+
+**Impacto funcional:**
+- El selector deja de mostrar una lista “plana” y ahora responde al contexto operativo esperado por articuladores.
+- Se mantiene el fallback completo para no bloquear asignaciones en escenarios con baja densidad de relaciones.
+
+### 30.6 Optimización de carga + acciones masivas por grupos (Gestión de Equipos) [2026-08-19]
+
+**Archivos intervenidos:**
+- `gestion_equipos_backend.js`
+- `app_equipos_js.html`
+
+**Objetivo del ajuste:**
+- Reducir la demora al abrir proyecto en la mesa (cache versionado por usuario/rol/proyecto).
+- Acelerar operación masiva en mesa con selección por grupo (articulador/proyecto/tramo/sin asignación).
+- Permitir reasignación de articulador desde la misma tabla y en lote.
+- Compactar UI de gestor para ahorrar espacio (gestor actual + selector en una sola columna).
+
+**Backend (`gestion_equipos_backend.js`):**
+- `getResumenGestionEquipos()`:
+  - ahora consulta cache con llave segmentada por versión, usuario y rol (`ge:resumen:v*:u*:r*`);
+  - si hay hit, retorna inmediatamente;
+  - si no hay hit, calcula y persiste resultado con TTL corto.
+- `getMesaAsignacionProyecto(payload)`:
+  - cache por versión, usuario, rol, proyecto e `includeCatalogos`;
+  - retorna payload cacheado cuando aplica;
+  - persiste respuesta completa o liviana (sin catálogos) según el request.
+- `_invalidarCacheDatosSiExiste()`:
+  - además de invalidar caché general de datos, incrementa versión de cache de equipos para invalidación coherente post-guardado batch.
+
+**Frontend (`app_equipos_js.html`):**
+- Mesa:
+  - columna `Gestor (actual / nuevo)` consolidada para reducir ancho;
+  - columna de `Articulador` ahora permite cambio inline por fila (select).
+- Selección masiva:
+  - check por grupo en headers de Articulador/Proyecto/Tramo y bloque `SIN ASIGNACIÓN`;
+  - acción `Seleccionar filtrados`.
+- Lotes nuevos:
+  - `Articulador a seleccionados`;
+  - `Articulador al tramo`.
+- Capa de eventos:
+  - toda la nueva interacción usa `data-action` + delegación (sin `onclick` dinámico con datos variables).
+- Creación rápida:
+  - panel pasa de “Crear gestor” a “Crear usuario” con selector de rol (`Gestor` / `Articulador`), manteniendo compatibilidad con la función anterior (`window.crearGestorDesdeMesa` como alias).
+
+**Validaciones ejecutadas:**
+- Revisión de problemas/sintaxis en:
+  - `app_equipos_js.html`
+  - `gestion_equipos_backend.js`
+- Resultado: sin errores reportados.
+
+**Impacto funcional esperado:**
+- Menos round-trips repetitivos al abrir la misma mesa para el mismo contexto de usuario.
+- Mejor productividad operativa por selección jerárquica y lotes de articulador/gestor.
+- Guardado batch mantiene el modelo vigente (`asignarEquipoGranularLote`) y no altera la regla de `Datos` solo lectura.
+
+### 30.7 Cierre de sesión y verificación de despliegue (UI mesa equipos) [2026-08-18 noche]
+
+**Contexto de cierre:**
+- En validación visual sobre `/dev`, el usuario reportó que no veía:
+  - check por tramo/proyecto;
+  - selector/acciones de articulador en lote.
+- Se confirmó que el código local sí contenía los cambios en frontend, pero la instancia activa no reflejaba aún la última sincronización.
+
+**Acción ejecutada:**
+- Se realizó `clasp push` completo del proyecto para alinear el deployment de Apps Script con los cambios locales más recientes de:
+  - `app_equipos_js.html`
+  - `gestion_equipos_backend.js`
+  - archivos relacionados del módulo.
+
+**Resultado esperado post-cierre:**
+- Con recarga dura del navegador (Ctrl+F5), deben visualizarse en Gestión de Equipos:
+  - checks de selección por grupo (articulador/proyecto/tramo/sin asignación),
+  - selector de articulador para lote,
+  - acciones masivas de articulador,
+  - columna compacta de gestor (actual/nuevo).
+
+**Estado de sesión:**
+- Se deja documentado y desplegado el avance funcional de hoy.
+- Próxima validación recomendada: confirmar en runtime publicado que la UI renderiza los nuevos controles sin caché de navegador.
+
+## 31. [2026-08-18] Diagnóstico y fix de `Unexpected end of input` en la mesa de equipos + edición concurrente detectada + QA bloqueada por autenticación
+
+**Nota de coautoría:** esta sección documenta una sesión de Claude Code distinta de la que escribió 30.1-30.7 (evidencia: `DOCUMENTACION_TECNICA_VIVA.md` creció de 2458 a 2483 líneas — sección 30.7 apareció — entre dos lecturas propias separadas por segundos, dentro de esta misma sesión). Ambas sesiones trabajaron sobre `app_equipos_js.html` en paralelo la misma noche. Se aplica la regla 16.2.2 (nunca reescribir, solo complementar hacia adelante).
+
+**Archivo(s) intervenido(s) por esta sesión:** `app_equipos_js.html` (2 ediciones puntuales, ver abajo). Resto de archivos mencionados abajo: solo lectura/diagnóstico, ningún cambio aplicado por esta sesión.
+
+### 31.1 Síntoma reportado y causa raíz
+
+**Síntoma:** `Uncaught SyntaxError: Unexpected end of input` en consola al operar la mesa de asignación de "Gestión de Equipos" (checkbox de fila / selector de gestor), más reportes colaterales de navegación duplicada (`📄 Navegando a: equipos` repetido) y de que el tablero principal (matriz/cronograma/KPIs) parecía recargarse al entrar a Equipos.
+
+**Investigación (`/investigate`):** trazado completo del flujo `showPage('equipos')` → `cargarModuloEquipos()` → `abrirMesaProyecto()` → `renderMesaAsignacionProyecto()` → `renderTablaMesaEquipos()` → `_renderFilaRTMesa()`. Causa raíz localizada en `_renderFilaRTMesa()` (`app_equipos_js.html`, entonces ~línea 701-721): los atributos `onchange` inline se construían con `JSON.stringify(fila.rt)` interpolado directamente dentro de un atributo HTML delimitado por comillas dobles:
+
+```js
+'onchange="toggleSeleccionFilaEquipo(' + JSON.stringify(fila.rt) + ', this.checked)"'
+```
+
+`JSON.stringify()` produce una cadena con comillas dobles literales (`"RT-123"`), que cierran el atributo `onchange="..."` prematuramente — el HTML resultante queda truncado en `onchange="toggleSeleccionFilaEquipo("`, con el resto (`RT-123", this.checked)"`) como texto suelto dentro de la etiqueta. Cuando el navegador compila ese atributo truncado como función al disparar el evento `change`, el paréntesis sin cerrar produce exactamente `SyntaxError: Unexpected end of input`. Mismo patrón sistémico (no corregido en esta sesión, fuera de alcance) en `app_equipos_js.html` líneas ~1197/1227/1254 (vista árbol) y en `app_alertas_js.html:317`.
+
+Los otros dos síntomas reportados (navegación duplicada, recarga aparente del tablero) se investigaron y **no correspondían a bugs de equipos**: son ruido de una condición de carrera ya preexistente entre el bootstrap async del tablero (`loadDashboardData()`, disparado una sola vez en `$(document).ready()`) y la navegación rápida del usuario — el `success handler` de esa llamada de red pinta matriz/cronograma/KPIs sin verificar si la página activa sigue siendo "matriz", sin relación causal con el código de equipos. Se detectó además una duplicación real (no causante de este síntoma) de dos handlers `$(document).on('click', '.menu-item', ...)` en `app_matriz_js.html` (líneas ~32 y ~2178) — el más antiguo, obsoleto, duplica la ejecución de `cargarJSONenPantalla()` en clics de "motorReglas"; no fue corregido (fuera del alcance mínimo pedido).
+
+### 31.2 Corrección aplicada
+
+En `_renderFilaRTMesa()` — reemplazo de los dos `onchange` inline por `data-action`/`data-rt` (valor pasado por `_escapeAttrEquipos()`, helper ya existente, reutilizado sin modificar) y delegación de evento `change` integrada en el delegado de clic ya existente (`_asegurarEventosMesaResumen()`, reutilizando su misma bandera `window.__equiposListenersInit` en vez de crear una nueva):
+
+- Checkbox de fila → `data-action="toggle-seleccion-rt-equipo" data-rt="..."` → `toggleSeleccionFilaEquipo(rt, checked)`
+- Select de gestor → `data-action="cambiar-gestor-rt-equipo" data-rt="..."` → `cambiarGestorFila(rt, value)`
+
+**Validado:** `node --check` sobre el bloque `<script>` completo del archivo, limpio, repetido tras cada edición. No se ejecutó verificación en navegador real (ver 31.4, bloqueo de QA).
+
+### 31.3 Edición concurrente detectada durante el review
+
+Al revisar el propio diff (`/review`) se detectó que, entre la aplicación del fix y el review, `app_equipos_js.html` había crecido con ~928 líneas no atribuibles al bugfix (contra el último commit, `3d3547d`). Investigación propia (comparando contra lecturas propias anteriores dentro de esta misma sesión, no solo contra HEAD) distinguió dos capas:
+
+- **Capa A (preexistente, ya en el working tree antes de que esta sesión tocara nada):** toda la base de la "Mesa de asignación" — resumen, apertura de mesa, filtros, agrupación, guardado batch, etc. Corresponde a la sección 30 (Fase 6/7) ya documentada por la otra sesión.
+- **Capa B (apareció después del fix de esta sesión, dentro del mismo bloque `_asegurarEventosMesaResumen()` que esta sesión acababa de editar):** reasignación de articulador por fila, selección por grupo (ART/PROY/TRAMO/SIN_ASIGNACIÓN), `seleccionarFiltradosMesa`, renombrado `crearGestorDesdeMesa` → `crearUsuarioDesdeMesa`. Corresponde a lo documentado en 30.6 por la otra sesión, escrito siguiendo el mismo patrón `data-action`/`data-rt`/`_escapeAttrEquipos` de esta sesión (sin reintroducir el bug corregido en 31.2). Se confirmó coherencia con `gestion_equipos_backend.js` (también sin commitear, `hasOwnProperty` para clear explícito de `articuladorEmail` ya soportado ahí antes de que el frontend lo consumiera).
+
+**Confirmación posterior (esta misma sesión, fase de cierre):** al escribir esta sección, `DOCUMENTACION_TECNICA_VIVA.md` creció de 2458 a 2483 líneas entre dos lecturas propias — la sección 30.7 (la otra sesión ejecutó `clasp push` esta misma noche) apareció en tiempo real. Confirma que la sesión concurrente sospechada en el `/review` era real y siguió activa hasta después del cierre de esta sesión.
+
+**Riesgo señalado al usuario:** posible pisado mutuo entre ambas sesiones si alguna hace commit sin revisar el estado real del working tree primero (mismo patrón de incidente ya vivido en este proyecto, ver 12.15/12.16).
+
+**Recomendación de checkpoint — NO ejecutada por esta sesión:** el usuario propuso `git add app_equipos_js.html gestion_equipos_backend.js app_core_js.html app_matriz_js.html Index.html && git commit -m "checkpoint(equipos): mesa y fix eventos"`. No se ejecutó: (a) no se pidió commit explícito en este cierre, solo documentar; (b) la sección 30.7 confirma que la otra sesión puede seguir escribiendo sobre estos mismos archivos, por lo que un commit hecho a ciegas ahora mismo corre el mismo riesgo de capturar estado a medio escribir que ya se advirtió. Queda como acción pendiente explícita para la próxima sesión, previa verificación de `git status`/`git diff` justo antes de commitear.
+
+### 31.4 QA solicitada — bloqueada por autenticación, no ejecutada
+
+Se invocó `/qa-only` sobre la URL de deployment provista por el usuario (`https://script.google.com/a/macros/idu.gov.co/s/.../dev`). El navegador headless de `gstack browse` llegó hasta el login de Google (`accounts.google.com`, cuenta `@idu.gov.co`) y no pudo continuar por falta de sesión autenticada. Se intentaron 3 mecanismos para resolverlo, los 3 fallaron por razones estructurales de este entorno (Windows + Git Bash + Bash tool sandboxed), no por error de configuración puntual:
+
+1. **`cookie-import-browser` (picker web interactivo):** el servidor local (`127.0.0.1:19287/cookie-picker`) muere en cuanto termina la invocación del Bash tool que lo lanzó — mismo problema ya documentado en este proyecto para `/setup-browser-cookies` (línea 1790 de este documento).
+2. **`cookie-import-browser chrome|edge --domain google.com` (lectura directa del perfil del navegador real):** falla con `DPAPI decryption failed` — el proceso que ejecuta `browse` no tiene acceso al contexto DPAPI de Windows necesario para desencriptar las cookies guardadas por Chrome/Edge.
+3. **`handoff` (modo con ventana visible para que el usuario inicie sesión manualmente):** la ventana se abre pero se cierra casi de inmediato — el proceso del navegador no sobrevive más allá de la invocación del Bash tool que lo lanzó, incluso en background (`run_in_background`), porque `status` inmediatamente después vuelve a mostrar `[browse] Starting server...` con un PID nuevo, es decir, no hay daemon persistente entre invocaciones en este entorno.
+
+**Estado:** QA de los 8 puntos pedidos (A-H del plan original / 1-8 del plan corto) **no ejecutada**. Ningún resultado de "aprobado/no aprobado" es válido todavía — no confundir la ausencia de QA con una validación implícita.
+
+**Camino recomendado y no descartado:** exportar cookies manualmente desde el navegador real ya autenticado del usuario (extensión tipo "Cookie-Editor"/"Get cookies.txt LOCALLY", dominio `google.com`/`accounts.google.com`/`script.google.com`, formato JSON) e importarlas con `browse cookie-import <archivo>` — evita tanto el picker (problema 1) como DPAPI (problema 2), sin depender de que la ventana sobreviva (problema 3). Quedó pendiente de que el usuario provea el archivo.
+
+### 31.5 Estado pendiente al cierre
+
+- [x] Root cause de `Unexpected end of input` identificado y corregido en `_renderFilaRTMesa()`.
+- [x] `node --check` limpio tras el fix.
+- [ ] Verificación en navegador real de: apertura de mesa sin error, checkbox de RT, cambio de gestor, cambio de articulador, selección por grupo, guardado batch, consola sin errores — **bloqueado, ver 31.4**.
+- [ ] Confirmar que no hay sesión concurrente activa antes de cualquier `git add`/`commit` sobre `app_equipos_js.html`, `gestion_equipos_backend.js`, `app_core_js.html`, `app_matriz_js.html`, `Index.html`.
+- [ ] No proseguir con rediseño de la mesa ni con la investigación de navegación duplicada hasta que la QA de 31.4 quede desbloqueada y ejecutada.
+- [ ] `clasp push` ya fue ejecutado por la otra sesión (30.7) — el deployment `/dev` probado en 31.4 debería reflejar ya ambos conjuntos de cambios (Capa A+B y el fix de 31.2), pendiente de confirmar visualmente una vez resuelto el bloqueo de autenticación.
+
+**Impacto en producción:** el fix de 31.2 vive en el mismo archivo que ya fue desplegado a `/dev` por la sesión de 30.7 esta misma noche — no hay forma de confirmar en este documento si el fix específico de 31.2 ya está en producción sin la QA de 31.4. Ningún commit fue creado por esta sesión.

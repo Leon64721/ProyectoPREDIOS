@@ -210,36 +210,946 @@
       .getIndiceInversoRTs();
   }
 
-  function cargarModuloEquipos() {
-    aplicarVisibilidadNavEquipos();
-    precargarCatEstructuraEquipos();
-    precargarMapaInversoRTs();
-    cargarEquiposConsolidados();
+  let mesaEquiposResumen = null;
+  let mesaEquiposProyecto = null;
+  let mesaEquiposFilas = [];
+  let mesaEquiposFilasFiltradas = [];
+  let mesaEquiposCambios = {};
+  let mesaEquiposSeleccion = {};
+  let mesaEquiposPaginaActual = 1;
+  let equiposVistaArbolCargada = false;
+  let equiposVistaConsolidadaCargada = false;
+  const MESA_EQUIPOS_PAGE_SIZE = 250;
 
-    // Pintado optimista desde IndexedDB mientras llega la respuesta fresca del servidor.
-    equiposCacheRead().then(function(cached) {
-      if (cached && cached.payload && cached.payload.success) {
-        pintarKpisEquipos(cached.payload);
+  function _escapeHtmlEquipos(texto) {
+    return String(texto == null ? '' : texto)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function _escapeAttrEquipos(texto) {
+    return String(texto == null ? '' : texto)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\r/g, '&#13;')
+      .replace(/\n/g, '&#10;');
+  }
+
+  function _asegurarEventosMesaResumen() {
+    if (window.__equiposListenersInit) return;
+    document.addEventListener('click', function(ev) {
+      const btn = ev.target && ev.target.closest ? ev.target.closest('button[data-action="abrir-mesa"]') : null;
+      if (!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const proyecto = btn.getAttribute('data-proyecto') || '';
+      abrirMesaProyecto(proyecto);
+    });
+    // ✅ Delegación para los controles de fila de la mesa (checkbox de selección
+    // y select de "Nuevo gestor"). Reemplaza los onchange inline que embebían
+    // JSON.stringify(fila.rt) dentro de un atributo HTML entre comillas dobles
+    // (rompía el atributo y producía "Unexpected end of input" al compilarse
+    // como handler — ver DOCUMENTACION_TECNICA_VIVA.md). Los valores viajan por
+    // data-rt (ya escapado por _escapeAttrEquipos en _renderFilaRTMesa) en vez
+    // de interpolarse en el string del atributo.
+    document.addEventListener('change', function(ev) {
+      const target = ev.target;
+      const action = target && target.getAttribute ? target.getAttribute('data-action') : null;
+      if (!action) return;
+      const rt = target.getAttribute('data-rt') || '';
+      if (action === 'toggle-seleccion-rt-equipo') {
+        toggleSeleccionFilaEquipo(rt, target.checked);
+      } else if (action === 'toggle-seleccion-grupo-equipo') {
+        toggleSeleccionGrupoMesa(target.getAttribute('data-kind') || '', target.getAttribute('data-key') || '', target.checked);
+      } else if (action === 'cambiar-gestor-rt-equipo') {
+        cambiarGestorFila(rt, target.value);
+      } else if (action === 'cambiar-articulador-rt-equipo') {
+        cambiarArticuladorFila(rt, target.value);
       }
+    });
+    window.__equiposListenersInit = true;
+  }
+
+  function _estadoFilaMesa(fila) {
+    if (!fila.articuladorEmail && !fila.gestorEmail) return 'SIN_ASIGNAR';
+    if (!fila.articuladorEmail) return 'SIN_ARTICULADOR';
+    if (!fila.gestorEmail) return 'SIN_GESTOR';
+    return 'COMPLETO';
+  }
+
+  function _gestorEfectivoFila(fila) {
+    const pendiente = mesaEquiposCambios[fila.rt];
+    if (pendiente) return String(pendiente.gestorEmail || '').trim().toLowerCase();
+    return String(fila.gestorEmail || '').trim().toLowerCase();
+  }
+
+  function _articuladorEfectivoFila(fila) {
+    const pendiente = mesaEquiposCambios[fila.rt];
+    if (pendiente && Object.prototype.hasOwnProperty.call(pendiente, 'articuladorEmail')) return String(pendiente.articuladorEmail || '').trim().toLowerCase();
+    return String(fila.articuladorEmail || '').trim().toLowerCase();
+  }
+
+  function _nombreArticulador(email) {
+    const art = ((mesaEquiposProyecto && mesaEquiposProyecto.articuladores) || []).find(function(a) { return a.email === email; });
+    return art ? art.nombre : '';
+  }
+
+  function _nombreGestor(email) {
+    const ges = ((mesaEquiposProyecto && mesaEquiposProyecto.gestores) || []).find(function(g) { return g.email === email; });
+    return ges ? ges.nombre : '';
+  }
+
+  function _gestoresDisponiblesParaArticulador(articuladorEmail) {
+    const data = mesaEquiposProyecto || {};
+    const todos = (data.gestores || []).reduce(function(acc, g) {
+      if (g && g.email) acc[g.email] = g;
+      return acc;
+    }, {});
+    const relaciones = data.relacionesGestores || {};
+    const asociados = articuladorEmail ? (relaciones[articuladorEmail] || []) : [];
+
+    function toGestoresList(emails, artRef) {
+      const uniq = {};
+      (emails || []).forEach(function(e) {
+        const key = String(e || '').trim().toLowerCase();
+        if (key) uniq[key] = true;
+      });
+      return Object.keys(uniq).map(function(email) {
+        return todos[email] || { email: email, nombre: email, articuladorEmail: artRef || '' };
+      }).sort(function(a, b) { return a.email.localeCompare(b.email); });
+    }
+
+    // 1) Con articulador: prioriza SOLO gestores asociados a ese articulador.
+    if (asociados.length) {
+      return toGestoresList(asociados, articuladorEmail);
+    }
+
+    // 2) Sin articulador (o sin asociados): usa gestores observados en el proyecto actual.
+    const gestoresProyectoSet = {};
+    mesaEquiposFilas.forEach(function(f) {
+      const g = String(f.gestorEmail || '').trim().toLowerCase();
+      if (g) gestoresProyectoSet[g] = true;
+    });
+    Object.keys(relaciones).forEach(function(art) {
+      (relaciones[art] || []).forEach(function(g) {
+        const email = String(g || '').trim().toLowerCase();
+        if (email) gestoresProyectoSet[email] = true;
+      });
+    });
+    const gestoresProyecto = toGestoresList(Object.keys(gestoresProyectoSet), '');
+    if (gestoresProyecto.length) return gestoresProyecto;
+
+    // 3) Fallback final: todos los gestores activos disponibles.
+    return Object.keys(todos).map(function(k) { return todos[k]; }).sort(function(a, b) { return a.email.localeCompare(b.email); });
+  }
+
+  function renderShellGestionEquipos() {
+    const root = document.getElementById('moduloGestionEquipos');
+    if (!root) return;
+
+    root.innerHTML =
+      '<div class="page-header">' +
+        '<h2><i class="fas fa-users-gear"></i> Gestión de Equipos y Jerarquía RBAC</h2>' +
+        '<div class="page-actions flex-wrap align-items-center">' +
+          '<button class="btn-secondary-custom" onclick="cargarModuloEquipos()"><i class="fas fa-rotate"></i> Recargar</button>' +
+          '<button class="btn btn-warning" onclick="handleCargaLineaCero()"><i class="fas fa-flag-checkered"></i> Cargar Línea Cero</button>' +
+          '<button class="btn-primary-custom" onclick="abrirModalHomologacionEquipos()"><i class="fas fa-user-check"></i> Homologación</button>' +
+          '<button class="btn-primary-custom" onclick="abrirModalAsignacionGranular(\'PROYECTO\', \'\', {})"><i class="fas fa-diagram-project"></i> Asignación Granular</button>' +
+          '<button class="btn-secondary-custom" onclick="window.toggleVistaSecundariaEquipos(\'consolidado\')"><i class="fas fa-people-group"></i> Equipos por articulador</button>' +
+          '<button class="btn-secondary-custom" onclick="window.toggleVistaSecundariaEquipos(\'arbol\')"><i class="fas fa-sitemap"></i> Vista árbol</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="row g-3 mb-3">' +
+        '<div class="col-md-6 col-lg-3"><div class="card shadow-sm h-100"><div class="card-body text-center"><div class="text-muted small text-uppercase">Total RTs visibles</div><div class="fs-2 fw-bold" id="kpiMesaTotalRTs">-</div></div></div></div>' +
+        '<div class="col-md-6 col-lg-3"><div class="card shadow-sm h-100 border-success"><div class="card-body text-center"><div class="text-muted small text-uppercase">RTs asignados</div><div class="fs-2 fw-bold text-success" id="kpiMesaAsignados">-</div></div></div></div>' +
+        '<div class="col-md-6 col-lg-3"><div class="card shadow-sm h-100 border-warning"><div class="card-body text-center"><div class="text-muted small text-uppercase">RTs sin asignar</div><div class="fs-2 fw-bold text-warning" id="kpiMesaSinAsignar">-</div></div></div></div>' +
+        '<div class="col-md-6 col-lg-3"><div class="card shadow-sm h-100 border-info"><div class="card-body text-center"><div class="text-muted small text-uppercase">Gestores activos</div><div class="fs-2 fw-bold text-info" id="kpiMesaGestores">-</div></div></div></div>' +
+      '</div>' +
+      '<div id="mesaEquiposHome" class="card shadow-sm">' +
+        '<div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">' +
+          '<span><i class="fas fa-table"></i> Proyectos visibles</span>' +
+          '<small id="mesaEquiposUsuarioContexto"></small>' +
+        '</div>' +
+        '<div class="card-body p-0">' +
+          '<div class="table-responsive">' +
+            '<table class="table table-hover mb-0">' +
+              '<thead class="table-light"><tr><th>Proyecto</th><th>Total RTs</th><th>Asignados</th><th>Sin asignar</th><th>Gestores</th><th>Articuladores</th><th></th></tr></thead>' +
+              '<tbody id="tablaResumenGestionEquipos"><tr><td colspan="7" class="text-center text-muted py-4"><i class="fas fa-spinner fa-spin"></i> Cargando resumen...</td></tr></tbody>' +
+            '</table>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div id="mesaEquiposProyecto" class="card shadow-sm mt-3 d-none">' +
+        '<div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">' +
+          '<div><strong id="mesaTituloProyecto">Mesa de asignación</strong></div>' +
+          '<div class="d-flex gap-2">' +
+            '<button class="btn btn-light btn-sm" onclick="window.volverResumenGestionEquipos()"><i class="fas fa-arrow-left"></i> Volver</button>' +
+            '<button class="btn btn-success btn-sm" onclick="guardarCambiosMesaEquipos()"><i class="fas fa-floppy-disk"></i> Guardar cambios</button>' +
+            '<button class="btn btn-outline-light btn-sm" onclick="descartarCambiosMesaEquipos()"><i class="fas fa-eraser"></i> Descartar</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="card-body">' +
+          '<div class="row g-2 mb-3">' +
+            '<div class="col-md-2"><label class="form-label small mb-1">Tramo</label><select id="filtroMesaTramo" class="form-select form-select-sm" onchange="aplicarFiltrosMesaEquipos()"></select></div>' +
+            '<div class="col-md-2"><label class="form-label small mb-1">Articulador</label><select id="filtroMesaArticulador" class="form-select form-select-sm" onchange="aplicarFiltrosMesaEquipos()"></select></div>' +
+            '<div class="col-md-2"><label class="form-label small mb-1">Gestor actual</label><select id="filtroMesaGestor" class="form-select form-select-sm" onchange="aplicarFiltrosMesaEquipos()"></select></div>' +
+            '<div class="col-md-2"><label class="form-label small mb-1">Estado</label><select id="filtroMesaEstado" class="form-select form-select-sm" onchange="aplicarFiltrosMesaEquipos()"><option value="">Todos</option><option value="COMPLETO">Completo</option><option value="SIN_GESTOR">Sin gestor</option><option value="SIN_ARTICULADOR">Sin articulador</option><option value="SIN_ASIGNAR">Sin asignar</option></select></div>' +
+            '<div class="col-md-4"><label class="form-label small mb-1">RT</label><input id="filtroMesaRT" type="text" class="form-control form-control-sm" placeholder="Buscar RT..." oninput="aplicarFiltrosMesaEquipos()"></div>' +
+          '</div>' +
+          '<div class="row g-3">' +
+            '<div class="col-lg-9">' +
+              '<div class="d-flex flex-wrap gap-2 align-items-center mb-2">' +
+                '<select id="gestorLoteMesa" class="form-select form-select-sm" style="width:auto; min-width:260px;"></select>' +
+                '<select id="articuladorLoteMesa" class="form-select form-select-sm" style="width:auto; min-width:260px;"></select>' +
+                '<button class="btn btn-sm btn-outline-primary" onclick="aplicarGestorASeleccionados()"><i class="fas fa-users"></i> Aplicar a seleccionados</button>' +
+                '<button class="btn btn-sm btn-outline-primary" onclick="aplicarGestorATramoFiltrado()"><i class="fas fa-layer-group"></i> Aplicar al tramo filtrado</button>' +
+                '<button class="btn btn-sm btn-outline-primary" onclick="aplicarArticuladorASeleccionados()"><i class="fas fa-user-tie"></i> Articulador a seleccionados</button>' +
+                '<button class="btn btn-sm btn-outline-primary" onclick="aplicarArticuladorATramoFiltrado()"><i class="fas fa-object-group"></i> Articulador al tramo</button>' +
+                '<button class="btn btn-sm btn-outline-danger" onclick="limpiarAsignacionSeleccionados()"><i class="fas fa-eraser"></i> Limpiar selección</button>' +
+                '<button class="btn btn-sm btn-outline-secondary" onclick="window.seleccionarFiltradosMesa()"><i class="fas fa-check-double"></i> Seleccionar filtrados</button>' +
+                '<span class="small text-muted" id="mesaMetaPaginacion"></span>' +
+              '</div>' +
+              '<div class="table-responsive" style="max-height: 520px;">' +
+                '<table class="table table-sm table-striped table-hover align-middle">' +
+                  '<thead class="table-light"><tr><th><input type="checkbox" id="mesaSelAll" onchange="window.toggleSeleccionPaginaMesa(this.checked)"></th><th>Tramo</th><th>RT</th><th>Articulador</th><th>Gestor (actual / nuevo)</th><th>Estado</th><th>Cambio</th></tr></thead>' +
+                  '<tbody id="tablaMesaAsignacionBody"><tr><td colspan="7" class="text-center text-muted py-3">Seleccione un proyecto</td></tr></tbody>' +
+                '</table>' +
+              '</div>' +
+              '<div class="d-flex justify-content-between align-items-center mt-2">' +
+                '<button class="btn btn-outline-secondary btn-sm" onclick="window.cambiarPaginaMesaEquipos(-1)">Anterior</button>' +
+                '<span class="small text-muted" id="mesaPaginaActualLabel"></span>' +
+                '<button class="btn btn-outline-secondary btn-sm" onclick="window.cambiarPaginaMesaEquipos(1)">Siguiente</button>' +
+              '</div>' +
+            '</div>' +
+            '<div class="col-lg-3">' +
+              '<div class="card border-info mb-2">' +
+                '<div class="card-header bg-info-subtle"><strong>Carga por gestor</strong></div>' +
+                '<div class="card-body p-2" id="panelCargaGestoresMesa"><div class="text-muted small">Sin datos</div></div>' +
+              '</div>' +
+              '<div class="card">' +
+                '<div class="card-header"><strong>Crear usuario rápido</strong></div>' +
+                '<div class="card-body p-2">' +
+                  '<input id="mesaNuevoGestorNombre" class="form-control form-control-sm mb-2" placeholder="Nombre">' +
+                  '<input id="mesaNuevoGestorEmail" class="form-control form-control-sm mb-2" placeholder="correo@idu.gov.co">' +
+                  '<select id="mesaNuevoUsuarioRol" class="form-select form-select-sm mb-2"><option value="Gestor">Gestor</option><option value="Articulador">Articulador</option></select>' +
+                  '<select id="mesaNuevoGestorComponente" class="form-select form-select-sm mb-2"><option value="DTDP">DTDP</option><option value="STAP">STAP</option></select>' +
+                  '<select id="mesaNuevoGestorArticulador" class="form-select form-select-sm mb-2"></select>' +
+                  '<button class="btn btn-sm btn-success w-100" onclick="window.crearUsuarioDesdeMesa()"><i class="fas fa-user-plus"></i> Crear usuario</button>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div id="barraCambiosMesaEquipos" class="alert alert-warning mt-3 d-none mb-0 d-flex justify-content-between align-items-center">' +
+        '<span id="contadorCambiosMesaEquipos">0 cambio(s) pendiente(s)</span>' +
+        '<div class="d-flex gap-2">' +
+          '<button class="btn btn-success btn-sm" onclick="guardarCambiosMesaEquipos()"><i class="fas fa-floppy-disk"></i> Guardar lote</button>' +
+          '<button class="btn btn-outline-secondary btn-sm" onclick="descartarCambiosMesaEquipos()">Descartar</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="bloqueVistaSecundariaConsolidado" class="card shadow-sm mt-3 d-none">' +
+        '<div class="card-header bg-dark text-white"><i class="fas fa-people-group"></i> Equipos de Trabajo (vista secundaria)</div>' +
+        '<div class="card-body p-0" style="max-height: 420px; overflow-y: auto;"><div class="accordion accordion-flush" id="acordeonEquiposTrabajo"><div class="text-center text-muted py-3">Presiona "Equipos por articulador" para cargar.</div></div></div>' +
+      '</div>' +
+      '<div id="bloqueVistaSecundariaArbol" class="card shadow-sm mt-3 d-none">' +
+        '<div class="card-header bg-dark text-white"><i class="fas fa-sitemap"></i> Árbol de Asignación (vista secundaria)</div>' +
+        '<div class="card-body" id="arbolAsignacionEquipos" style="max-height: 600px; overflow-y: auto;"><div class="text-center text-muted py-3">Presiona "Vista árbol" para cargar.</div></div>' +
+      '</div>';
+  }
+  window.renderShellGestionEquipos = renderShellGestionEquipos;
+
+  function cargarResumenGestionEquipos() {
+    equiposCacheRead().then(function(cached) {
+      if (cached && cached.payload && cached.payload.success) renderResumenGestionEquipos(cached.payload);
     });
 
     google.script.run
-      .withSuccessHandler(function(stats) {
-        if (stats && stats.success) {
-          pintarKpisEquipos(stats);
-          equiposCacheWrite(stats);
-        } else if (typeof window.showNotification === 'function') {
-          window.showNotification('Error', (stats && stats.error) || 'No fue posible cargar el tablero de carga', 'danger');
+      .withSuccessHandler(function(result) {
+        if (!result || !result.success) {
+          if (typeof window.showNotification === 'function') window.showNotification('Error', (result && result.error) || 'No fue posible cargar el resumen de equipos.', 'danger');
+          return;
         }
+        equiposCacheWrite(result);
+        renderResumenGestionEquipos(result);
       })
       .withFailureHandler(function(error) {
-        if (typeof window.showNotification === 'function') {
-          window.showNotification('Error', 'No fue posible cargar el tablero de carga: ' + (error.message || error), 'danger');
-        }
+        if (typeof window.showNotification === 'function') window.showNotification('Error', error.message || String(error), 'danger');
       })
-      .getEstadisticasCargaEquipos({});
+      .getResumenGestionEquipos();
+  }
+  window.cargarResumenGestionEquipos = cargarResumenGestionEquipos;
 
-    cargarArbolAsignacion();
+  function renderResumenGestionEquipos(result) {
+    _asegurarEventosMesaResumen();
+    mesaEquiposResumen = result || null;
+    const total = Number(result && result.totalRTs || 0);
+    const asignados = Number(result && result.totalAsignados || 0);
+    const sinAsignar = Number(result && result.totalSinAsignar || 0);
+    const gestores = Number(result && result.totalGestores || 0);
+
+    const elTotal = document.getElementById('kpiMesaTotalRTs');
+    const elAsignados = document.getElementById('kpiMesaAsignados');
+    const elSin = document.getElementById('kpiMesaSinAsignar');
+    const elGestores = document.getElementById('kpiMesaGestores');
+    if (elTotal) elTotal.textContent = total;
+    if (elAsignados) elAsignados.textContent = asignados;
+    if (elSin) elSin.textContent = sinAsignar;
+    if (elGestores) elGestores.textContent = gestores;
+
+    const userCtx = document.getElementById('mesaEquiposUsuarioContexto');
+    if (userCtx) userCtx.textContent = ((result && result.rol) || '-') + ' · ' + ((result && result.usuario) || '');
+
+    const tbody = document.getElementById('tablaResumenGestionEquipos');
+    if (!tbody) return;
+    const proyectos = (result && result.proyectos) || [];
+    if (!proyectos.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No hay proyectos visibles para este usuario.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = proyectos.map(function(p) {
+      return '<tr>' +
+        '<td>' + _escapeHtmlEquipos(p.proyecto) + '</td>' +
+        '<td>' + Number(p.totalRTs || 0) + '</td>' +
+        '<td class="text-success fw-semibold">' + Number(p.asignados || 0) + '</td>' +
+        '<td class="text-warning fw-semibold">' + Number(p.sinAsignar || 0) + '</td>' +
+        '<td>' + Number(p.gestores || 0) + '</td>' +
+        '<td>' + Number(p.articuladores || 0) + '</td>' +
+        '<td><button class="btn btn-sm btn-primary" type="button" data-action="abrir-mesa" data-proyecto="' + _escapeAttrEquipos(p.proyecto) + '"><i class="fas fa-table-cells-large"></i> Abrir mesa</button></td>' +
+      '</tr>';
+    }).join('');
+  }
+  window.renderResumenGestionEquipos = renderResumenGestionEquipos;
+
+  function abrirMesaProyecto(proyecto) {
+    if (!proyecto) return;
+    if (typeof showLoader === 'function') showLoader('Abriendo mesa', 'Cargando ' + proyecto + '...');
+
+    google.script.run
+      .withSuccessHandler(function(data) {
+        if (typeof hideLoader === 'function') hideLoader();
+        if (!data || !data.success) {
+          if (typeof window.showNotification === 'function') window.showNotification('Error', (data && data.error) || 'No fue posible abrir la mesa del proyecto.', 'danger');
+          return;
+        }
+        renderMesaAsignacionProyecto(data);
+      })
+      .withFailureHandler(function(error) {
+        if (typeof hideLoader === 'function') hideLoader();
+        if (typeof window.showNotification === 'function') window.showNotification('Error', error.message || String(error), 'danger');
+      })
+      .getMesaAsignacionProyecto({ proyecto: proyecto });
+  }
+  window.abrirMesaProyecto = abrirMesaProyecto;
+
+  function renderMesaAsignacionProyecto(data) {
+    mesaEquiposProyecto = data || null;
+    mesaEquiposCambios = {};
+    mesaEquiposSeleccion = {};
+    mesaEquiposPaginaActual = 1;
+    mesaEquiposFilas = (data.rows || []).map(function(f) {
+      return {
+        rt: String(f.rt || '').trim(),
+        proyecto: String(f.proyecto || '').trim(),
+        tramo: String(f.tramo || '').trim(),
+        articuladorEmail: String(f.articuladorEmail || '').trim().toLowerCase(),
+        gestorEmail: String(f.gestorEmail || '').trim().toLowerCase(),
+        estadoAsignacion: String(f.estadoAsignacion || '').trim() || _estadoFilaMesa(f)
+      };
+    });
+    mesaEquiposFilasFiltradas = mesaEquiposFilas.slice();
+
+    const home = document.getElementById('mesaEquiposHome');
+    const mesa = document.getElementById('mesaEquiposProyecto');
+    if (home) home.classList.add('d-none');
+    if (mesa) mesa.classList.remove('d-none');
+
+    const titulo = document.getElementById('mesaTituloProyecto');
+    if (titulo) titulo.textContent = 'Mesa de asignación · ' + (data.proyecto || '');
+
+    renderFiltrosMesaEquipos(data);
+    aplicarFiltrosMesaEquipos();
+    actualizarCargaGestoresLocal();
+    _actualizarBarraCambiosMesa();
+  }
+  window.renderMesaAsignacionProyecto = renderMesaAsignacionProyecto;
+
+  function renderFiltrosMesaEquipos(data) {
+    const tramos = ['<option value="">Todos</option>'].concat((data.tramos || []).map(function(t) { return '<option value="' + _escapeHtmlEquipos(t) + '">' + _escapeHtmlEquipos(t) + '</option>'; }));
+    const articuladores = ['<option value="">Todos</option>'].concat((data.articuladores || []).map(function(a) {
+      return '<option value="' + _escapeHtmlEquipos(a.email) + '">' + _escapeHtmlEquipos(a.nombre || a.email) + ' · ' + _escapeHtmlEquipos(a.email) + '</option>';
+    }));
+    const gestoresMap = {};
+    (data.gestores || []).forEach(function(g) { if (g.email) gestoresMap[g.email] = g; });
+    const gestores = ['<option value="">Todos</option>'].concat(Object.keys(gestoresMap).sort().map(function(email) {
+      const g = gestoresMap[email];
+      return '<option value="' + _escapeHtmlEquipos(email) + '">' + _escapeHtmlEquipos(g.nombre || email) + ' · ' + _escapeHtmlEquipos(email) + '</option>';
+    }));
+    const gestoresLote = ['<option value="">Selecciona gestor para lote</option>'].concat(Object.keys(gestoresMap).sort().map(function(email) {
+      const g = gestoresMap[email];
+      return '<option value="' + _escapeHtmlEquipos(email) + '">' + _escapeHtmlEquipos(g.nombre || email) + ' · ' + _escapeHtmlEquipos(email) + '</option>';
+    }));
+    const articuladoresLote = ['<option value="">Selecciona articulador para lote</option>'].concat((data.articuladores || []).map(function(a) {
+      return '<option value="' + _escapeHtmlEquipos(a.email) + '">' + _escapeHtmlEquipos(a.nombre || a.email) + ' · ' + _escapeHtmlEquipos(a.email) + '</option>';
+    }));
+    const artsCrear = ['<option value="">Sin articulador específico</option>'].concat((data.articuladores || []).map(function(a) {
+      return '<option value="' + _escapeHtmlEquipos(a.email) + '">' + _escapeHtmlEquipos(a.nombre || a.email) + '</option>';
+    }));
+
+    const elTramo = document.getElementById('filtroMesaTramo');
+    const elArt = document.getElementById('filtroMesaArticulador');
+    const elGes = document.getElementById('filtroMesaGestor');
+    const elLote = document.getElementById('gestorLoteMesa');
+    const elArtLote = document.getElementById('articuladorLoteMesa');
+    const elArtCrear = document.getElementById('mesaNuevoGestorArticulador');
+    if (elTramo) elTramo.innerHTML = tramos.join('');
+    if (elArt) elArt.innerHTML = articuladores.join('');
+    if (elGes) elGes.innerHTML = gestores.join('');
+    if (elLote) elLote.innerHTML = gestoresLote.join('');
+    if (elArtLote) elArtLote.innerHTML = articuladoresLote.join('');
+    if (elArtCrear) elArtCrear.innerHTML = artsCrear.join('');
+  }
+  window.renderFiltrosMesaEquipos = renderFiltrosMesaEquipos;
+
+  function aplicarFiltrosMesaEquipos() {
+    if (!mesaEquiposProyecto) return;
+    const tramo = String((document.getElementById('filtroMesaTramo') || {}).value || '').trim();
+    const articulador = String((document.getElementById('filtroMesaArticulador') || {}).value || '').trim().toLowerCase();
+    const gestor = String((document.getElementById('filtroMesaGestor') || {}).value || '').trim().toLowerCase();
+    const estado = String((document.getElementById('filtroMesaEstado') || {}).value || '').trim();
+    const rt = String((document.getElementById('filtroMesaRT') || {}).value || '').trim().toLowerCase();
+
+    mesaEquiposFilasFiltradas = mesaEquiposFilas.filter(function(f) {
+      const gestorActual = _gestorEfectivoFila(f);
+      const estadoActual = _estadoFilaMesa({
+        articuladorEmail: f.articuladorEmail,
+        gestorEmail: gestorActual
+      });
+      if (tramo && f.tramo !== tramo) return false;
+      if (articulador && f.articuladorEmail !== articulador) return false;
+      if (gestor && gestorActual !== gestor) return false;
+      if (estado && estado !== estadoActual) return false;
+      if (rt && f.rt.toLowerCase().indexOf(rt) < 0) return false;
+      return true;
+    });
+    mesaEquiposFilasFiltradas.sort(_compararFilasMesa);
+
+    mesaEquiposPaginaActual = 1;
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+  }
+  window.aplicarFiltrosMesaEquipos = aplicarFiltrosMesaEquipos;
+
+  function _compararFilasMesa(a, b) {
+    const aGes = _gestorEfectivoFila(a);
+    const bGes = _gestorEfectivoFila(b);
+    const aSin = aGes ? 0 : 1;
+    const bSin = bGes ? 0 : 1;
+    if (aSin !== bSin) return aSin - bSin; // SIN ASIGNACIÓN al final
+
+    const artA = a.articuladorEmail || '~~~~';
+    const artB = b.articuladorEmail || '~~~~';
+    if (artA !== artB) return artA.localeCompare(artB);
+    if (a.proyecto !== b.proyecto) return a.proyecto.localeCompare(b.proyecto);
+    if (a.tramo !== b.tramo) return a.tramo.localeCompare(b.tramo);
+    return String(a.rt || '').localeCompare(String(b.rt || ''));
+  }
+
+  function _statsGrupoMesa(filas) {
+    let asignados = 0;
+    let sinGestor = 0;
+    let pendientes = 0;
+    filas.forEach(function(f) {
+      if (_gestorEfectivoFila(f)) asignados++;
+      else sinGestor++;
+      if (mesaEquiposCambios[f.rt]) pendientes++;
+    });
+    return {
+      totalRTs: filas.length,
+      asignados: asignados,
+      sinGestor: sinGestor,
+      pendientes: pendientes
+    };
+  }
+
+  function _agruparFilasMesa(filas) {
+    const raiz = {};
+    const sinAsignacion = [];
+
+    filas.forEach(function(f) {
+      const gestor = _gestorEfectivoFila(f);
+      if (!gestor) {
+        sinAsignacion.push(f);
+        return;
+      }
+
+      const artKey = f.articuladorEmail || 'sin-articulador';
+      if (!raiz[artKey]) raiz[artKey] = { key: artKey, proyectos: {}, filas: [] };
+      raiz[artKey].filas.push(f);
+
+      const proyKey = f.proyecto || '';
+      if (!raiz[artKey].proyectos[proyKey]) raiz[artKey].proyectos[proyKey] = { key: proyKey, tramos: {}, filas: [] };
+      raiz[artKey].proyectos[proyKey].filas.push(f);
+
+      const tramoKey = f.tramo || '';
+      if (!raiz[artKey].proyectos[proyKey].tramos[tramoKey]) raiz[artKey].proyectos[proyKey].tramos[tramoKey] = { key: tramoKey, filas: [] };
+      raiz[artKey].proyectos[proyKey].tramos[tramoKey].filas.push(f);
+    });
+
+    const articuladores = Object.keys(raiz).sort().map(function(artKey) {
+      const nArt = raiz[artKey];
+      const proyectos = Object.keys(nArt.proyectos).sort().map(function(proyKey) {
+        const nProy = nArt.proyectos[proyKey];
+        const tramos = Object.keys(nProy.tramos).sort().map(function(tramoKey) {
+          const nTramo = nProy.tramos[tramoKey];
+          nTramo.filas.sort(function(a, b) { return String(a.rt || '').localeCompare(String(b.rt || '')); });
+          nTramo.stats = _statsGrupoMesa(nTramo.filas);
+          return nTramo;
+        });
+        nProy.tramos = tramos;
+        nProy.stats = _statsGrupoMesa(nProy.filas);
+        return nProy;
+      });
+      nArt.proyectos = proyectos;
+      nArt.stats = _statsGrupoMesa(nArt.filas);
+      return nArt;
+    });
+
+    sinAsignacion.sort(_compararFilasMesa);
+    return {
+      articuladores: articuladores,
+      sinAsignacion: sinAsignacion,
+      statsSinAsignacion: _statsGrupoMesa(sinAsignacion)
+    };
+  }
+
+  function _renderBadgeStatsGrupo(stats) {
+    return '<span class="badge bg-secondary ms-2">RTs: ' + stats.totalRTs + '</span>' +
+      '<span class="badge bg-success ms-1">Asignados: ' + stats.asignados + '</span>' +
+      '<span class="badge bg-warning text-dark ms-1">Sin gestor: ' + stats.sinGestor + '</span>' +
+      '<span class="badge bg-info text-dark ms-1">Pendientes: ' + stats.pendientes + '</span>';
+  }
+
+  function _renderFilaRTMesa(fila) {
+    const seleccionado = !!mesaEquiposSeleccion[fila.rt];
+    const articuladorActual = _articuladorEfectivoFila(fila);
+    const gestorActual = String(fila.gestorEmail || '');
+    const gestorNuevo = _gestorEfectivoFila(fila);
+    const cambioPendiente = !!mesaEquiposCambios[fila.rt];
+    const opcionesGestor = ['<option value="">Sin asignar</option>'].concat(_gestoresDisponiblesParaArticulador(articuladorActual).map(function(g) {
+      return '<option value="' + _escapeHtmlEquipos(g.email) + '"' + (g.email === gestorNuevo ? ' selected' : '') + '>' + _escapeHtmlEquipos(g.nombre || g.email) + ' · ' + _escapeHtmlEquipos(g.email) + '</option>';
+    })).join('');
+    const opcionesArticulador = ['<option value="">Sin asignar</option>'].concat(((mesaEquiposProyecto && mesaEquiposProyecto.articuladores) || []).map(function(a) {
+      return '<option value="' + _escapeHtmlEquipos(a.email) + '"' + (a.email === articuladorActual ? ' selected' : '') + '>' + _escapeHtmlEquipos(a.nombre || a.email) + ' · ' + _escapeHtmlEquipos(a.email) + '</option>';
+    })).join('');
+    const estadoActual = _estadoFilaMesa({ articuladorEmail: fila.articuladorEmail, gestorEmail: gestorNuevo });
+
+    const rtAttr = _escapeAttrEquipos(fila.rt);
+    return '<tr' + (cambioPendiente ? ' class="table-warning"' : '') + '>' +
+      '<td><input type="checkbox" ' + (seleccionado ? 'checked ' : '') + 'data-action="toggle-seleccion-rt-equipo" data-rt="' + rtAttr + '"></td>' +
+      '<td>' + _escapeHtmlEquipos(fila.tramo || '-') + '</td>' +
+      '<td><strong>' + _escapeHtmlEquipos(fila.rt) + '</strong></td>' +
+      '<td><div class="small text-muted mb-1">' + _escapeHtmlEquipos(_nombreArticulador(articuladorActual) || articuladorActual || 'Sin asignar') + '</div><select class="form-select form-select-sm" data-action="cambiar-articulador-rt-equipo" data-rt="' + rtAttr + '">' + opcionesArticulador + '</select></td>' +
+      '<td><div class="small text-muted mb-1">' + _escapeHtmlEquipos(_nombreGestor(gestorActual) || gestorActual || 'Sin asignar') + '</div><select class="form-select form-select-sm" data-action="cambiar-gestor-rt-equipo" data-rt="' + rtAttr + '">' + opcionesGestor + '</select></td>' +
+      '<td><span class="badge ' + (estadoActual === 'COMPLETO' ? 'bg-success' : 'bg-warning text-dark') + '">' + estadoActual + '</span></td>' +
+      '<td>' + (cambioPendiente ? '<span class="badge bg-warning text-dark">Pendiente</span>' : '<span class="text-muted">Sin cambio</span>') + '</td>' +
+    '</tr>';
+  }
+
+  function renderTablaMesaEquipos() {
+    const tbody = document.getElementById('tablaMesaAsignacionBody');
+    if (!tbody) return;
+
+    if (!mesaEquiposFilasFiltradas.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No hay filas para los filtros actuales.</td></tr>';
+      const meta = document.getElementById('mesaMetaPaginacion');
+      const lbl = document.getElementById('mesaPaginaActualLabel');
+      if (meta) meta.textContent = '0 filas';
+      if (lbl) lbl.textContent = 'Página 0/0';
+      return;
+    }
+
+    const totalPaginas = Math.max(1, Math.ceil(mesaEquiposFilasFiltradas.length / MESA_EQUIPOS_PAGE_SIZE));
+    if (mesaEquiposPaginaActual > totalPaginas) mesaEquiposPaginaActual = totalPaginas;
+    if (mesaEquiposPaginaActual < 1) mesaEquiposPaginaActual = 1;
+
+    const start = (mesaEquiposPaginaActual - 1) * MESA_EQUIPOS_PAGE_SIZE;
+    const end = Math.min(start + MESA_EQUIPOS_PAGE_SIZE, mesaEquiposFilasFiltradas.length);
+    const pagina = mesaEquiposFilasFiltradas.slice(start, end);
+    const grouped = _agruparFilasMesa(pagina);
+    let html = '';
+
+    grouped.articuladores.forEach(function(art) {
+      const artLabel = _nombreArticulador(art.key) || art.key || 'Sin articulador';
+      html += '<tr class="table-primary"><td colspan="7"><label class="me-2 mb-0"><input type="checkbox" data-action="toggle-seleccion-grupo-equipo" data-kind="ART" data-key="' + _escapeAttrEquipos(art.key) + '"> <strong>ARTICULADOR: ' + _escapeHtmlEquipos(artLabel) + '</strong></label>' + _renderBadgeStatsGrupo(art.stats) + '</td></tr>';
+      art.proyectos.forEach(function(proy) {
+        html += '<tr class="table-light"><td colspan="7"><label class="me-2 mb-0"><input type="checkbox" data-action="toggle-seleccion-grupo-equipo" data-kind="PROY" data-key="' + _escapeAttrEquipos(proy.key) + '"> <strong>PROYECTO: ' + _escapeHtmlEquipos(proy.key) + '</strong></label>' + _renderBadgeStatsGrupo(proy.stats) + '</td></tr>';
+        proy.tramos.forEach(function(tramo) {
+          html += '<tr><td colspan="7" class="bg-body-tertiary"><label class="me-2 mb-0"><input type="checkbox" data-action="toggle-seleccion-grupo-equipo" data-kind="TRAMO" data-key="' + _escapeAttrEquipos(tramo.key) + '"> <strong>TRAMO: ' + _escapeHtmlEquipos(tramo.key || '-') + '</strong></label>' + _renderBadgeStatsGrupo(tramo.stats) + '</td></tr>';
+          tramo.filas.forEach(function(fila) {
+            html += _renderFilaRTMesa(fila);
+          });
+        });
+      });
+    });
+
+    if (grouped.sinAsignacion.length) {
+      html += '<tr class="table-danger"><td colspan="7"><label class="me-2 mb-0"><input type="checkbox" data-action="toggle-seleccion-grupo-equipo" data-kind="SIN_ASIGNACION" data-key=""> <strong>SIN ASIGNACIÓN</strong></label>' + _renderBadgeStatsGrupo(grouped.statsSinAsignacion) + '</td></tr>';
+      grouped.sinAsignacion.forEach(function(fila) {
+        html += _renderFilaRTMesa(fila);
+      });
+    }
+    tbody.innerHTML = html;
+
+    const meta = document.getElementById('mesaMetaPaginacion');
+    const lbl = document.getElementById('mesaPaginaActualLabel');
+    if (meta) meta.textContent = mesaEquiposFilasFiltradas.length + ' fila(s) filtradas';
+    if (lbl) lbl.textContent = 'Página ' + mesaEquiposPaginaActual + '/' + totalPaginas + ' · mostrando ' + (start + 1) + '-' + end;
+  }
+  window.renderTablaMesaEquipos = renderTablaMesaEquipos;
+
+  function toggleSeleccionFilaEquipo(rt, checked) {
+    if (!rt) return;
+    if (checked) mesaEquiposSeleccion[rt] = true;
+    else delete mesaEquiposSeleccion[rt];
+  }
+  window.toggleSeleccionFilaEquipo = toggleSeleccionFilaEquipo;
+
+  function cambiarGestorFila(rt, gestorEmail) {
+    const fila = mesaEquiposFilas.find(function(f) { return f.rt === rt; });
+    if (!fila) return;
+    registrarCambioMesaEquipos(rt, _articuladorEfectivoFila(fila), String(gestorEmail || '').trim().toLowerCase());
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+    _actualizarBarraCambiosMesa();
+  }
+  window.cambiarGestorFila = cambiarGestorFila;
+
+  function cambiarArticuladorFila(rt, articuladorEmail) {
+    const fila = mesaEquiposFilas.find(function(f) { return f.rt === rt; });
+    if (!fila) return;
+    registrarCambioMesaEquipos(rt, String(articuladorEmail || '').trim().toLowerCase(), _gestorEfectivoFila(fila));
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+    _actualizarBarraCambiosMesa();
+  }
+  window.cambiarArticuladorFila = cambiarArticuladorFila;
+
+  function registrarCambioMesaEquipos(rt, articuladorEmail, gestorEmail) {
+    const fila = mesaEquiposFilas.find(function(f) { return f.rt === rt; });
+    if (!fila) return;
+    const originalArt = String(fila.articuladorEmail || '').trim().toLowerCase();
+    const original = String(fila.gestorEmail || '').trim().toLowerCase();
+    const nuevoArt = String(articuladorEmail || '').trim().toLowerCase();
+    const nuevo = String(gestorEmail || '').trim().toLowerCase();
+    if (originalArt === nuevoArt && original === nuevo) {
+      delete mesaEquiposCambios[rt];
+      return;
+    }
+    mesaEquiposCambios[rt] = {
+      nivel: 'RT',
+      idTarget: rt,
+      articuladorEmail: nuevoArt || null,
+      gestorEmail: nuevo || null
+    };
+  }
+  window.registrarCambioMesaEquipos = registrarCambioMesaEquipos;
+
+  function aplicarGestorASeleccionados() {
+    const gestor = String((document.getElementById('gestorLoteMesa') || {}).value || '').trim().toLowerCase();
+    const seleccionados = Object.keys(mesaEquiposSeleccion);
+    if (!seleccionados.length) {
+      if (typeof window.showNotification === 'function') window.showNotification('Aviso', 'Selecciona al menos una fila.', 'warning');
+      return;
+    }
+    for (let i = 0; i < seleccionados.length; i++) {
+      const rt = seleccionados[i];
+      const fila = mesaEquiposFilas.find(function(f) { return f.rt === rt; });
+      if (!fila) continue;
+      registrarCambioMesaEquipos(rt, fila.articuladorEmail, gestor);
+    }
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+    _actualizarBarraCambiosMesa();
+  }
+  window.aplicarGestorASeleccionados = aplicarGestorASeleccionados;
+
+  function aplicarGestorATramoFiltrado() {
+    const tramo = String((document.getElementById('filtroMesaTramo') || {}).value || '').trim();
+    const gestor = String((document.getElementById('gestorLoteMesa') || {}).value || '').trim().toLowerCase();
+    if (!tramo) {
+      if (typeof window.showNotification === 'function') window.showNotification('Aviso', 'Selecciona un tramo en el filtro para aplicar esta acción.', 'warning');
+      return;
+    }
+    const filasTramo = mesaEquiposFilasFiltradas.filter(function(f) { return f.tramo === tramo; });
+    if (!filasTramo.length) {
+      if (typeof window.showNotification === 'function') window.showNotification('Aviso', 'No hay filas visibles para el tramo seleccionado.', 'warning');
+      return;
+    }
+    filasTramo.forEach(function(fila) {
+      registrarCambioMesaEquipos(fila.rt, fila.articuladorEmail, gestor);
+    });
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+    _actualizarBarraCambiosMesa();
+  }
+  window.aplicarGestorATramoFiltrado = aplicarGestorATramoFiltrado;
+
+  function aplicarArticuladorASeleccionados() {
+    const articulador = String((document.getElementById('articuladorLoteMesa') || {}).value || '').trim().toLowerCase();
+    const seleccionados = Object.keys(mesaEquiposSeleccion);
+    if (!seleccionados.length) {
+      if (typeof window.showNotification === 'function') window.showNotification('Aviso', 'Selecciona al menos una fila.', 'warning');
+      return;
+    }
+    seleccionados.forEach(function(rt) {
+      const fila = mesaEquiposFilas.find(function(f) { return f.rt === rt; });
+      if (!fila) return;
+      registrarCambioMesaEquipos(rt, articulador, _gestorEfectivoFila(fila));
+    });
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+    _actualizarBarraCambiosMesa();
+  }
+  window.aplicarArticuladorASeleccionados = aplicarArticuladorASeleccionados;
+
+  function aplicarArticuladorATramoFiltrado() {
+    const tramo = String((document.getElementById('filtroMesaTramo') || {}).value || '').trim();
+    const articulador = String((document.getElementById('articuladorLoteMesa') || {}).value || '').trim().toLowerCase();
+    if (!tramo) {
+      if (typeof window.showNotification === 'function') window.showNotification('Aviso', 'Selecciona un tramo en el filtro para aplicar esta acción.', 'warning');
+      return;
+    }
+    const filasTramo = mesaEquiposFilasFiltradas.filter(function(f) { return f.tramo === tramo; });
+    if (!filasTramo.length) {
+      if (typeof window.showNotification === 'function') window.showNotification('Aviso', 'No hay filas visibles para el tramo seleccionado.', 'warning');
+      return;
+    }
+    filasTramo.forEach(function(fila) {
+      registrarCambioMesaEquipos(fila.rt, articulador, _gestorEfectivoFila(fila));
+    });
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+    _actualizarBarraCambiosMesa();
+  }
+  window.aplicarArticuladorATramoFiltrado = aplicarArticuladorATramoFiltrado;
+
+  function limpiarAsignacionSeleccionados() {
+    const seleccionados = Object.keys(mesaEquiposSeleccion);
+    if (!seleccionados.length) {
+      if (typeof window.showNotification === 'function') window.showNotification('Aviso', 'Selecciona al menos una fila.', 'warning');
+      return;
+    }
+    seleccionados.forEach(function(rt) {
+      const fila = mesaEquiposFilas.find(function(f) { return f.rt === rt; });
+      if (!fila) return;
+      registrarCambioMesaEquipos(rt, fila.articuladorEmail, '');
+    });
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+    _actualizarBarraCambiosMesa();
+  }
+  window.limpiarAsignacionSeleccionados = limpiarAsignacionSeleccionados;
+
+  function actualizarCargaGestoresLocal() {
+    const panel = document.getElementById('panelCargaGestoresMesa');
+    if (!panel) return;
+
+    const conteo = {};
+    mesaEquiposFilasFiltradas.forEach(function(f) {
+      const g = _gestorEfectivoFila(f) || 'sin-asignar';
+      conteo[g] = (conteo[g] || 0) + 1;
+    });
+    const entries = Object.keys(conteo).sort(function(a, b) { return conteo[b] - conteo[a]; });
+    if (!entries.length) {
+      panel.innerHTML = '<div class="text-muted small">Sin filas visibles.</div>';
+      return;
+    }
+    panel.innerHTML = '<ul class="list-group list-group-flush">' + entries.map(function(email) {
+      const etiqueta = email === 'sin-asignar' ? 'Sin asignar' : (_nombreGestor(email) || email);
+      return '<li class="list-group-item d-flex justify-content-between align-items-center py-1 px-2"><span class="small">' + _escapeHtmlEquipos(etiqueta) + '</span><span class="badge bg-secondary">' + conteo[email] + '</span></li>';
+    }).join('') + '</ul>';
+  }
+  window.actualizarCargaGestoresLocal = actualizarCargaGestoresLocal;
+
+  function _actualizarBarraCambiosMesa() {
+    const bar = document.getElementById('barraCambiosMesaEquipos');
+    const contador = document.getElementById('contadorCambiosMesaEquipos');
+    const total = Object.keys(mesaEquiposCambios).length;
+    if (contador) contador.textContent = total + ' cambio(s) pendiente(s)';
+    if (bar) bar.classList.toggle('d-none', total === 0);
+  }
+
+  function guardarCambiosMesaEquipos() {
+    const cambios = Object.keys(mesaEquiposCambios).map(function(k) { return mesaEquiposCambios[k]; });
+    if (!cambios.length) {
+      if (typeof window.showNotification === 'function') window.showNotification('Sin cambios', 'No hay cambios pendientes por guardar.', 'info');
+      return;
+    }
+    if (typeof showLoader === 'function') showLoader('Guardando cambios', 'Aplicando ' + cambios.length + ' cambio(s) en lote...');
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (typeof hideLoader === 'function') hideLoader();
+        if (!result || !result.success) {
+          if (typeof window.showNotification === 'function') window.showNotification('Error', (result && result.error) || 'No fue posible guardar cambios.', 'danger');
+          return;
+        }
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Guardado', (result.cambiosAplicados || cambios.length) + ' cambio(s) aplicados correctamente.', 'success');
+        }
+        google.script.run.invalidateDataCache();
+        abrirMesaProyecto(mesaEquiposProyecto ? mesaEquiposProyecto.proyecto : '');
+      })
+      .withFailureHandler(function(error) {
+        if (typeof hideLoader === 'function') hideLoader();
+        if (typeof window.showNotification === 'function') window.showNotification('Error', error.message || String(error), 'danger');
+      })
+      .asignarEquipoGranularLote(cambios, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
+  }
+  window.guardarCambiosMesaEquipos = guardarCambiosMesaEquipos;
+
+  function descartarCambiosMesaEquipos() {
+    mesaEquiposCambios = {};
+    mesaEquiposSeleccion = {};
+    _actualizarBarraCambiosMesa();
+    renderTablaMesaEquipos();
+    actualizarCargaGestoresLocal();
+  }
+  window.descartarCambiosMesaEquipos = descartarCambiosMesaEquipos;
+
+  function crearUsuarioDesdeMesa() {
+    const nombre = String((document.getElementById('mesaNuevoGestorNombre') || {}).value || '').trim();
+    const email = String((document.getElementById('mesaNuevoGestorEmail') || {}).value || '').trim();
+    const rol = String((document.getElementById('mesaNuevoUsuarioRol') || {}).value || 'Gestor').trim() || 'Gestor';
+    const componente = String((document.getElementById('mesaNuevoGestorComponente') || {}).value || 'DTDP').trim();
+    const articuladorRef = String((document.getElementById('mesaNuevoGestorArticulador') || {}).value || '').trim().toLowerCase();
+
+    if (!nombre || !email) {
+      if (typeof window.showNotification === 'function') window.showNotification('Error', 'Nombre y correo del usuario son obligatorios.', 'danger');
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (!result || !result.success) {
+          if (typeof window.showNotification === 'function') window.showNotification('Error', (result && result.error) || 'No fue posible crear el usuario.', 'danger');
+          return;
+        }
+
+        if (rol === 'Gestor' && articuladorRef && mesaEquiposProyecto && mesaEquiposProyecto.relacionesGestores) {
+          if (!mesaEquiposProyecto.relacionesGestores[articuladorRef]) mesaEquiposProyecto.relacionesGestores[articuladorRef] = [];
+          mesaEquiposProyecto.relacionesGestores[articuladorRef].push(String(result.usuario.email || '').toLowerCase());
+        }
+        if (typeof window.showNotification === 'function') window.showNotification('Usuario creado', result.usuario.email + ' creado correctamente.', 'success');
+        abrirMesaProyecto(mesaEquiposProyecto ? mesaEquiposProyecto.proyecto : '');
+      })
+      .withFailureHandler(function(error) {
+        if (typeof window.showNotification === 'function') window.showNotification('Error', error.message || String(error), 'danger');
+      })
+      .crearUsuarioRapidoBackend(nombre, email, rol, componente);
+  }
+  window.crearUsuarioDesdeMesa = crearUsuarioDesdeMesa;
+  window.crearGestorDesdeMesa = crearUsuarioDesdeMesa;
+
+  function toggleVistaSecundariaEquipos(tipo) {
+    if (tipo === 'arbol') {
+      const bloqueArbol = document.getElementById('bloqueVistaSecundariaArbol');
+      if (!bloqueArbol) return;
+      const visible = bloqueArbol.classList.contains('d-none');
+      bloqueArbol.classList.toggle('d-none', !visible);
+      if (visible && !equiposVistaArbolCargada) {
+        equiposVistaArbolCargada = true;
+        cargarArbolAsignacion();
+      }
+      return;
+    }
+    const bloqueConsolidado = document.getElementById('bloqueVistaSecundariaConsolidado');
+    if (!bloqueConsolidado) return;
+    const visible = bloqueConsolidado.classList.contains('d-none');
+    bloqueConsolidado.classList.toggle('d-none', !visible);
+    if (visible && !equiposVistaConsolidadaCargada) {
+      equiposVistaConsolidadaCargada = true;
+      cargarEquiposConsolidados();
+    }
+  }
+  window.toggleVistaSecundariaEquipos = toggleVistaSecundariaEquipos;
+
+  function cambiarPaginaMesaEquipos(delta) {
+    if (!mesaEquiposFilasFiltradas.length) return;
+    const totalPaginas = Math.max(1, Math.ceil(mesaEquiposFilasFiltradas.length / MESA_EQUIPOS_PAGE_SIZE));
+    mesaEquiposPaginaActual += delta;
+    if (mesaEquiposPaginaActual < 1) mesaEquiposPaginaActual = 1;
+    if (mesaEquiposPaginaActual > totalPaginas) mesaEquiposPaginaActual = totalPaginas;
+    renderTablaMesaEquipos();
+  }
+  window.cambiarPaginaMesaEquipos = cambiarPaginaMesaEquipos;
+
+  function toggleSeleccionPaginaMesa(checked) {
+    const start = (mesaEquiposPaginaActual - 1) * MESA_EQUIPOS_PAGE_SIZE;
+    const end = Math.min(start + MESA_EQUIPOS_PAGE_SIZE, mesaEquiposFilasFiltradas.length);
+    for (let i = start; i < end; i++) {
+      const rt = mesaEquiposFilasFiltradas[i].rt;
+      if (checked) mesaEquiposSeleccion[rt] = true;
+      else delete mesaEquiposSeleccion[rt];
+    }
+    renderTablaMesaEquipos();
+  }
+  window.toggleSeleccionPaginaMesa = toggleSeleccionPaginaMesa;
+
+  function seleccionarFiltradosMesa() {
+    mesaEquiposFilasFiltradas.forEach(function(f) { mesaEquiposSeleccion[f.rt] = true; });
+    renderTablaMesaEquipos();
+  }
+  window.seleccionarFiltradosMesa = seleccionarFiltradosMesa;
+
+  function toggleSeleccionGrupoMesa(kind, key, checked) {
+    const valor = String(key || '').trim().toLowerCase();
+    mesaEquiposFilasFiltradas.forEach(function(f) {
+      const grupo = kind === 'ART'
+        ? String(_articuladorEfectivoFila(f) || '').trim().toLowerCase() === valor
+        : kind === 'PROY'
+          ? String(f.proyecto || '').trim().toLowerCase() === valor
+          : kind === 'TRAMO'
+            ? String(f.tramo || '').trim().toLowerCase() === valor
+            : !_gestorEfectivoFila(f);
+      if (!grupo) return;
+      if (checked) mesaEquiposSeleccion[f.rt] = true;
+      else delete mesaEquiposSeleccion[f.rt];
+    });
+    renderTablaMesaEquipos();
+  }
+  window.toggleSeleccionGrupoMesa = toggleSeleccionGrupoMesa;
+
+  function volverResumenGestionEquipos() {
+    const home = document.getElementById('mesaEquiposHome');
+    const mesa = document.getElementById('mesaEquiposProyecto');
+    if (home) home.classList.remove('d-none');
+    if (mesa) mesa.classList.add('d-none');
+    mesaEquiposProyecto = null;
+    mesaEquiposFilas = [];
+    mesaEquiposFilasFiltradas = [];
+    mesaEquiposCambios = {};
+    mesaEquiposSeleccion = {};
+    _actualizarBarraCambiosMesa();
+  }
+  window.volverResumenGestionEquipos = volverResumenGestionEquipos;
+
+  function inicializarMesaGestionEquipos() {
+    renderShellGestionEquipos();
+    cargarResumenGestionEquipos();
+  }
+  window.inicializarMesaGestionEquipos = inicializarMesaGestionEquipos;
+
+  function cargarModuloEquipos() {
+    aplicarVisibilidadNavEquipos();
+    inicializarMesaGestionEquipos();
   }
   window.cargarModuloEquipos = cargarModuloEquipos;
 

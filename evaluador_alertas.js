@@ -648,12 +648,33 @@ function obtenerAlertasWeb() {
 
     const headers = datos[0];
     const filas = datos.slice(1);
+    const proyectoIdx = headers.indexOf('PROYECTO');
 
-    const resultado = filas.map(fila => {
-      let obj = {};
-      headers.forEach((h, i) => obj[h] = fila[i]);
-      return obj;
-    });
+    let proyectosVisibles = { todos: true, proyectos: [], excluidos: [] };
+    try {
+      const gestorFiltro = new GestorFiltroMatriz();
+      proyectosVisibles = gestorFiltro.obtenerProyectosVisibles() || proyectosVisibles;
+    } catch (filtroError) {
+      console.warn('⚠️ No se pudo resolver Filtro Matriz en obtenerAlertasWeb: ' + filtroError.message);
+    }
+
+    const resultado = filas
+      .filter(fila => {
+        if (!proyectosVisibles || proyectosVisibles.todos || proyectoIdx < 0) return true;
+        const proyecto = String(fila[proyectoIdx] || '').trim();
+        if (proyectosVisibles.proyectos && proyectosVisibles.proyectos.length > 0) {
+          return proyectosVisibles.proyectos.includes(proyecto);
+        }
+        if (proyectosVisibles.excluidos && proyectosVisibles.excluidos.length > 0) {
+          return !proyectosVisibles.excluidos.includes(proyecto);
+        }
+        return true;
+      })
+      .map(fila => {
+        let obj = {};
+        headers.forEach((h, i) => obj[h] = fila[i]);
+        return obj;
+      });
 
     return JSON.stringify(resultado);
   } catch (e) {

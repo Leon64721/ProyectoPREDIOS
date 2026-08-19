@@ -1789,151 +1789,376 @@ function generateServerPdfReport(dataStructure) {
  * ═══════════════════════════════════════════════════════════
  */
 
-// Genera un Excel de las alertas filtradas y lo envía por correo con un informe detallado
-function procesarReporteAlertas(emailDestino, filtros) {
+function _escapeHtmlAlertaEmail(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function _normalizarListaCorreos(lista) {
+  return String(lista || '')
+    .split(/[;,]/)
+    .map(function(c) { return String(c || '').trim().toLowerCase(); })
+    .filter(Boolean);
+}
+
+function _esCorreoValidoAlertas(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+}
+
+function _buildAlertasEmailAttachmentGrid(alertasRows, fileNameBase) {
+  const rows = Array.isArray(alertasRows) ? alertasRows : [];
+  const headers = [
+    'TIMESTAMP', 'NIVEL', 'RT', 'PROYECTO', 'ARTICULADOR', 'ARTICULADOR_EMAIL',
+    'GESTOR_EMAIL', 'FASE', 'REGLA', 'DIAS RESTANTES', 'MENSAJE',
+    'ESTADO PREDIAL ACTUAL', 'OBSERVACIONES'
+  ];
+
+  const tableRows = rows.map(function(r) {
+    return '<tr>' + headers.map(function(h) {
+      return '<td style="border:1px solid #b7c3d0;padding:6px;vertical-align:top;">' + _escapeHtmlAlertaEmail(r[h]) + '</td>';
+    }).join('') + '</tr>';
+  }).join('');
+
+  const html = [
+    '<html><head><meta charset="UTF-8"></head><body>',
+    '<table style="border-collapse:collapse;font-family:Segoe UI,Arial,sans-serif;font-size:12px;min-width:1400px;">',
+    '<thead><tr>',
+    headers.map(function(h) {
+      return '<th style="border:1px solid #6b7f95;background:#2c3e50;color:#fff;padding:7px;text-align:left;">' + _escapeHtmlAlertaEmail(h) + '</th>';
+    }).join(''),
+    '</tr></thead>',
+    '<tbody>',
+    tableRows,
+    '</tbody></table>',
+    '</body></html>'
+  ].join('');
+
+  return Utilities.newBlob(html, 'application/vnd.ms-excel', fileNameBase + '.xls');
+}
+
+function _obtenerObservacionesPorRT(rtsObjetivo) {
+  const objetivos = rtsObjetivo || {};
+  const mapa = {};
+  const ids = getDataFilesIds();
+  const nombreColRT = String(getConfig('COLUMNS.RT', 'RT') || 'RT').toUpperCase().trim();
+  const cfgObs = String(getConfig('COLUMNS.OBS', '') || '').toUpperCase().trim();
+  const candidatosObs = [cfgObs, 'OBSERVACIONES', 'OBSERVACION', 'OBS'].filter(Boolean);
+
+  ids.forEach(function(id) {
+    try {
+      const ss = SpreadsheetApp.openById(id);
+      const ws = ss.getSheetByName(getConfig('SHEETS.DATOS'));
+      if (!ws) return;
+      const values = ws.getDataRange().getDisplayValues();
+      if (!values || values.length < 2) return;
+      const headers = values[0].map(function(h) { return String(h || '').toUpperCase().trim(); });
+      const idxRT = headers.indexOf(nombreColRT);
+      if (idxRT < 0) return;
+
+      let idxObs = -1;
+      for (let i = 0; i < candidatosObs.length; i++) {
+        idxObs = headers.indexOf(candidatosObs[i]);
+        if (idxObs >= 0) break;
+      }
+      if (idxObs < 0) return;
+
+      for (let r = 1; r < values.length; r++) {
+        const rt = String(values[r][idxRT] || '').trim();
+        if (!rt || !objetivos[rt]) continue;
+        if (mapa[rt]) continue;
+        mapa[rt] = String(values[r][idxObs] || '').trim();
+      }
+    } catch (e) {
+      console.warn('No se pudieron leer observaciones del archivo ' + id + ': ' + e.message);
+    }
+  });
+
+  return mapa;
+}
+
+function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino) {
+  const filas = Array.isArray(alertasRows) ? alertasRows : [];
+  const f = filtros || {};
+  const total = filas.length;
+
+  const count = { ROJO: 0, NARANJA: 0, AMARILLO: 0 };
+  const porTipo = {};
+  filas.forEach(function(row) {
+    const nivel = String(row.NIVEL || '').toUpperCase();
+    if (count[nivel] !== undefined) count[nivel]++;
+
+    const regla = String(row.REGLA || 'SIN REGLA').trim() || 'SIN REGLA';
+    const tipoKey = nivel + '||' + regla;
+    if (!porTipo[tipoKey]) {
+      porTipo[tipoKey] = {
+        nivel: nivel || 'SIN NIVEL',
+        regla: regla,
+        total: 0,
+        articuladores: {}
+      };
+    }
+    porTipo[tipoKey].total++;
+
+    const articulador = String(row.ARTICULADOR_EMAIL || row.ARTICULADOR || 'ARTICULADOR SIN ASIGNAR').trim() || 'ARTICULADOR SIN ASIGNAR';
+    const gestor = String(row.GESTOR_EMAIL || 'GESTOR SIN ASIGNAR').trim() || 'GESTOR SIN ASIGNAR';
+    if (!porTipo[tipoKey].articuladores[articulador]) {
+      porTipo[tipoKey].articuladores[articulador] = { total: 0, gestores: {} };
+    }
+    porTipo[tipoKey].articuladores[articulador].total++;
+    porTipo[tipoKey].articuladores[articulador].gestores[gestor] = (porTipo[tipoKey].articuladores[articulador].gestores[gestor] || 0) + 1;
+  });
+
+  function colorTipo(nivel) {
+    if (nivel === 'ROJO') return { bg: '#fdecec', border: '#c0392b', text: '#9b1c1c', badge: 'rgba(192,57,43,.12)' };
+    if (nivel === 'NARANJA') return { bg: '#fff4ea', border: '#e67e22', text: '#b45309', badge: 'rgba(230,126,34,.14)' };
+    if (nivel === 'AMARILLO') return { bg: '#fffbea', border: '#f1c40f', text: '#8a6d00', badge: 'rgba(241,196,15,.20)' };
+    return { bg: '#eef2f7', border: '#64748b', text: '#334155', badge: 'rgba(100,116,139,.14)' };
+  }
+
+  const tiposOrdenados = Object.keys(porTipo).sort(function(a, b) {
+    return porTipo[b].total - porTipo[a].total;
+  });
+
+  const tiposHtml = tiposOrdenados.map(function(tipoKey) {
+    const tipo = porTipo[tipoKey];
+    const c = colorTipo(tipo.nivel);
+    const articuladoresOrdenados = Object.keys(tipo.articuladores).sort(function(a, b) {
+      return tipo.articuladores[b].total - tipo.articuladores[a].total;
+    });
+
+    const articuladoresHtml = articuladoresOrdenados.map(function(articulador) {
+      const dataArt = tipo.articuladores[articulador];
+      const gestoresRows = Object.keys(dataArt.gestores).sort(function(a, b) {
+        return dataArt.gestores[b] - dataArt.gestores[a];
+      }).map(function(gestor) {
+        return '<tr><td style="padding:6px 8px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(gestor) + '</td><td style="padding:6px 8px;border:1px solid #d9e2ec;text-align:right;font-weight:600;">' + dataArt.gestores[gestor] + '</td></tr>';
+      }).join('');
+
+      return [
+        '<div style="margin-top:10px;border:1px solid #dde6ef;border-radius:8px;overflow:hidden;background:#fff;">',
+        '<div style="padding:8px 10px;background:#f8fafc;color:#1f3a5f;font-weight:700;">',
+        '👤 Articulador: ' + _escapeHtmlAlertaEmail(articulador) + ' <span style="color:#52606d;">(' + dataArt.total + ')</span>',
+        '</div>',
+        '<table style="border-collapse:collapse;width:100%;font-size:12px;">',
+        '<thead><tr><th style="padding:6px 8px;border:1px solid #d9e2ec;background:#f1f5f9;text-align:left;">Gestor</th><th style="padding:6px 8px;border:1px solid #d9e2ec;background:#f1f5f9;text-align:right;">Cantidad</th></tr></thead>',
+        '<tbody>', gestoresRows, '</tbody>',
+        '</table>',
+        '</div>'
+      ].join('');
+    }).join('');
+
+    return [
+      '<div style="margin-top:14px;border:1px solid ' + c.border + ';border-radius:10px;overflow:hidden;background:' + c.bg + ';">',
+      '<div style="padding:10px 12px;border-bottom:1px solid ' + c.border + ';display:flex;justify-content:space-between;align-items:center;gap:12px;">',
+      '<div style="color:' + c.text + ';font-weight:800;">',
+      '🔔 ' + _escapeHtmlAlertaEmail(tipo.regla),
+      '</div>',
+      '<div style="background:' + c.badge + ';color:' + c.text + ';padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700;">',
+      _escapeHtmlAlertaEmail(tipo.nivel) + ' · ' + tipo.total,
+      '</div>',
+      '</div>',
+      '<div style="padding:10px 12px;">',
+      articuladoresHtml,
+      '</div>'
+    ].join('');
+  }).join('');
+
+  const lblNivel = (!f.nivel || f.nivel === 'ALL') ? 'Todos' : f.nivel;
+  const lblRegla = (!f.regla || f.regla === 'ALL') ? 'Todas' : f.regla;
+  const lblProyecto = (!f.proyecto || f.proyecto === 'ALL') ? 'Todos' : f.proyecto;
+  const lblArt = (!f.articulador || f.articulador === 'ALL') ? 'Todos' : f.articulador;
+
+  return [
+    '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;max-width:920px;margin:0 auto;">',
+    '<div style="background:linear-gradient(135deg,#1f3a5f,#0f2745);padding:16px 18px;border-radius:12px;color:#fff;">',
+    '<h2 style="margin:0;font-size:22px;">Informe de Alertas Tempranas</h2>',
+    '<div style="margin-top:6px;font-size:13px;opacity:.92;">Destinatario: <b>' + _escapeHtmlAlertaEmail(etiquetaDestino) + '</b></div>',
+    '</div>',
+    '<table style="border-collapse:collapse;width:100%;margin-top:12px;font-size:13px;background:#fff;border:1px solid #d9e2ec;border-radius:8px;overflow:hidden;">',
+    '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Nivel</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblNivel) + '</td></tr>',
+    '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Regla</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblRegla) + '</td></tr>',
+    '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Proyecto</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblProyecto) + '</td></tr>',
+    '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Articulador</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblArt) + '</td></tr>',
+    '</table>',
+    '<div style="margin-top:12px;padding:10px 12px;border:1px solid #d9e2ec;background:#f8fafc;border-radius:8px;">',
+    '<b>Total alertas:</b> ' + total + ' &nbsp;|&nbsp; <b style="color:#9b1c1c;">ROJO:</b> ' + count.ROJO + ' &nbsp;|&nbsp; <b style="color:#b45309;">NARANJA:</b> ' + count.NARANJA + ' &nbsp;|&nbsp; <b style="color:#8a6d00;">AMARILLO:</b> ' + count.AMARILLO,
+    '</div>',
+    '<h3 style="margin:16px 0 8px 0;color:#1f3a5f;">Agrupación por tipo de alerta → articulador → gestor</h3>',
+    tiposHtml,
+    '<p style="margin-top:14px;color:#52606d;">Se adjunta archivo tabular con cuadrícula y columna OBSERVACIONES.</p>',
+    '</div>'
+  ].join('');
+}
+
+function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
   try {
+    const config = (emailDestinoOrConfig && typeof emailDestinoOrConfig === 'object' && !Array.isArray(emailDestinoOrConfig))
+      ? emailDestinoOrConfig
+      : {
+          modoEnvio: 'EMAIL_UNICO',
+          emailDestino: emailDestinoOrConfig,
+          filtros: filtrosLegacy || {},
+          ccEmails: '',
+          incluirArticuladorEnCopia: false,
+          correoRespaldo: ''
+        };
+
+    const filtros = config.filtros || {};
     const fileId = getConfig('DATA_FILES.PRINCIPAL');
     const ss = SpreadsheetApp.openById(fileId);
-    const hoja = ss.getSheetByName("ALERTAS_ACTIVAS");
-    
-    if (!hoja) throw new Error("Hoja ALERTAS_ACTIVAS no encontrada. Ejecuta el motor primero.");
+    const hoja = ss.getSheetByName('ALERTAS_ACTIVAS');
+    if (!hoja) throw new Error('Hoja ALERTAS_ACTIVAS no encontrada. Ejecuta el motor primero.');
 
     const datos = hoja.getDataRange().getValues();
-    if (datos.length < 2) return { success: false, error: "No hay alertas activas para reportar." };
+    if (datos.length < 2) return { success: false, error: 'No hay alertas activas para reportar.' };
 
-    const headers = datos[0];
-    let filas = datos.slice(1);
+    const headers = datos[0].map(function(h) { return String(h || '').trim(); });
+    const idx = {};
+    headers.forEach(function(h, i) { idx[String(h || '').toUpperCase().trim()] = i; });
 
-    // 1. APLICAR FILTROS DESDE LA INTERFAZ
-    if (filtros) {
-      filas = filas.filter(f => {
-        let ok = true;
-        // f[1]=NIVEL, f[3]=PROYECTO, f[4]=ARTICULADOR, f[6]=REGLA
-        if (filtros.nivel && filtros.nivel !== 'ALL') ok = ok && (f[1] === filtros.nivel);
-        if (filtros.regla && filtros.regla !== 'ALL') ok = ok && (f[6] === filtros.regla);
-        if (filtros.proyecto && filtros.proyecto !== 'ALL') ok = ok && (f[3] === filtros.proyecto);
-        if (filtros.articulador && filtros.articulador !== 'ALL') ok = ok && (f[4] === filtros.articulador);
-        return ok;
-      });
+    let proyectosVisibles = { todos: true, proyectos: [], excluidos: [] };
+    try {
+      const gestorFiltro = new GestorFiltroMatriz();
+      proyectosVisibles = gestorFiltro.obtenerProyectosVisibles() || proyectosVisibles;
+    } catch (filtroError) {
+      console.warn('No se pudo resolver filtro matriz en procesarReporteAlertas: ' + filtroError.message);
     }
 
-    if (filas.length === 0) return { success: false, error: "No hay alertas que coincidan con los filtros actuales." };
+    let filas = datos.slice(1).filter(function(f) {
+      const nivel = String(f[idx['NIVEL']] || '').trim();
+      const proyecto = String(f[idx['PROYECTO']] || '').trim();
+      const articulador = String(f[idx['ARTICULADOR']] || '').trim();
+      const regla = String(f[idx['REGLA']] || '').trim();
 
-    // 2. CALCULAR MÉTRICAS PARA EL INFORME DE CORREO
-    let countRojo = 0, countNaranja = 0, countAmarillo = 0;
-    filas.forEach(f => {
-        if (f[1] === 'ROJO') countRojo++;
-        else if (f[1] === 'NARANJA') countNaranja++;
-        else if (f[1] === 'AMARILLO') countAmarillo++;
+      if (proyectosVisibles && !proyectosVisibles.todos) {
+        if (proyectosVisibles.proyectos && proyectosVisibles.proyectos.length > 0 && proyectosVisibles.proyectos.indexOf(proyecto) < 0) return false;
+        if (proyectosVisibles.excluidos && proyectosVisibles.excluidos.length > 0 && proyectosVisibles.excluidos.indexOf(proyecto) >= 0) return false;
+      }
+
+      if (filtros.nivel && filtros.nivel !== 'ALL' && nivel !== filtros.nivel) return false;
+      if (filtros.regla && filtros.regla !== 'ALL' && regla !== filtros.regla) return false;
+      if (filtros.proyecto && filtros.proyecto !== 'ALL' && proyecto !== filtros.proyecto) return false;
+      if (filtros.articulador && filtros.articulador !== 'ALL' && articulador !== filtros.articulador) return false;
+      return true;
     });
 
-    // 3. GENERAR ARCHIVO EN MEMORIA (CSV) - evita crear archivos temporales en Drive
-    function escapeCsv(val) {
-      if (val === null || val === undefined) return '';
-      const s = String(val);
-      if (s.indexOf('"') >= 0 || s.indexOf(',') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
+    if (filas.length === 0) return { success: false, error: 'No hay alertas que coincidan con los filtros actuales.' };
+
+    const rtObjetivo = {};
+    filas.forEach(function(f) { rtObjetivo[String(f[idx['RT']] || '').trim()] = true; });
+    const observacionesRT = _obtenerObservacionesPorRT(rtObjetivo);
+
+    const filasObj = filas.map(function(f) {
+      const rt = String(f[idx['RT']] || '').trim();
+      return {
+        TIMESTAMP: f[idx['TIMESTAMP']] || '',
+        NIVEL: f[idx['NIVEL']] || '',
+        RT: rt,
+        PROYECTO: f[idx['PROYECTO']] || '',
+        ARTICULADOR: f[idx['ARTICULADOR']] || '',
+        ARTICULADOR_EMAIL: f[idx['ARTICULADOR_EMAIL']] || '',
+        GESTOR_EMAIL: f[idx['GESTOR_EMAIL']] || '',
+        FASE: f[idx['FASE']] || '',
+        REGLA: f[idx['REGLA']] || '',
+        'DIAS RESTANTES': f[idx['DIAS RESTANTES']] || '',
+        MENSAJE: f[idx['MENSAJE']] || '',
+        'ESTADO PREDIAL ACTUAL': f[idx['ESTADO PREDIAL ACTUAL']] || '',
+        OBSERVACIONES: observacionesRT[rt] || ''
+      };
+    });
+
+    const modoEnvio = String(config.modoEnvio || 'EMAIL_UNICO').toUpperCase();
+    const ccExtras = _normalizarListaCorreos(config.ccEmails || '').filter(_esCorreoValidoAlertas);
+    const incluirArticuladorEnCopia = config.incluirArticuladorEnCopia !== false;
+    const correoRespaldo = String(config.correoRespaldo || '').trim().toLowerCase();
+    const emailUnico = String(config.emailDestino || '').trim().toLowerCase();
+    const hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+
+    if (modoEnvio === 'GESTOR_Y_ARTICULADOR') {
+      const grupos = {};
+      filasObj.forEach(function(row) {
+        const gestor = String(row.GESTOR_EMAIL || '').trim().toLowerCase();
+        const key = _esCorreoValidoAlertas(gestor) ? gestor : '__GESTOR_SIN_ASIGNAR__';
+        if (!grupos[key]) grupos[key] = [];
+        grupos[key].push(row);
+      });
+
+      const enviados = [];
+      const omitidos = [];
+
+      Object.keys(grupos).forEach(function(key) {
+        const groupRows = grupos[key];
+        const destinatario = (key !== '__GESTOR_SIN_ASIGNAR__')
+          ? key
+          : (_esCorreoValidoAlertas(correoRespaldo) ? correoRespaldo : emailUnico);
+
+        if (!_esCorreoValidoAlertas(destinatario)) {
+          omitidos.push({ gestor: key, motivo: 'Sin correo destino válido' });
+          return;
+        }
+
+        const ccSet = {};
+        ccExtras.forEach(function(c) { ccSet[c] = true; });
+        if (incluirArticuladorEnCopia) {
+          groupRows.forEach(function(r) {
+            const art = String(r.ARTICULADOR_EMAIL || '').trim().toLowerCase();
+            if (_esCorreoValidoAlertas(art) && art !== destinatario) ccSet[art] = true;
+          });
+        }
+        const ccList = Object.keys(ccSet);
+        const ccStr = ccList.length ? ccList.join(',') : undefined;
+        const etiquetaGestor = (key === '__GESTOR_SIN_ASIGNAR__') ? 'GESTOR SIN ASIGNAR' : key;
+        const nombreBase = 'Reporte_Alertas_' + etiquetaGestor.replace(/[^\w.-]+/g, '_') + '_' + hoy;
+        const attachment = _buildAlertasEmailAttachmentGrid(groupRows, nombreBase);
+        const htmlBody = _buildResumenHtmlAgrupado(groupRows, filtros, etiquetaGestor);
+
+        MailApp.sendEmail({
+          to: destinatario,
+          cc: ccStr,
+          subject: '📊 Alertas Tempranas - ' + etiquetaGestor + ' [' + hoy + ']',
+          htmlBody: htmlBody,
+          attachments: [attachment]
+        });
+
+        enviados.push({ to: destinatario, cc: ccList, gestor: etiquetaGestor, total: groupRows.length });
+      });
+
+      return {
+        success: enviados.length > 0,
+        message: 'Envíos por gestor completados: ' + enviados.length + '. Omitidos: ' + omitidos.length + '.',
+        enviados: enviados,
+        omitidos: omitidos
+      };
     }
 
-    // Encabezado CSV
-    const csvRows = [];
-    csvRows.push(headers.map(h => escapeCsv(h)).join(','));
-
-    // Filas
-    for (let i = 0; i < filas.length; i++) {
-      const row = filas[i];
-      const rowEsc = row.map(c => escapeCsv(c));
-      csvRows.push(rowEsc.join(','));
+    if (!_esCorreoValidoAlertas(emailUnico)) {
+      return { success: false, error: 'Debe indicar un correo de destino válido.' };
     }
 
-    const csvContent = csvRows.join('\r\n');
-    const fileName = 'Reporte_Alertas_GP_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd') + '.csv';
-    const blob = Utilities.newBlob(csvContent, 'text/csv', fileName);
-
-    // 5. CONSTRUIR EL INFORME HTML PARA EL CORREO
-    // Formateamos las etiquetas de los filtros para que se vean bonitas
-    const lblNivel = (!filtros || filtros.nivel === 'ALL') ? 'Todas las alertas' : filtros.nivel;
-    const lblProyecto = (!filtros || filtros.proyecto === 'ALL') ? 'Todos los proyectos' : filtros.proyecto;
-    const lblRegla = (!filtros || filtros.regla === 'ALL') ? 'Todas las reglas' : filtros.regla;
-    const lblArtic = (!filtros || filtros.articulador === 'ALL') ? 'Todos los articuladores' : filtros.articulador;
-
-    const htmlBody = `
-      <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; max-width: 650px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-          
-          <div style="background: linear-gradient(135deg, #2c3e50 0%, #1a252f 100%); padding: 25px 20px; text-align: center; border-bottom: 4px solid #3498db;">
-              <h2 style="margin: 0; color: #ffffff; font-size: 22px; letter-spacing: 1px;">INFORME DE SEGUIMIENTO</h2>
-              <p style="margin: 5px 0 0 0; color: #aeb6bf; font-size: 14px;">Módulo de Alertas Tempranas - Gestión Predial</p>
-          </div>
-          
-          <div style="padding: 30px 25px; background-color: #ffffff;">
-              <p style="font-size: 15px; line-height: 1.6;">Cordial saludo,</p>
-              <p style="font-size: 15px; line-height: 1.6;">A continuación, se presenta el resumen ejecutivo del estado actual de las alertas tempranas generadas por el Motor de Reglas, de acuerdo con los parámetros seleccionados en el sistema.</p>
-              
-              <div style="background-color: #f8f9fa; padding: 15px 20px; border-radius: 6px; border-left: 4px solid #3498db; margin: 25px 0;">
-                  <h4 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 16px; text-transform: uppercase;">Parámetros del Reporte</h4>
-                  <table style="width: 100%; font-size: 14px;">
-                      <tr><td style="padding: 4px 0; width: 35%;"><strong>Proyecto:</strong></td><td style="color: #555;">${lblProyecto}</td></tr>
-                      <tr><td style="padding: 4px 0;"><strong>Articulador:</strong></td><td style="color: #555;">${lblArtic}</td></tr>
-                      <tr><td style="padding: 4px 0;"><strong>Nivel Riesgo:</strong></td><td style="color: #555;">${lblNivel}</td></tr>
-                      <tr><td style="padding: 4px 0;"><strong>Regla Evaluada:</strong></td><td style="color: #555;">${lblRegla}</td></tr>
-                  </table>
-              </div>
-
-              <h4 style="color: #2c3e50; font-size: 16px; margin-bottom: 15px; border-bottom: 2px solid #ecf0f1; padding-bottom: 8px;">Consolidado de Alertas Detectadas: <span style="color:#3498db; font-size:18px;">${filas.length}</span></h4>
-              
-              <table style="width: 100%; border-collapse: separate; border-spacing: 0 8px; margin-bottom: 25px;">
-                  <tr>
-                      <td style="background-color: #fce8e6; border-left: 5px solid #c0392b; padding: 12px 15px; border-radius: 4px 0 0 4px; width: 80%;">
-                          <strong style="color: #c0392b;">🔴 CRÍTICAS (Incumplimiento Normativo / Bloqueo)</strong>
-                      </td>
-                      <td style="background-color: #fce8e6; padding: 12px 15px; border-radius: 0 4px 4px 0; text-align: right; color: #c0392b;">
-                          <strong style="font-size: 18px;">${countRojo}</strong>
-                      </td>
-                  </tr>
-                  <tr>
-                      <td style="background-color: #fdf2e9; border-left: 5px solid #e67e22; padding: 12px 15px; border-radius: 4px 0 0 4px;">
-                          <strong style="color: #d35400;">🟠 RIESGO (Vencimiento Urgente)</strong>
-                      </td>
-                      <td style="background-color: #fdf2e9; padding: 12px 15px; border-radius: 0 4px 4px 0; text-align: right; color: #d35400;">
-                          <strong style="font-size: 18px;">${countNaranja}</strong>
-                      </td>
-                  </tr>
-                  <tr>
-                      <td style="background-color: #fef9e7; border-left: 5px solid #f1c40f; padding: 12px 15px; border-radius: 4px 0 0 4px;">
-                          <strong style="color: #b48600;">🟡 PREVENTIVAS (En Tiempo)</strong>
-                      </td>
-                      <td style="background-color: #fef9e7; padding: 12px 15px; border-radius: 0 4px 4px 0; text-align: right; color: #b48600;">
-                          <strong style="font-size: 18px;">${countAmarillo}</strong>
-                      </td>
-                  </tr>
-              </table>
-
-              <p style="font-size: 14px; line-height: 1.6; color: #555; background-color: #e8f4f8; padding: 12px; border-radius: 4px;">
-                  📌 <b>Documento Anexo:</b> Se adjunta a este correo el archivo Excel (.xlsx) con la base de datos detallada de los ${filas.length} predios reportados para su revisión y respectiva gestión jurídica/técnica.
-              </p>
-          </div>
-          
-          <div style="background-color: #f1f3f5; padding: 20px; text-align: center; font-size: 12px; color: #7f8c8d; border-top: 1px solid #e0e0e0;">
-              <p style="margin: 0 0 5px 0;"><strong>Sistema Integral Enterprise - Gestión Predial IDU</strong></p>
-              <p style="margin: 0;">Generado de forma automática por el Motor Dinámico de Reglas.</p>
-              <p style="margin: 5px 0 0 0;">Solicitado por: ${filtros.usuario || 'Ejecución Automática (Trigger)'}</p>
-          </div>
-      </div>
-    `;
+    const fileNameBase = 'Reporte_Alertas_GP_' + hoy;
+    const attachment = _buildAlertasEmailAttachmentGrid(filasObj, fileNameBase);
+    const htmlBody = _buildResumenHtmlAgrupado(filasObj, filtros, emailUnico);
+    const ccStr = ccExtras.length ? ccExtras.join(',') : undefined;
 
     MailApp.sendEmail({
-      to: emailDestino,
-      subject: `📊 Informe de Alertas Tempranas [${lblProyecto}] - Gestión Predial`,
+      to: emailUnico,
+      cc: ccStr,
+      subject: '📊 Informe de Alertas Tempranas [' + hoy + ']',
       htmlBody: htmlBody,
-      attachments: [blob]
+      attachments: [attachment]
     });
-    
-    return { success: true, message: "El informe ha sido enviado exitosamente al correo: " + emailDestino };
 
+    return {
+      success: true,
+      message: 'Informe enviado exitosamente a ' + emailUnico + '.',
+      totalAlertas: filasObj.length
+    };
   } catch (e) {
-    console.error("Error procesando reporte Excel/Correo: " + e.message);
+    console.error('Error procesando reporte Excel/Correo: ' + e.message);
     return { success: false, error: e.message };
   }
 }

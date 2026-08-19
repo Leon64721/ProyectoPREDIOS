@@ -153,6 +153,53 @@ function invalidateDataCache() {
   }
 }
 
+function _bumpPacCacheVersion(cache) {
+  try {
+    cache.put(CACHE_KEY_PAC_VERSION, String(Date.now()), 21600);
+  } catch (e) {
+    console.warn('_bumpPacCacheVersion warning: ' + e.message);
+  }
+}
+
+function _clearCacheStoreSheet() {
+  try {
+    var fileId = getConfig('DATA_FILES.PRINCIPAL');
+    var ss = SpreadsheetApp.openById(fileId);
+    var store = ss.getSheetByName('CacheStore');
+    if (!store) return;
+
+    var lastRow = store.getLastRow();
+    var lastCol = store.getLastColumn();
+    if (lastRow <= 1 || lastCol <= 0) return;
+    store.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+  } catch (e) {
+    console.warn('_clearCacheStoreSheet warning: ' + e.message);
+  }
+}
+
+/**
+ * Purga manual completa para el botón "Recargar" del cliente:
+ * - cache del dashboard (CacheService chunks/meta)
+ * - versión de cache PAC (invalida todas las llaves pac_v*)
+ * - materializaciones en hoja CacheStore (searchHints y similares)
+ */
+function invalidateAllCaches() {
+  try {
+    invalidateDataCache();
+    var cache = CacheService.getScriptCache();
+    _bumpPacCacheVersion(cache);
+    _clearCacheStoreSheet();
+    return {
+      success: true,
+      message: 'Caches de servidor invalidados',
+      timestamp: new Date().toISOString()
+    };
+  } catch (e) {
+    console.error('invalidateAllCaches error: ' + e.message);
+    return { success: false, error: e.message };
+  }
+}
+
 /** Helper: obtener email del usuario activo con fallback */
 function getCurrentUserEmail() {
   try {
