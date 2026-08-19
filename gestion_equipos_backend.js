@@ -223,6 +223,95 @@ function getUsuariosParaAsignacionEquipos() {
 }
 
 /**
+ * ✅ [CONC-FE-17]: alta rápida de funcionario in-line desde el modal de Asignación
+ * Granular ("+ Crear Funcionario") — evita que el usuario tenga que salir a editar
+ * USUARIOS manualmente cuando necesita asignar a alguien que aún no está en el catálogo.
+ *
+ * Mapea la nueva fila por NOMBRE DE COLUMNA leído en vivo de la hoja (findColumnIndex()),
+ * NUNCA por posición fija — a diferencia de un array literal `[email, nombre, 'SI', ...]`,
+ * esto no depende de que el orden real de columnas de USUARIOS coincida con ningún supuesto
+ * hardcodeado (mismo principio que el resto del proyecto, CLAUDE.md: "evitar IDs hardcodeadas,
+ * usar CONFIG"). Si la hoja tiene alguna columna de fecha de alta (cualquier header que
+ * contenga "FECHA"), se rellena con la fecha actual; si no existe, se omite sin error.
+ */
+function crearUsuarioRapidoBackend(nombre, email, rol, componente) {
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (eLock) {
+    return { success: false, error: 'No se pudo adquirir el lock: ' + eLock.message };
+  }
+
+  try {
+    const nombreLimpio = String(nombre || '').trim();
+    const emailLimpio = String(email || '').trim().toLowerCase();
+    const rolLimpio = String(rol || '').trim();
+    const componenteLimpio = String(componente || '').trim().toUpperCase();
+
+    if (!nombreLimpio) throw new Error('El nombre es obligatorio.');
+    if (!/^[^\s@]+@idu\.gov\.co$/i.test(emailLimpio)) {
+      throw new Error('El email debe pertenecer al dominio @idu.gov.co.');
+    }
+
+    const rolesValidos = [getConfig('ROLES.ARTICULADOR'), getConfig('ROLES.GESTOR')];
+    if (rolesValidos.indexOf(rolLimpio) < 0) {
+      throw new Error('Rol inválido: "' + rolLimpio + '". Debe ser ' + rolesValidos.join(' o ') + '.');
+    }
+    const componentesValidos = ['DTDP', 'STAP'];
+    if (componentesValidos.indexOf(componenteLimpio) < 0) {
+      throw new Error('Componente inválido: "' + componenteLimpio + '". Debe ser ' + componentesValidos.join(' o ') + '.');
+    }
+
+    const usuariosFileId = getConfig('DATA_FILES.USUARIOS');
+    if (!usuariosFileId) throw new Error('CONFIG.DATA_FILES.USUARIOS no está configurado.');
+
+    const gestorUsuarios = new GestorDatos(usuariosFileId);
+    const sheetName = getConfig('SHEETS.USUARIOS', 'USUARIOS');
+    const { headers, rows } = gestorUsuarios.leerDatos(sheetName);
+    if (!headers.length) throw new Error('No se pudo leer la hoja USUARIOS.');
+
+    const yaExiste = rows.some(function(r) {
+      return String(r['EMAIL'] || '').trim().toLowerCase() === emailLimpio;
+    });
+    if (yaExiste) throw new Error('Ya existe un usuario con ese email en USUARIOS: ' + emailLimpio);
+
+    const idxEmail = findColumnIndex(headers, 'EMAIL');
+    const idxNombre = findColumnIndex(headers, 'NOMBRE');
+    const idxActivo = findColumnIndex(headers, 'ACTIVO');
+    const idxComponente = findColumnIndex(headers, 'COMPONENTE');
+    const idxRol = findColumnIndex(headers, 'ROL');
+    const idxFecha = findColumnIndex(headers, 'FECHA');
+
+    if (idxEmail < 0 || idxNombre < 0 || idxActivo < 0 || idxComponente < 0 || idxRol < 0) {
+      throw new Error('La hoja USUARIOS no tiene el esquema esperado (EMAIL/NOMBRE/ACTIVO/COMPONENTE/ROL).');
+    }
+
+    const fila = new Array(headers.length).fill('');
+    fila[idxEmail] = emailLimpio;
+    fila[idxNombre] = nombreLimpio;
+    fila[idxActivo] = 'SI';
+    fila[idxComponente] = componenteLimpio;
+    fila[idxRol] = rolLimpio;
+    if (idxFecha >= 0) fila[idxFecha] = new Date();
+
+    const sheet = gestorUsuarios.ss.getSheetByName(sheetName);
+    sheet.appendRow(fila);
+
+    _invalidarCacheDatosSiExiste();
+
+    return {
+      success: true,
+      usuario: { email: emailLimpio, nombre: nombreLimpio, componente: componenteLimpio, rol: rolLimpio }
+    };
+  } catch (e) {
+    console.error('❌ Error en crearUsuarioRapidoBackend: ' + e.message);
+    return { success: false, error: e.message };
+  } finally {
+    try { lock.releaseLock(); } catch (er) {}
+  }
+}
+
+/**
  * ✅ [CONC-FE-14]: mapa de co-ocurrencia real Articulador -> [Gestores] — quién ha trabajado
  * efectivamente con quién, según la matriz fusionada (Datos + overlay ASIGNACIONES_EQUIPOS,
  * vía _leerFilasVisiblesRBACEquipos()/_fusionarAsignacionesConMatriz()). Es HISTÓRICO Y
@@ -480,8 +569,16 @@ function getIndiceInversoRTs() {
     const filas = _leerFilasVisiblesRBACEquipos();
     const indice = {};
 
+    // ✅ [CONC-FE-17]: coacciona explícitamente la clave a texto limpio — aunque
+    // _leerFilasVisiblesRBACEquipos() ya normaliza f.rt vía String().trim() internamente,
+    // este endpoint es el punto de contrato con el cliente (window.mapaInversoRTs), así que
+    // garantiza el tipo aquí también en vez de asumirlo por transitividad. Cubre tanto RT
+    // guardados como número entero en Datos (Sheets los entrega como Number) como los
+    // guardados como texto — ambos terminan siendo la misma clave de string.
     filas.forEach(function(f) {
-      indice[f.rt] = {
+      const rtKey = String(f.rt || '').trim();
+      if (!rtKey) return;
+      indice[rtKey] = {
         proyecto: f.proyecto,
         tramo: f.tramo,
         articulador: f.articuladorEsEmail ? f.articulador : '',

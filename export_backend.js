@@ -192,6 +192,12 @@
    * TRAMO): el nombre de tramo por sí solo es ambiguo entre proyectos distintos (mismo
    * problema resuelto con clave compuesta en getProyectosYListaUsuarios(), CONC-FE-14) — se
    * pasa el proyecto actualmente seleccionado en el cliente para desambiguar.
+   *
+   * ✅ [CONC-FE-17]: contrato de retorno con nombres explícitos `csvString`/`filename` (antes
+   * `csv`/`totalFilas` sin nombre de archivo) — el cliente ya no arma el nombre del archivo
+   * por su cuenta a partir de idTarget, el servidor lo genera con timestamp para que dos
+   * descargas seguidas nunca choquen de nombre. try/catch ya envolvía toda la función desde
+   * CONC-FE-15; se mantiene, solo cambia la forma del objeto de éxito.
    */
   function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {
     try {
@@ -228,11 +234,16 @@
         };
       });
 
-      const csv = buildCsvPlano(dataset, columnas, EXPORT_ENGINE.separator);
-      return { success: true, csv: csv, totalFilas: dataset.length };
+      const csvString = buildCsvPlano(dataset, columnas, EXPORT_ENGINE.separator);
+
+      const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+      const alcance = String(idTarget || 'todos').replace(/[^a-zA-Z0-9_-]+/g, '_');
+      const filename = 'plantilla_asignacion_' + alcance + '_' + timestamp + '.csv';
+
+      return { success: true, csvString: csvString, filename: filename, totalFilas: dataset.length };
     } catch (e) {
       console.error('❌ Error en generarPlantillaAsignacionCSV: ' + e.message);
-      return { success: false, error: e.message, csv: '', totalFilas: 0 };
+      return { success: false, error: e.message };
     }
   }
 

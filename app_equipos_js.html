@@ -839,8 +839,12 @@
   // vigente a partir de window.mapaInversoRTs — 0ms, sin round-trip. Un borrador ya
   // pendiente sobre este RT (Draft Mode, CONC-BE-12) gana sobre el valor real del servidor,
   // igual que en cualquier otro punto de entrada al modal.
-  function handleRTSelectionDirecta(rtId) {
-    const rt = String(rtId || '').trim();
+  function handleRTSelectionDirecta(rtInput) {
+    // ✅ [CONC-FE-17]: coerción explícita — la entrada puede llegar como número (click en el
+    // árbol, si algún RT quedó tipado como Number en Datos) o como string (buscador
+    // manual/datalist). String(x).trim() unifica ambos casos a la misma forma de clave que
+    // usa window.mapaInversoRTs (ver getIndiceInversoRTs(), gestion_equipos_backend.js).
+    const rt = String(rtInput || '').trim();
     const datos = (window.mapaInversoRTs || {})[rt];
 
     if (!datos) {
@@ -884,6 +888,26 @@
     _renderInfoAsignacionActual(datos.articulador, datos.gestor, !!draftExistente);
   }
   window.handleRTSelectionDirecta = handleRTSelectionDirecta;
+
+  // ✅ [CONC-FE-17]: conmutador "Mostrar todos los funcionarios disponibles" — para el caso
+  // legítimo de un handover cruzado de equipo/componente donde la sugerencia por co-
+  // ocurrencia/componente estorba en vez de ayudar. Mientras está activo, TODA repoblación
+  // del select de Gestor (incluida la que dispara handleArticuladorChangeInModal al cambiar
+  // de Articulador) ignora el filtro y muestra el catálogo completo.
+  let mostrarTodosUsuariosActivo = false;
+
+  function toggleMostrarTodosUsuarios(mostrarTodos) {
+    mostrarTodosUsuariosActivo = !!mostrarTodos;
+    const articuladorActual = document.getElementById('asignacionEmailArticulador').value;
+    if (mostrarTodosUsuariosActivo) {
+      _poblarSelectGestorAsignacion(null); // sin filtro = catálogo completo de gestores
+    } else if (articuladorActual) {
+      _poblarSelectGestorAsignacion(articuladorActual); // vuelve a la cascada normal
+    } else {
+      _poblarSelectGestorAsignacion(null);
+    }
+  }
+  window.toggleMostrarTodosUsuarios = toggleMostrarTodosUsuarios;
 
   function _poblarSelectArticuladorAsignacion() {
     const select = document.getElementById('asignacionEmailArticulador');
@@ -959,8 +983,13 @@
   }
 
   // Cascada: al elegir Articulador, el select de Gestor se reordena por relevancia (co-
-  // ocurrencia real > mismo componente > el resto).
+  // ocurrencia real > mismo componente > el resto) — salvo que el conmutador "Mostrar todos
+  // los funcionarios disponibles" esté activo, en cuyo caso se ignora cualquier filtro.
   function handleArticuladorChangeInModal(articuladorEmail) {
+    if (mostrarTodosUsuariosActivo) {
+      _poblarSelectGestorAsignacion(null);
+      return;
+    }
     _poblarSelectGestorAsignacion(articuladorEmail || null);
   }
   window.handleArticuladorChangeInModal = handleArticuladorChangeInModal;
@@ -998,6 +1027,16 @@
     document.getElementById('asignacionEmailGestor').value = '';
     document.getElementById('asignacionBuscadorRT').value = '';
     document.getElementById('infoAsignacionActual').innerHTML = '';
+
+    // ✅ [CONC-FE-17]: arranque en limpio del conmutador "mostrar todos" y del submódulo de
+    // alta rápida — no deben arrastrar el estado de una apertura anterior del modal.
+    mostrarTodosUsuariosActivo = false;
+    const checkTodos = document.getElementById('checkMostrarTodosUsuarios');
+    if (checkTodos) checkTodos.checked = false;
+    const secCrear = document.getElementById('secCrearUsuarioRapido');
+    if (secCrear && secCrear.classList.contains('show')) {
+      bootstrap.Collapse.getOrCreateInstance(secCrear).hide();
+    }
 
     if (ids.proyecto) {
       document.getElementById('asignacionProyecto').value = ids.proyecto;
@@ -1176,38 +1215,53 @@
   // los cambios en un solo lote bajo un único LockService (asignarEquipoGranularLote(), ya
   // existente desde el Modo Borrador — CONC-BE-12).
   // ═══════════════════════════════════════════════════════════════════
+  // ✅ [CONC-FE-17]: fix de "descarga congelada" — la versión previa solo mostraba un toast
+  // "Generando..." sin ningún indicador bloqueante ni garantía de cierre; si el servidor
+  // tardaba (miles de RTs) o fallaba, la pantalla se sentía "pegada" sin resolución visible.
+  // Ahora usa el loader global (showLoader/hideLoader, mismo patrón que el resto del app) y
+  // AMBOS caminos (éxito y error) lo cierran siempre — nunca queda un spinner sin apagar.
   function handleDescargarPlantillaAsignacion() {
     const proyecto = document.getElementById('exportAsignacionProyecto').value;
     const tramo = document.getElementById('exportAsignacionTramo').value;
     const nivel = tramo ? 'TRAMO' : (proyecto ? 'PROYECTO' : '');
     const idTarget = tramo || proyecto || '';
 
-    if (typeof window.showNotification === 'function') {
-      window.showNotification('Generando', 'Preparando la plantilla CSV...', 'info');
+    if (typeof showLoader === 'function') {
+      showLoader('Generando plantilla CSV...', 'Puede tardar unos segundos si hay muchos RTs.');
     }
 
     google.script.run
-      .withSuccessHandler(function(result) {
-        if (!result || !result.success) {
-          if (typeof window.showNotification === 'function') {
-            window.showNotification('Error', (result && result.error) || 'No fue posible generar la plantilla.', 'danger');
-          }
-          return;
-        }
-        const nombreArchivo = 'plantilla_asignacion_' + (idTarget || 'todos').replace(/[^a-z0-9_-]+/gi, '_') + '.csv';
-        _descargarTextoComoArchivo(result.csv, nombreArchivo);
-        if (typeof window.showNotification === 'function') {
-          window.showNotification('Listo', result.totalFilas + ' fila(s) exportadas a ' + nombreArchivo + '.', 'success');
-        }
-      })
-      .withFailureHandler(function(error) {
-        if (typeof window.showNotification === 'function') {
-          window.showNotification('Error', error.message || String(error), 'danger');
-        }
-      })
+      .withSuccessHandler(onCSVSuccess)
+      .withFailureHandler(onCSVError)
       .generarPlantillaAsignacionCSV(nivel, idTarget, proyecto);
   }
   window.handleDescargarPlantillaAsignacion = handleDescargarPlantillaAsignacion;
+
+  // Contrato de generarPlantillaAsignacionCSV() (CONC-FE-17): { success, csvString,
+  // filename, totalFilas } en éxito, { success:false, error } en fallo — el servidor ya
+  // arma el nombre de archivo (con timestamp), el cliente ya no lo reconstruye.
+  function onCSVSuccess(res) {
+    if (typeof hideLoader === 'function') hideLoader();
+    if (!res || !res.success) {
+      if (typeof window.showNotification === 'function') {
+        window.showNotification('Error', (res && res.error) || 'No fue posible generar la plantilla.', 'danger');
+      }
+      return;
+    }
+    _descargarTextoComoArchivo(res.csvString, res.filename);
+    if (typeof window.showNotification === 'function') {
+      window.showNotification('Listo', (res.totalFilas || 0) + ' fila(s) exportadas a ' + res.filename + '.', 'success');
+    }
+  }
+  window.onCSVSuccess = onCSVSuccess;
+
+  function onCSVError(err) {
+    if (typeof hideLoader === 'function') hideLoader();
+    if (typeof window.showNotification === 'function') {
+      window.showNotification('Error', 'No fue posible generar la plantilla: ' + (err && err.message ? err.message : err), 'danger');
+    }
+  }
+  window.onCSVError = onCSVError;
 
   // BOM (﻿) al inicio del Blob: sin él, Excel en Windows asume ANSI/Latin-1 y corrompe
   // tildes/eñes al abrir un CSV UTF-8 directamente (doble-click) en vez de importarlo.
@@ -1485,5 +1539,95 @@
       .asignarEquipoGranularLote(cambiosArray, typeof CURRENT_USER_EMAIL !== 'undefined' ? CURRENT_USER_EMAIL : 'Sistema');
   }
   window.handleAprobarCambiosCSV = handleAprobarCambiosCSV;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ✅ [CONC-FE-17]: Alta rápida de funcionario in-line — evita que el usuario tenga que
+  // salir del modal a editar USUARIOS manualmente cuando la persona que necesita asignar
+  // aún no existe en el catálogo.
+  // ═══════════════════════════════════════════════════════════════════
+  function abrirSubmodalCrearUsuario() {
+    const sec = document.getElementById('secCrearUsuarioRapido');
+    if (!sec) return;
+    document.getElementById('nuevoUsuarioNombre').value = '';
+    document.getElementById('nuevoUsuarioEmail').value = '';
+    document.getElementById('nuevoUsuarioRol').value = 'Articulador';
+    document.getElementById('nuevoUsuarioComponente').value = 'DTDP';
+    bootstrap.Collapse.getOrCreateInstance(sec).show();
+  }
+  window.abrirSubmodalCrearUsuario = abrirSubmodalCrearUsuario;
+
+  function guardarNuevoUsuarioRapido() {
+    const nombre = document.getElementById('nuevoUsuarioNombre').value.trim();
+    const email = document.getElementById('nuevoUsuarioEmail').value.trim();
+    const rol = document.getElementById('nuevoUsuarioRol').value;
+    const componente = document.getElementById('nuevoUsuarioComponente').value;
+
+    if (!nombre) {
+      if (typeof window.showNotification === 'function') window.showNotification('Error', 'El nombre es obligatorio.', 'danger');
+      return;
+    }
+    if (!/^[^\s@]+@idu\.gov\.co$/i.test(email)) {
+      if (typeof window.showNotification === 'function') window.showNotification('Error', 'El email debe pertenecer al dominio @idu.gov.co.', 'danger');
+      return;
+    }
+
+    if (typeof showLoader === 'function') showLoader('Creando funcionario...', 'Un momento por favor.');
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (typeof hideLoader === 'function') hideLoader();
+        if (!result || !result.success) {
+          if (typeof window.showNotification === 'function') {
+            window.showNotification('Error', (result && result.error) || 'No fue posible crear el funcionario.', 'danger');
+          }
+          return;
+        }
+
+        const nuevoUsuario = result.usuario;
+
+        // a) Inserta el nuevo usuario en window.catEstructuraEquipos, en la lista que
+        // corresponda según su rol — sin esto, el resto de esta función repoblaría los
+        // selects contra un catálogo que todavía no lo conoce.
+        if (window.catEstructuraEquipos) {
+          const lista = nuevoUsuario.rol === 'Gestor' ? window.catEstructuraEquipos.gestores : window.catEstructuraEquipos.articuladores;
+          if (Array.isArray(lista)) {
+            lista.push({ email: nuevoUsuario.email, nombre: nuevoUsuario.nombre, componente: nuevoUsuario.componente });
+          }
+        }
+
+        // b) Refresca dinámicamente los desplegables del modal con el catálogo ya actualizado.
+        _poblarSelectArticuladorAsignacion();
+        const articuladorActual = document.getElementById('asignacionEmailArticulador').value;
+        if (mostrarTodosUsuariosActivo) {
+          _poblarSelectGestorAsignacion(null);
+        } else {
+          _poblarSelectGestorAsignacion(articuladorActual || null);
+        }
+
+        // c) Pre-selecciona al funcionario recién creado en el campo correspondiente a su rol.
+        if (nuevoUsuario.rol === 'Gestor') {
+          const selectGestor = document.getElementById('asignacionEmailGestor');
+          const yaDisponible = Array.prototype.some.call(selectGestor.options, function(o) { return o.value === nuevoUsuario.email; });
+          if (!yaDisponible) _poblarSelectGestorAsignacion(null);
+          selectGestor.value = nuevoUsuario.email;
+        } else {
+          document.getElementById('asignacionEmailArticulador').value = nuevoUsuario.email;
+          handleArticuladorChangeInModal(nuevoUsuario.email);
+        }
+
+        bootstrap.Collapse.getOrCreateInstance(document.getElementById('secCrearUsuarioRapido')).hide();
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Funcionario creado', nuevoUsuario.nombre + ' (' + nuevoUsuario.email + ') agregado y preseleccionado.', 'success');
+        }
+      })
+      .withFailureHandler(function(error) {
+        if (typeof hideLoader === 'function') hideLoader();
+        if (typeof window.showNotification === 'function') {
+          window.showNotification('Error', error.message || String(error), 'danger');
+        }
+      })
+      .crearUsuarioRapidoBackend(nombre, email, rol, componente);
+  }
+  window.guardarNuevoUsuarioRapido = guardarNuevoUsuarioRapido;
 })();
 </script>
