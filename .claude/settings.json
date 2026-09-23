@@ -1,4 +1,15 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(clasp pull *)",
+      "Bash(rm -rf _comparacion_produccion)",
+      "Bash(clasp clone *)",
+      "Bash(cd \"E:\\\\PROYECTOS\\\\CLAUDE CODE\\\\CREACIÓN APK\\\\Aplicación de Predios\" && rm -rf _comparacion_produccion && echo \"✓ Carpeta temporal _comparacion_produccion eliminada\" && echo \"\" && echo \"=== VERIFICACIÓN FINAL ===\" && ls _comparacion_produccion 2>&1)",
+      "Bash(xargs -I {} sh -c 'echo \"{}:\"; wc -l {}')",
+      "Bash(xargs grep -l \"LockService\\\\|worktree\\\\|concurrent\")",
+      "Bash(grep -v \"//\")"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

@@ -178,8 +178,9 @@ const CONFIG = {
   },
 
   // ✅ PERMISOS POR ROL — SPRINT5-FASE-A añade Articulador/Gestor
+  // ✅ SPRINT6-FASE-0: agregar ADMIN_SISTEMA, PAC_APROBAR para RBAC server-side
   PERMISOS_POR_ROL: {
-    'Administrador': ['LEER', 'EDITAR', 'ELIMINAR', 'PERMISOS', 'REPORTES'],
+    'Administrador': ['LEER', 'EDITAR', 'ELIMINAR', 'PERMISOS', 'REPORTES', 'ASIGNAR_EQUIPO', 'ADMIN_SISTEMA', 'PAC_APROBAR'],
     'Editor': ['LEER', 'EDITAR', 'REPORTES'],
     'Lector': ['LEER', 'REPORTES'],
     'Articulador': ['LEER', 'EDITAR', 'REPORTES', 'ASIGNAR_EQUIPO'], // alcance recortado a sus proyectos — aplicado en backend, no solo UI
