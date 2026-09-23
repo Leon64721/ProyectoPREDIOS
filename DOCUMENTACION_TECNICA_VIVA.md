@@ -2880,3 +2880,51 @@ con los 5 IDs reales en `filter-strings.txt` (confirmados con `-S` antes de corr
 **Pendiente para Fase 4+:**
 - Monitoreo en producción de logs de DENEGADO (auditoría)
 - Consideración de tasa de bloqueos anormal (detección de ataque)
+
+---
+
+## 39. CIERRE DE SESIÓN — Auditoría RBAC Completada [2026-09-23]
+
+**Estado final de la sesión:**
+
+**Fecha:** 2026-09-23
+**Objetivo alcanzado:** Auditoría y hardening RBAC en 18 funciones críticas
+**Estatus:** ✅ COMPLETADO
+
+**Cambios consolidados en 5 commits (git):**
+1. `6d680de` — Fase 0/1: RBAC core (config.js, permisos.js, guards iniciales)
+2. `7178948` — Fase 2: getUserLogs() identity validation
+3. `1498982` — .claspignore setup (dev files exclude)
+4. `cc208ce` — Fase 3: reportes RBAC (5 funciones)
+5. `5a02fea` — Documentación Fase 3 (DOCUMENTACION_TECNICA_VIVA.md Sección 38)
+
+**Despliegue en producción:**
+- Proyecto Google Apps Script: `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi`
+- URL: https://script.google.com/home/projects/18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi/edit
+- clasp push: 48 archivos sincronizados ✅
+- Status: working tree clean ✅
+
+**Backup en GitHub:**
+- Repositorio: https://github.com/Leon64721/ProyectoPREDIOS
+- Rama: main
+- Commits: 5 de seguridad versionados
+
+**Inventario RBAC final — 18/18 PROTEGIDAS:**
+- 13 directas (guardia propia)
+- 4 indirectas (Defense in Depth)
+- 1 especial (auditoría)
+- 0 pendientes
+
+**Checklist de cierre de sesión — 5/5 completados:**
+1. ✅ git status limpio (working tree clean)
+2. ✅ git commit + push a main
+3. ✅ clasp push exitoso (48 archivos)
+4. ✅ Verificación remota (deleteReport, saveReport en producción)
+5. ✅ DOCUMENTACION_TECNICA_VIVA.md Secciones 35-39 actualizadas
+
+**Pendientes para próxima sesión:**
+- Monitoreo de logs DENEGADO en producción
+- Considerar sincronización de whitelist saveReport() ↔ config.js (deuda técnica baja)
+- Considerar auditoría de éxitos (logAction no solo DENEGADO)
+
+**Sesión cerrada:** 2026-09-23 con protocolos completados.
