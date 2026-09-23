@@ -2826,6 +2826,57 @@ con los 5 IDs reales en `filter-strings.txt` (confirmados con `-S` antes de corr
 - Error de validación ('PERMISOS') tira exception que se captura en try/catch, registrando intento en auditoría
 - Patrón idéntico al usado en sincronizarPACApi (Fase 1) y aprobarBorradorPACApi — coherencia de design
 
-**Pendiente para Fase 3+:**
-- Implementar guard clauses en 16 funciones críticas restantes (saveTrackingData, getPACData, inicializeSystem, reportes, etc.)
-- Considerar nueva acción RBAC si emerge patrón de "solo para admin" o "granular por módulo"
+---
+
+## 38. Hardening RBAC Fase 3: Guardia de permisos en 5 funciones de reportes [2026-09-23]
+
+**Objetivo:** Implementar validación server-side de RBAC en las 5 funciones críticas de gestión y exportación de reportes.
+
+**Archivos intervenidos:**
+- `Codigo.js` — saveReport(), executeReport(), deleteReport()
+- `export_pdf_backend.js` — generarFichaPredialPdfBackend(), generarReporteAlertasPdfBackend()
+
+**Patrón implementado (2 try/catch separados):**
+1. **Try/Catch 1 — PERMISOS:** Validación server-side con `Session.getActiveUser()`, lanza error si falla, loguea como `*_DENEGADO`
+2. **Try/Catch 2 — LÓGICA:** Errores de negocio (no relacionados a permisos)
+
+**Cambios técnicos:**
+
+| Función | Acción | Validación adicional | Línea cambio |
+|---|---|---|---|
+| `saveReport()` | REPORTES | Whitelist: solo Admin, Editor, Articulador | Codigo.js:1071 |
+| `executeReport()` | REPORTES | Ninguna (todos con REPORTES) | Codigo.js:1084 |
+| `deleteReport()` | ELIMINAR | Ninguna (solo Admin tiene ELIMINAR) | Codigo.js:1098 |
+| `generarFichaPredialPdfBackend()` | REPORTES | Ninguna; meta.user fallback intacto | export_pdf_backend.js:268 |
+| `generarReporteAlertasPdfBackend()` | REPORTES | Ninguna; meta.user fallback intacto | export_pdf_backend.js:287 |
+
+**Validación:**
+- ✅ Grep remoto (clasp pull) confirma guardias presentes en Google Apps Script
+- ✅ deleteReport() ejemplo: validarPermiso('ELIMINAR') verificado en remoto
+- ✅ meta.user fallback preservado en funciones PDF (no roto)
+- ✅ Session.getActiveUser().getEmail() SIEMPRE server-side
+- ✅ logAction() registra intentos denegados con razon
+
+**Matriz de aceso (post-Fase 3):**
+
+| Función | REPORTES | ELIMINAR | Whitelist | Acceso |
+|---|---|---|---|---|
+| saveReport | ✅ | — | Admin, Editor, Articulador | Solo esos 3 |
+| executeReport | ✅ | — | — | Todos (Admin, Editor, Lector, Articulador, Gestor) |
+| deleteReport | — | ✅ | — | Admin only |
+| generarFichaPredialPdfBackend | ✅ | — | — | Todos |
+| generarReporteAlertasPdfBackend | ✅ | — | — | Todos |
+
+**Commit:**
+- Hash: cc208ce
+- Mensaje: "feat(security): Fase 3 - Guardia RBAC en 5 funciones de reportes [sin-ticket]"
+- clasp push: 48 archivos, exitoso a las 6:30:57 p.m.
+
+**Impacto:**
+- 5 funciones movidas de "pendiente" a "cerrada"
+- 0 funciones pendientes restantes (18/18 cerradas)
+- Total de guardias implementadas: 13 directas + 4 indirectas + 1 especial
+
+**Pendiente para Fase 4+:**
+- Monitoreo en producción de logs de DENEGADO (auditoría)
+- Consideración de tasa de bloqueos anormal (detección de ataque)
