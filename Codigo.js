@@ -1114,21 +1114,45 @@ function deleteReport(reporteId, usuario) {
  * ═══════════════════════════════════════════════════════════
  */
 
+/**
+ * ✅ SPRINT6-FASE-0: Registra acción en auditoría.
+ * CRÍTICO: Obtiene identidad del usuario SIEMPRE del servidor (Session.getActiveUser),
+ * NUNCA del parámetro 'user' enviado por cliente (que podría ser falsificado).
+ * El parámetro 'user' se mantiene por compatibilidad pero es ignorado.
+ */
 function logAction(user, action, details) {
   try {
+    // ✅ Obtener identidad real del servidor, ignorar el parámetro 'user' del cliente
+    const actualUserEmail = Session.getActiveUser().getEmail();
     const auditoria = new GestorAuditoria();
-    return auditoria.registrarAccion(user, action, details);
+    return auditoria.registrarAccion(actualUserEmail, action, details);
   } catch (e) {
     console.error(`Error en logAction: ${e.message}`);
   }
 }
 
 function getUserLogs(usuario) {
+  const requesterEmail = Session.getActiveUser().getEmail();
   try {
+    const gestor = new GestorPermisos();
+    const esConsultaPropia = (usuario === requesterEmail);
+
+    // Validar: si no es consulta propia (incluyendo 'ALL'), requerir 'PERMISOS'
+    if (!esConsultaPropia) {
+      gestor.validarPermiso('PERMISOS');
+    }
+
+    // Acceso permitido — proceder a obtener logs
     const auditoria = new GestorAuditoria();
     const logs = auditoria.obtenerLogsUsuario(usuario);
     return JSON.stringify(logs);
+
   } catch (e) {
+    // Log de intento denegado para auditoría
+    logAction(requesterEmail, 'ACCESO_LOGS_DENEGADO', {
+      usuarioSolicitado: usuario,
+      razonRechazo: e.message
+    });
     console.error(`Error en getUserLogs: ${e.message}`);
     return JSON.stringify([]);
   }
@@ -1280,6 +1304,10 @@ function getGeneralStats() {
 
 function initializeSystem() {
   try {
+    // ✅ SPRINT6-FASE-0: Validación RBAC server-side
+    const gestorPermisos = new GestorPermisos();
+    gestorPermisos.validarPermiso('ADMIN_SISTEMA');  // Lanza error si no es ADMIN
+
     validateConfig();
     
     const gestor = new GestorDatos();
