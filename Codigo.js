@@ -1069,42 +1069,81 @@ function getSavedReports(usuario) {
 }
 
 function saveReport(nombre, config, filtros, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS (whitelist de roles que pueden crear)
   try {
-    const gestor = new GestorReportes();
-    return gestor.guardarReporte(nombre, config, filtros, usuario);
-  } catch (e) {
-    console.error(`Error en saveReport: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('REPORTES');
+
+    const rol = gestor.obtenerRol(actualUserEmail);
+    const ROLES_PUEDEN_CREAR_REPORTE = ['Administrador', 'Editor', 'Articulador'];
+    if (ROLES_PUEDEN_CREAR_REPORTE.indexOf(rol) === -1) {
+      throw new Error(
+        `❌ ACCESO DENEGADO — Solo ${ROLES_PUEDEN_CREAR_REPORTE.join(', ')} pueden crear reportes. ` +
+        `Tu rol es: ${rol}.`
+      );
+    }
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'CREAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en saveReport (permisos): ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    return gestorReportes.guardarReporte(nombre, config, filtros, usuario);
+  } catch (eLogica) {
+    console.error(`Error en saveReport (lógica): ${eLogica.message}`);
+    return { success: false, error: eLogica.message };
   }
 }
 
 function executeReport(reporteId, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS
   try {
-    const gestor = new GestorReportes();
-    const resultado = gestor.ejecutarReporte(reporteId, usuario);
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('REPORTES');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'EJECUTAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en executeReport (permisos): ${ePermiso.message}`);
+    return JSON.stringify({ success: false, error: ePermiso.message });
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    const resultado = gestorReportes.ejecutarReporte(reporteId, usuario);
     return JSON.stringify(resultado);
-  } catch (e) {
-    console.error(`Error en executeReport: ${e.message}`);
-    return JSON.stringify({
-      success: false,
-      error: e.message
-    });
+  } catch (eLogica) {
+    console.error(`Error en executeReport (lógica): ${eLogica.message}`);
+    return JSON.stringify({ success: false, error: eLogica.message });
   }
 }
 
 function deleteReport(reporteId, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS (requiere ELIMINAR, solo Admin)
   try {
-    const gestor = new GestorReportes();
-    return gestor.eliminarReporte(reporteId, usuario);
-  } catch (e) {
-    console.error(`Error en deleteReport: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('ELIMINAR');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'ELIMINAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en deleteReport (permisos): ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    return gestorReportes.eliminarReporte(reporteId, usuario);
+  } catch (eLogica) {
+    console.error(`Error en deleteReport (lógica): ${eLogica.message}`);
+    return { success: false, error: eLogica.message };
   }
 }
 

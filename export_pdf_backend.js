@@ -266,6 +266,19 @@
  * `predioData` viene ya armado en cliente desde currentData/IndexedDB — cero lectura de Sheets aquí.
  */
 function generarFichaPredialPdfBackend(predioData, metadata) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS
+  try {
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('REPORTES');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'GENERAR_FICHA_PDF_DENEGADO', { razon: ePermiso.message });
+    console.error(`❌ Acceso denegado en generarFichaPredialPdfBackend: ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE GENERACIÓN
   try {
     const meta = metadata || {};
     if (!meta.user) {
@@ -285,6 +298,19 @@ function generarFichaPredialPdfBackend(predioData, metadata) {
  * `alertasArray` viene ya resuelto en cliente (alertasResumenActivo, tope MAX_ALERTAS_PAYLOAD=100).
  */
 function generarReporteAlertasPdfBackend(alertasArray, metadata) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS
+  try {
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('REPORTES');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'GENERAR_ALERTAS_PDF_DENEGADO', { razon: ePermiso.message });
+    console.error(`❌ Acceso denegado en generarReporteAlertasPdfBackend: ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE GENERACIÓN
   try {
     const meta = metadata || {};
     if (!meta.user) {
