@@ -2944,30 +2944,37 @@ con los 5 IDs reales en `filter-strings.txt` (confirmados con `-S` antes de corr
 
 **Corrección aplicada:**
 
-**Commit: `01f34df` (fix(security): Fase 3 - Agregar guardia RBAC a generarPlantillaAsignacionCSV [sin-ticket])**
+**Commits:**
+1. `01f34df` — Función interna EXPORT_BACKEND.generarPlantillaAsignacionCSV (línea 202)
+2. `533669b` — Wrapper público generarPlantillaAsignacionCSV (línea 295) — punto de entrada real de google.script.run
+
+**Defense in Depth — 2 niveles de protección:**
 
 ```javascript
-// export_backend.js, línea 202-215 (después del fix)
+// Nivel 1 (LÍNEA 295): Wrapper público — punto de entrada desde google.script.run
 function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {
   const actualUserEmail = Session.getActiveUser().getEmail();
-
-  // ✅ TRY/CATCH 1: PERMISOS
   try {
     const gestorPermisos = new GestorPermisos();
-    gestorPermisos.validarPermiso('REPORTES');
+    gestorPermisos.validarPermiso('REPORTES');  // ← Validación AQUÍ
   } catch (ePermiso) {
-    logAction(actualUserEmail, 'GENERAR_PLANTILLA_ASIGNACION_DENEGADO', { razon: ePermiso.message });
-    console.error(`❌ Acceso denegado en generarPlantillaAsignacionCSV: ${ePermiso.message}`);
+    logAction(actualUserEmail, 'GENERAR_PLANTILLA_ASIGNACION_DENEGADO_WRAPPER', { razon: ePermiso.message });
     return { success: false, error: ePermiso.message };
   }
+  return EXPORT_BACKEND.generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto);
+}
 
-  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+// Nivel 2 (LÍNEA 202): Función interna — protección redundante
+function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {  // dentro de EXPORT_BACKEND object
+  const actualUserEmail = Session.getActiveUser().getEmail();
   try {
-    // ... lógica original intacta ...
-  } catch (e) {
-    console.error('❌ Error en generarPlantillaAsignacionCSV: ' + e.message);
-    return { success: false, error: e.message };
+    const gestorPermisos = new GestorPermisos();
+    gestorPermisos.validarPermiso('REPORTES');  // ← Validación AQUÍ también
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'GENERAR_PLANTILLA_ASIGNACION_DENEGADO', { razon: ePermiso.message });
+    return { success: false, error: ePermiso.message };
   }
+  // ... lógica original ...
 }
 ```
 
@@ -2979,13 +2986,15 @@ function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {
 
 **Verificación de despliegue:**
 
-1. **Local:** `sed -n '202,215p' export_backend.js` — fix presente ✅
+1. **Local:** Ambas funciones con guards (líneas 202 y 295) ✅
 2. **Remote (clasp push --force):** 48 archivos pusheados ✅
-3. **Remote (clasp pull + grep):** `grep -n "validarPermiso" export_backend.js` → línea 208 presente ✅
+3. **Remote (clasp pull + grep):** `grep -c "validarPermiso" export_backend.js` → **2 ocurrencias** ✅
 4. **Código verificado en remoto:**
    ```
-   208:      gestorPermisos.validarPermiso('REPORTES');
+   208:      gestorPermisos.validarPermiso('REPORTES');  # Función interna
+   301:    gestorPermisos.validarPermiso('REPORTES');   # Wrapper público
    ```
+5. **Punto de entrada real:** HTML llama a `google.script.run.generarPlantillaAsignacionCSV()` (línea 295 wrapper) — protegida ✅
 
 **Impacto final:** Cobertura RBAC sube de **17/18 (94.4%)** a **18/18 (100%)**.
 
