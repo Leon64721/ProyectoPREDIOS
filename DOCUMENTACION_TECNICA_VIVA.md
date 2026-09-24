@@ -3013,3 +3013,42 @@ function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {  // 
 **Nota de auditoría:** La brecha fue encontrada **después** de documentar Sección 39 como "18/18 completadas". Esto demuestra el valor de una verificación exhaustiva línea-por-línea sobre un inventario previo — incluso con buena documentación, los puntos de entrada públicos (`google.script.run`) pueden pasar desapercibidos hasta que se buscan explícitamente en el HTML/JS cliente. Todas las 18 funciones ahora tienen protección verificada en remoto post-despliegue.
 
 **Sesión post-auditoría cerrada:** 2026-09-23 con inventario RBAC **correcto y 100% verificado**.
+
+---
+
+## 41. DEUDA TÉCNICA — Funciones Indirectas sin Guardia Propia [2026-09-23, DOCUMENTADO]
+
+**Hallazgo técnico identificado durante auditoría exhaustiva:**
+
+Tres funciones están protegidas SOLO porque su único llamante valida permisos. **No tienen guardia RBAC propia.**
+
+| Función | Ubicación | Línea | Protección Actual | Riesgo |
+|---------|-----------|-------|-------------------|--------|
+| saveTrackingData | Codigo.js | 731 | saveFollowupData (línea 79) valida roles | Si se expone directamente o nueva llamada sin guardia |
+| pac_actualizarEstadosDesdeMatrizBatch | pac_api.js | 111 | getPACData (línea 29) valida 'EDITAR' | Si se expone directamente o nueva llamada sin guardia |
+| pac_guardarReglasReemplazo | pac_api.js | 160 | guardarReglasMotorPACApi (línea 154) valida | Si se expone directamente o nueva llamada sin guardia |
+
+**Defense in Depth:** La estrategia actual (protección solo del llamante) es válida MIENTRAS:
+- Estas 3 funciones NO se expongan vía `google.script.run`
+- Sus únicos llamantes sigan siendo guardianes confiables
+- No se refactorice el código para agregar llamadas nuevas sin validación
+
+**Acción recomendada (Fase 4+):**
+Agregar `validarPermiso()` propio a estas 3 funciones para eliminar la dependencia de "único llamante confiable". Patrón:
+```javascript
+function saveTrackingData(formObject, userEmail) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+  try {
+    const gestorPermisos = new GestorPermisos();
+    gestorPermisos.validarPermiso('EDITAR'); // o la acción apropiada
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'SAVETRACKINGDATA_DENEGADO', { razon: ePermiso.message });
+    return { success: false, error: ePermiso.message };
+  }
+  // ... lógica original ...
+}
+```
+
+**Verificación remota confirmada:** Ninguna de las 3 funciones aparece en `*.html` (no son endpoints públicos), validando que el riesgo es acotado a refactores internos futuros.
+
+**Dependencia registrada:** Si cualquiera de estas 3 funciones se modifica o se agrega un nuevo llamante, revisar ANTES esta sección.
