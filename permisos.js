@@ -234,7 +234,7 @@ class GestorPermisos {
   obtenerHistorialPermisos(email) {
     try {
       const { rows, headers } = this.gestor.leerDatos(getConfig('SHEETS.LOGS'));
-      
+
       return rows
         .filter(row => row[headers[3]].includes(email))
         .filter(row => row[headers[2]].includes('PERMISO'))
@@ -247,6 +247,65 @@ class GestorPermisos {
     } catch (e) {
       console.error(`Error obteniendo historial permisos: ${e.message}`);
       return [];
+    }
+  }
+
+  /**
+   * ✅ SPRINT6-FASE-0: Valida si el usuario actual tiene permiso para una acción.
+   * Obtiene la identidad SIEMPRE del servidor (Session.getActiveUser), nunca del cliente.
+   * Lanza Error descriptivo si no tiene permiso (incluye contexto para auditoría).
+   *
+   * @param {string} accionRequerida - Acción a verificar (ej. 'EDITAR', 'PAC_APROBAR', 'ADMIN_SISTEMA')
+   * @throws {Error} Si el usuario no tiene permiso o rol no existe
+   * @returns {boolean} true si tiene permiso (nunca retorna false — lanza error en su lugar)
+   */
+  validarPermiso(accionRequerida) {
+    try {
+      // 1. Obtener identidad del usuario SIEMPRE del servidor, nunca del cliente
+      const email = Session.getActiveUser().getEmail();
+
+      if (!email) {
+        throw new Error('No se pudo obtener email del usuario activo (Session.getActiveUser)');
+      }
+
+      // 2. Obtener rol del usuario
+      const rol = this.obtenerRol(email);
+
+      if (!rol) {
+        throw new Error(
+          `Usuario no encontrado en tabla de permisos: ${email}. ` +
+          `Se requiere acción '${accionRequerida}' pero el usuario no tiene rol asignado.`
+        );
+      }
+
+      // 3. Obtener permisos del rol desde CONFIG
+      const permisosDelRol = getConfig('PERMISOS_POR_ROL')[rol];
+
+      // ✅ Chequeo defensivo: manejar caso donde rol no existe en PERMISOS_POR_ROL
+      if (!permisosDelRol || !Array.isArray(permisosDelRol)) {
+        throw new Error(
+          `❌ ERROR DE CONFIGURACIÓN — Rol '${rol}' no está definido en PERMISOS_POR_ROL. ` +
+          `Usuario: ${email}. Acción solicitada: ${accionRequerida}.`
+        );
+      }
+
+      // 4. Validar si la acción está en la lista de permisos
+      if (permisosDelRol.indexOf(accionRequerida) === -1) {
+        const mensaje =
+          `❌ ACCESO DENEGADO — Usuario: ${email} (Rol: '${rol}') intenta ejecutar acción no permitida: '${accionRequerida}'. ` +
+          `Permisos disponibles para este rol: [${permisosDelRol.join(', ')}].`;
+
+        console.warn(mensaje);
+        throw new Error(mensaje);
+      }
+
+      // ✅ Permiso válido
+      console.log(`✅ Permiso válido — ${email} (${rol}) autorizado para '${accionRequerida}'`);
+      return true;
+
+    } catch (e) {
+      // Re-lanzar error como-está para que suba a la UI y se logee
+      throw e;
     }
   }
 }
