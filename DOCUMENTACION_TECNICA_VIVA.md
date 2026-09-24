@@ -3052,3 +3052,53 @@ function saveTrackingData(formObject, userEmail) {
 **Verificación remota confirmada:** Ninguna de las 3 funciones aparece en `*.html` (no son endpoints públicos), validando que el riesgo es acotado a refactores internos futuros.
 
 **Dependencia registrada:** Si cualquiera de estas 3 funciones se modifica o se agrega un nuevo llamante, revisar ANTES esta sección.
+
+---
+
+## 42. CIERRE DE AUDITORÍA RBAC — Sesión 2026-09-23 (Haiku) [COMPLETADO]
+
+**Sesión de auditoría:** 2026-09-23 (Claude Haiku 4.5)
+
+**Alcance:** Validación completa de 18 funciones críticas con protección server-side RBAC, implementación de Defense in Depth, verificación remota en Google Apps Script, sincronización con GitHub en PR, y cierre documental formal.
+
+**Estado final:**
+- ✅ **18/18 funciones protegidas** — Verificado con grep literal en archivos remotos post-clasp-pull
+- ✅ **Brecha de seguridad cerrada** — generarPlantillaAsignacionCSV ahora protegida en wrapper (línea 295) + interna (línea 202)
+- ✅ **Defense in Depth implementado** — Validación en múltiples niveles para functions críticas
+- ✅ **Identidad server-side** — Todas las validaciones usan Session.getActiveUser(), nunca confían en cliente
+- ✅ **Verificación remota completada** — clasp pull + grep en 5 directorios temporales confirmó todos los cambios
+
+**Artefactos de cierre:**
+- **PROTOCOLO_CIERRE_SESION_2026-09-23_HAIKU.md** (este archivo) — Documento formal de cierre con trazabilidad completa
+- **PROTOCOLO_VERSIONAMIENTO_2026.md** (275 líneas) — Protocolo de sincronización tripartita Local-GAS-GitHub con 5 pasos obligatorios y 6 lecciones aprendidas
+- **Secciones 40-41 de DOCUMENTACION_TECNICA_VIVA.md** — Documentación de correcciones post-auditoría y deuda técnica
+
+**Commits en rama fix/post-audit-rbac:**
+- b41d6a3 — docs: Protocolo formal de versionamiento
+- 23afdab — docs: Sección 41 - Deuda técnica
+- 32bad6b — docs(reflect): Sección 40 - Defense in Depth
+- 533669b — fix(security): Proteger wrapper generarPlantillaAsignacionCSV
+- 210655f — docs(reflect): Sección 40 - Corrección post-auditoría RBAC
+
+**Estado de despliegue:**
+- Google Apps Script: 48 archivos pusheados y verificados ✅
+- GitHub PR #4: ABIERTO (bloqueado por billing externo, no afecta producción)
+- Local: git status limpio ✅
+
+**Pendientes abiertos:**
+1. GitHub billing issue (externo) — Para mergear PR a main
+2. Fase 4 — Agregar validarPermiso() directo a 3 funciones indirectamente protegidas
+
+**Referencias cruzadas:**
+- PROTOCOLO_CIERRE_SESION_2026-08-06_COPILOT.md — Cierre anterior (Sprint 1)
+- PROTOCOLO_CIERRE_SESION_2026-09-23_HAIKU.md — Cierre actual (Auditoría RBAC)
+- PROTOCOLO_VERSIONAMIENTO_2026.md — Metodología de sincronización establece para futuras fases
+
+**Nota operativa:** Este cierre aplica el ciclo de 5 pasos del PROTOCOLO_VERSIONAMIENTO_2026.md:
+- [x] git status — Working tree limpio
+- [x] git commit — 5 commits realizados
+- [x] clasp push —  48 archivos
+- [x] Verificación remota — grep confirmado en remoto
+- [x] Documentación viva — Secciones 40-41 + Protocolo de cierre
+
+Auditoría RBAC: **COMPLETADA Y VERIFICADA** 2026-09-23.
