@@ -293,5 +293,18 @@
  * plana, fuera del IIFE, es la que realmente queda expuesta a google.script.run.
  */
 function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ GUARDIA OUTER: Validar permisos ANTES de delegar a EXPORT_BACKEND
+  try {
+    const gestorPermisos = new GestorPermisos();
+    gestorPermisos.validarPermiso('REPORTES');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'GENERAR_PLANTILLA_ASIGNACION_DENEGADO_WRAPPER', { razon: ePermiso.message });
+    console.error(`❌ Acceso denegado en wrapper generarPlantillaAsignacionCSV: ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ DELEGACIÓN: Llamar a la función interna (que también tiene su propio try/catch de permisos + lógica)
   return EXPORT_BACKEND.generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto);
 }
