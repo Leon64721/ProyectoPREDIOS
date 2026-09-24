@@ -2760,3 +2760,171 @@ con los 5 IDs reales en `filter-strings.txt` (confirmados con `-S` antes de corr
 2. Si se retoma la verificación de `gh` CLI: generar un nuevo código de device-flow y completarlo a tiempo (~15 min de ventana), o autenticar con un token que sí tenga el scope `read:org`.
 3. Una vez el PR exista y los checks corran, revisar resultado real de los 4 jobs y cerrar la verificación del pipeline.
 4. Retomar branch protection en `main` (bloqueado al cierre de la sesión anterior por la duda de plan de pago en GitHub — sin resolver si era el selector de rama default, ya gratuito, o la sección de protección de rama en repos privados, que sí requiere plan pago).
+
+---
+
+## 37. Hardening RBAC Fase 2: Protección de acceso a logs de auditoría (`getUserLogs`) [2026-09-23]
+
+**Objetivo:** Implementar validación server-side de identidad y permisos en `getUserLogs()` para prevenir que usuarios no-admin vean logs de otros usuarios (vulnerabilidad de privacidad ALTO).
+
+**Verificaciones previas (métodos git + grep):**
+- ✅ `saveTrackingData()` NO está expuesta directamente al cliente vía `google.script.run` — solo se invoca desde `saveFollowupData()` (Codigo.js:79), que ya valida rol EDITOR/ADMIN. Protección indirecta es válida bajo principio de Defense in Depth (si ever se expone directamente en futuro, la validación en caller lo protege).
+- ✅ `getUserLogs(usuario)` **SÍ está expuesta directamente** en `app_permisos_js.html:59` via `google.script.run.getUserLogs(user || 'ALL')` — antes NO validaba identidad ni permisos. Parámetro `usuario` venía del cliente sin filtro, permitiendo que cualquiera pidiera ver logs de cualquier otro usuario.
+
+**Archivo(s) intervenido(s):**
+- `Codigo.js` — función `getUserLogs()` (línea 1134)
+
+**Cambios técnicos realizados:**
+
+1. **Validación de identidad:**
+   ```javascript
+   const requesterEmail = Session.getActiveUser().getEmail();
+   const esConsultaPropia = (usuario === requesterEmail);
+   ```
+   Obtiene email real del servidor (nunca confía en parámetro del cliente).
+
+2. **Validación de permisos:**
+   ```javascript
+   if (!esConsultaPropia) {
+     gestor.validarPermiso('PERMISOS');
+   }
+   ```
+   - Si el usuario solicita sus **propios logs** → Permitido sin validación adicional (caso legítimo)
+   - Si solicita logs de **otro usuario** → Requier permiso 'PERMISOS' (solo Administrador tiene)
+   - Caso especial 'ALL' → Automáticamente cubierto (usuario !== requesterEmail = true, requiere 'PERMISOS')
+
+3. **Auditoría de intentos denegados:**
+   ```javascript
+   } catch (e) {
+     logAction(requesterEmail, 'ACCESO_LOGS_DENEGADO', {
+       usuarioSolicitado: usuario,
+       razonRechazo: e.message
+     });
+   ```
+   Registra intento denegado en hoja LOGS para auditoría (igual patrón que sincronizarPACApi).
+
+**Matriz de acceso actual (verificado en config.js:182-188):**
+- `Administrador`: ✅ tiene 'PERMISOS' → puede ver logs de cualquiera
+- `Editor`: ❌ NO tiene 'PERMISOS' → solo sus propios logs
+- `Lector`: ❌ NO tiene 'PERMISOS' → solo sus propios logs
+- `Articulador`: ❌ NO tiene 'PERMISOS' → solo sus propios logs
+- `Gestor`: ❌ NO tiene 'PERMISOS' → solo sus propios logs
+
+**Riesgo mitigado:**
+- **Antes:** Usuario A podría pedir `getUserLogs('usuario.b@dominio.com')` y obtener historial completo de B (fechas, acciones, detalles) sin autorización.
+- **Después:** Solo B o Administrador pueden ver logs de B. Intento de A es registrado como `ACCESO_LOGS_DENEGADO` en auditoría.
+
+**Validaciones ejecutadas:**
+- ✅ Grep exhaustivo confirmó: `google.script.run.saveTrackingData()` no existe en ningún .html → saveTrackingData indirectamente protegida es suficiente
+- ✅ Grep exhaustivo confirmó: `google.script.run.getUserLogs()` existe en app_permisos_js.html:59 → protección directa era necesaria
+- ✅ Lógica de validación cubre caso especial 'ALL' (usuario !== requesterEmail siempre true para 'ALL')
+- ✅ logAction captura intento denegado con contexto (email, usuario solicitado, razón rechazo)
+- ✅ No hay cambios de comportamiento para consultas propias — solo se agrega restricción en consultas de terceros
+
+**Notas de seguridad:**
+- Validación usa `Session.getActiveUser().getEmail()` server-side (nunca confía en parámetro del cliente)
+- Error de validación ('PERMISOS') tira exception que se captura en try/catch, registrando intento en auditoría
+- Patrón idéntico al usado en sincronizarPACApi (Fase 1) y aprobarBorradorPACApi — coherencia de design
+
+---
+
+## 38. Hardening RBAC Fase 3: Guardia de permisos en 5 funciones de reportes [2026-09-23]
+
+**Objetivo:** Implementar validación server-side de RBAC en las 5 funciones críticas de gestión y exportación de reportes.
+
+**Archivos intervenidos:**
+- `Codigo.js` — saveReport(), executeReport(), deleteReport()
+- `export_pdf_backend.js` — generarFichaPredialPdfBackend(), generarReporteAlertasPdfBackend()
+
+**Patrón implementado (2 try/catch separados):**
+1. **Try/Catch 1 — PERMISOS:** Validación server-side con `Session.getActiveUser()`, lanza error si falla, loguea como `*_DENEGADO`
+2. **Try/Catch 2 — LÓGICA:** Errores de negocio (no relacionados a permisos)
+
+**Cambios técnicos:**
+
+| Función | Acción | Validación adicional | Línea cambio |
+|---|---|---|---|
+| `saveReport()` | REPORTES | Whitelist: solo Admin, Editor, Articulador | Codigo.js:1071 |
+| `executeReport()` | REPORTES | Ninguna (todos con REPORTES) | Codigo.js:1084 |
+| `deleteReport()` | ELIMINAR | Ninguna (solo Admin tiene ELIMINAR) | Codigo.js:1098 |
+| `generarFichaPredialPdfBackend()` | REPORTES | Ninguna; meta.user fallback intacto | export_pdf_backend.js:268 |
+| `generarReporteAlertasPdfBackend()` | REPORTES | Ninguna; meta.user fallback intacto | export_pdf_backend.js:287 |
+
+**Validación:**
+- ✅ Grep remoto (clasp pull) confirma guardias presentes en Google Apps Script
+- ✅ deleteReport() ejemplo: validarPermiso('ELIMINAR') verificado en remoto
+- ✅ meta.user fallback preservado en funciones PDF (no roto)
+- ✅ Session.getActiveUser().getEmail() SIEMPRE server-side
+- ✅ logAction() registra intentos denegados con razon
+
+**Matriz de aceso (post-Fase 3):**
+
+| Función | REPORTES | ELIMINAR | Whitelist | Acceso |
+|---|---|---|---|---|
+| saveReport | ✅ | — | Admin, Editor, Articulador | Solo esos 3 |
+| executeReport | ✅ | — | — | Todos (Admin, Editor, Lector, Articulador, Gestor) |
+| deleteReport | — | ✅ | — | Admin only |
+| generarFichaPredialPdfBackend | ✅ | — | — | Todos |
+| generarReporteAlertasPdfBackend | ✅ | — | — | Todos |
+
+**Commit:**
+- Hash: cc208ce
+- Mensaje: "feat(security): Fase 3 - Guardia RBAC en 5 funciones de reportes [sin-ticket]"
+- clasp push: 48 archivos, exitoso a las 6:30:57 p.m.
+
+**Impacto:**
+- 5 funciones movidas de "pendiente" a "cerrada"
+- 0 funciones pendientes restantes (18/18 cerradas)
+- Total de guardias implementadas: 13 directas + 4 indirectas + 1 especial
+
+**Pendiente para Fase 4+:**
+- Monitoreo en producción de logs de DENEGADO (auditoría)
+- Consideración de tasa de bloqueos anormal (detección de ataque)
+
+---
+
+## 39. CIERRE DE SESIÓN — Auditoría RBAC Completada [2026-09-23]
+
+**Estado final de la sesión:**
+
+**Fecha:** 2026-09-23
+**Objetivo alcanzado:** Auditoría y hardening RBAC en 18 funciones críticas
+**Estatus:** ✅ COMPLETADO
+
+**Cambios consolidados en 5 commits (git):**
+1. `6d680de` — Fase 0/1: RBAC core (config.js, permisos.js, guards iniciales)
+2. `7178948` — Fase 2: getUserLogs() identity validation
+3. `1498982` — .claspignore setup (dev files exclude)
+4. `cc208ce` — Fase 3: reportes RBAC (5 funciones)
+5. `5a02fea` — Documentación Fase 3 (DOCUMENTACION_TECNICA_VIVA.md Sección 38)
+
+**Despliegue en producción:**
+- Proyecto Google Apps Script: `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi`
+- URL: https://script.google.com/home/projects/18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi/edit
+- clasp push: 48 archivos sincronizados ✅
+- Status: working tree clean ✅
+
+**Backup en GitHub:**
+- Repositorio: https://github.com/Leon64721/ProyectoPREDIOS
+- Rama: main
+- Commits: 5 de seguridad versionados
+
+**Inventario RBAC final — 18/18 PROTEGIDAS:**
+- 13 directas (guardia propia)
+- 4 indirectas (Defense in Depth)
+- 1 especial (auditoría)
+- 0 pendientes
+
+**Checklist de cierre de sesión — 5/5 completados:**
+1. ✅ git status limpio (working tree clean)
+2. ✅ git commit + push a main
+3. ✅ clasp push exitoso (48 archivos)
+4. ✅ Verificación remota (deleteReport, saveReport en producción)
+5. ✅ DOCUMENTACION_TECNICA_VIVA.md Secciones 35-39 actualizadas
+
+**Pendientes para próxima sesión:**
+- Monitoreo de logs DENEGADO en producción
+- Considerar sincronización de whitelist saveReport() ↔ config.js (deuda técnica baja)
+- Considerar auditoría de éxitos (logAction no solo DENEGADO)
+
+**Sesión cerrada:** 2026-09-23 con protocolos completados.
