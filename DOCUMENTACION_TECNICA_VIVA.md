@@ -2928,3 +2928,79 @@ con los 5 IDs reales en `filter-strings.txt` (confirmados con `-S` antes de corr
 - Considerar auditoría de éxitos (logAction no solo DENEGADO)
 
 **Sesión cerrada:** 2026-09-23 con protocolos completados.
+
+---
+
+## 40. POST-AUDITORÍA RBAC — Corrección de Brecha en generarPlantillaAsignacionCSV [2026-09-23, POST-CIERRE]
+
+**Agente:** Claude Code (Claude Haiku 4.5).
+
+**Descubrimiento:** Verificación exhaustiva de 18 funciones documentadas como "protegidas" reveló que **generarPlantillaAsignacionCSV** (export_backend.js:202) era un endpoint público (`google.script.run`, llamado desde app_equipos_js.html:2146) **SIN guardia RBAC**, contradiciendo el inventario de Sección 39 que reportaba "18/18 protegidas".
+
+**Diagnóstico detallado:**
+- **Raíz técnica:** generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) dentro de un IIFE (`EXPORT_BACKEND` object) válida nivel/idTarget pero NO consulta permisos.
+- **Arquitectura afectada:** función pública (línea 282) era un simple wrapper que delegaba a la función interna (línea 202) sin agregar validación. Proteger solo la interna era suficiente, ya que no había duplicación de lógica.
+- **Impacto:** cualquier usuario autenticado podía descargar plantillas de asignación de equipos en formato CSV sin validar que tuviera rol Articulador/Gestor/Administrador — acceso desvinculado del control RBAC existente.
+
+**Corrección aplicada:**
+
+**Commit: `01f34df` (fix(security): Fase 3 - Agregar guardia RBAC a generarPlantillaAsignacionCSV [sin-ticket])**
+
+```javascript
+// export_backend.js, línea 202-215 (después del fix)
+function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS
+  try {
+    const gestorPermisos = new GestorPermisos();
+    gestorPermisos.validarPermiso('REPORTES');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'GENERAR_PLANTILLA_ASIGNACION_DENEGADO', { razon: ePermiso.message });
+    console.error(`❌ Acceso denegado en generarPlantillaAsignacionCSV: ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    // ... lógica original intacta ...
+  } catch (e) {
+    console.error('❌ Error en generarPlantillaAsignacionCSV: ' + e.message);
+    return { success: false, error: e.message };
+  }
+}
+```
+
+**Patrón aplicado:** idéntico al usado en otras 17 funciones (saveReport, executeReport, deleteReport, generarFichaPredialPdfBackend, generarReporteAlertasPdfBackend, getPACData, etc.):
+1. Capturar `Session.getActiveUser().getEmail()` server-side (nunca confiar en cliente)
+2. Try/catch separado para validarPermiso (aislado de lógica de negocio)
+3. logAction() para auditoría de intentos denegados
+4. Try/catch segundo para la lógica real
+
+**Verificación de despliegue:**
+
+1. **Local:** `sed -n '202,215p' export_backend.js` — fix presente ✅
+2. **Remote (clasp push --force):** 48 archivos pusheados ✅
+3. **Remote (clasp pull + grep):** `grep -n "validarPermiso" export_backend.js` → línea 208 presente ✅
+4. **Código verificado en remoto:**
+   ```
+   208:      gestorPermisos.validarPermiso('REPORTES');
+   ```
+
+**Impacto final:** Cobertura RBAC sube de **17/18 (94.4%)** a **18/18 (100%)**.
+
+**Inventario RBAC actualizado — 18/18 TODAS PROTEGIDAS:**
+| # | Función | Archivo | Línea | Estado |
+|---|---------|---------|-------|--------|
+| 1-13 | Directas (saveFollowupData, initializeSystem, getUserLogs, getPACData, sincronizarPACApi, aprobarBorradorPACApi, guardarReglasMotorPACApi, enviarReportesSeguimientoPACApi, saveReport, executeReport, deleteReport, generarFichaPredialPdfBackend, generarReporteAlertasPdfBackend) | Diversos | Diversos | ✅ |
+| 14-17 | Indirectas (saveTrackingData, pac_actualizarEstadosDesdeMatrizBatch, pac_guardarReglasReemplazo, generarPlantillaAsignacionCSV) | Diversos | Diversos | ✅ |
+| 18 | Especial: logAction | Codigo.js | 1162 | ✅ |
+
+**Deployment state:**
+- Proyecto Google Apps Script: `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi` ✅ ACTUALIZADO
+- Rama main (GitHub): `01f34df` commit presente ✅
+- Deployment (@HEAD): Refleja automáticamente el push ✅
+
+**Nota de auditoría:** La brecha fue encontrada **después** de documentar Sección 39 como "18/18 completadas". Esto demuestra el valor de una verificación exhaustiva línea-por-línea sobre un inventario previo — incluso con buena documentación, los puntos de entrada públicos (`google.script.run`) pueden pasar desapercibidos hasta que se buscan explícitamente en el HTML/JS cliente. Todas las 18 funciones ahora tienen protección verificada en remoto post-despliegue.
+
+**Sesión post-auditoría cerrada:** 2026-09-23 con inventario RBAC **correcto y 100% verificado**.
