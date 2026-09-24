@@ -200,6 +200,19 @@
    * CONC-FE-15; se mantiene, solo cambia la forma del objeto de éxito.
    */
   function generarPlantillaAsignacionCSV(nivel, idTarget, proyectoContexto) {
+    const actualUserEmail = Session.getActiveUser().getEmail();
+
+    // ✅ TRY/CATCH 1: PERMISOS
+    try {
+      const gestorPermisos = new GestorPermisos();
+      gestorPermisos.validarPermiso('REPORTES');
+    } catch (ePermiso) {
+      logAction(actualUserEmail, 'GENERAR_PLANTILLA_ASIGNACION_DENEGADO', { razon: ePermiso.message });
+      console.error(`❌ Acceso denegado en generarPlantillaAsignacionCSV: ${ePermiso.message}`);
+      return { success: false, error: ePermiso.message };
+    }
+
+    // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
     try {
       if (typeof _leerFilasVisiblesRBACEquipos !== 'function') {
         throw new Error('_leerFilasVisiblesRBACEquipos no está disponible (gestion_equipos_backend.js no cargado)');
