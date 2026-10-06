@@ -1043,9 +1043,29 @@ function showAbout() {
         </div>
     `;
 
-    new bootstrap.Modal(document.getElementById('detailModal')).show();
+    // ✅ [2026-10-06] FIX: el detalle de RT (app_matriz_js.html, función de clic en celda
+    // de la Matriz) reutiliza este mismo modal/contenedor (#detailModal, #modalTitle,
+    // #detailTable). Antes, esta función reemplazaba el HTML completo del padre de
+    // #detailTable, destruyendo el <table id="detailTable"> en sí. La próxima vez que se
+    // abría el detalle de un RT, el título se actualizaba bien (es un elemento aparte),
+    // pero el cuerpo seguía mostrando "Acerca de" porque #detailTable ya no existía en el
+    // DOM para que DataTables lo reinicializara. Se restaura el HTML original del
+    // contenedor al cerrar este modal, antes de que nadie pueda volver a abrir el detalle.
+    const modalEl = document.getElementById('detailModal');
+    const $contenedorTabla = $('#detailTable').parent();
+    const htmlOriginalTabla = $contenedorTabla.html();
+
+    if (typeof $.fn.DataTable !== 'undefined' && $.fn.DataTable.isDataTable('#detailTable')) {
+        $('#detailTable').DataTable().destroy();
+    }
+
+    new bootstrap.Modal(modalEl).show();
     $('#modalTitle').text('Acerca de');
-    $('#detailTable').parent().html(html);
+    $contenedorTabla.html(html);
+
+    $(modalEl).one('hidden.bs.modal', function () {
+        $contenedorTabla.html(htmlOriginalTabla);
+    });
 }
 
 function logout() {
