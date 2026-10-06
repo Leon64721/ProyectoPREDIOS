@@ -1,6 +1,6 @@
 # ARCHITECTURE_V5.md — Sprint 6: Estabilización Post-Línea Cero (Performance, Limpieza y UX)
 
-**Estado:** [PLANIFICACIÓN — investigación completada, código no tocado todavía]
+**Estado:** [COMPLETADO Y DESPLEGADO — 2026-08-18. Ver DOCUMENTACION_TECNICA_VIVA.md, Sección 25, para el detalle de la implementación real. Este documento se conserva como registro histórico del plan original.]
 **Agente:** Claude Code (Claude Sonnet 5, orquestado con gstack v1.60.1.0).
 **Fecha:** 2026-08-18.
 **Contexto:** la Línea Cero (Sprint 5) redujo los RTs pendientes de ~9691 a 4690 — éxito confirmado por el usuario en producción. Este sprint no es funcionalidad nueva, es estabilización: 4 puntos críticos de UX/Performance levantados directamente por el usuario tras usar el sistema real.

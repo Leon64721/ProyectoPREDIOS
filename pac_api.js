@@ -4,6 +4,11 @@
 
 function getPACData(filtros, modoEjecucion) {
   try {
+    // ✅ SPRINT6-FASE-0: Validación RBAC server-side
+    // getPACData hace ESCRITURA (sincroniza estados), así requiere EDITAR
+    const gestorPermisos = new GestorPermisos();
+    gestorPermisos.validarPermiso('EDITAR');  // Lanza error si no tiene permiso
+
     filtros = filtros || {};
     modoEjecucion = modoEjecucion || PAC_CONFIG.MODOS_EJECUCION.RADICADO;
 
@@ -310,27 +315,41 @@ function pac_construirReporteSeguimientoHTML(usuario, registros, data) {
 
 function sincronizarPACApi() {
   try {
-    pac_verificarRolAdmin();
+    // ✅ SPRINT6-FASE-0: Validación RBAC server-side
+    pac_verificarRolAdmin();  // Valida PAC_APROBAR (requiere ADMIN)
     return JSON.stringify(sincronizarPAC());
   } catch(e) {
+    // ✅ Registrar intento denegado
+    const userEmail = Session.getActiveUser().getEmail();
+    logAction(userEmail, 'INTENTO_SINCRONIZAR_PAC_DENEGADO', e.message);
     return JSON.stringify({ success:false, error:e.message });
   }
 }
 
 function aprobarBorradorPACApi(observacion) {
   try {
-    pac_verificarRolAdmin();
+    // ✅ SPRINT6-FASE-0: Validación RBAC server-side
+    pac_verificarRolAdmin();  // Valida PAC_APROBAR (requiere ADMIN)
     return JSON.stringify(aprobarBorradorPAC(observacion));
   } catch(e) {
+    // ✅ Registrar intento denegado
+    const userEmail = Session.getActiveUser().getEmail();
+    logAction(userEmail, 'INTENTO_APROBAR_PAC_DENEGADO', e.message);
     return JSON.stringify({ success:false, error:e.message });
   }
 }
 
+/**
+ * ✅ SPRINT6-FASE-0: Verifica que usuario actual sea ADMIN para operaciones PAC.
+ * Utiliza el nuevo sistema de RBAC server-side.
+ */
 function pac_verificarRolAdmin() {
   try {
-    if (typeof CONFIG === 'undefined') return;
-    if (typeof verificarRol === 'function') verificarRol(CONFIG.ROLES.ADMIN);
+    const gestorPermisos = new GestorPermisos();
+    // Para operaciones PAC críticas, se requiere rol ADMIN específicamente
+    // (no basta con tener permiso 'EDITAR', se necesita ADMIN_SISTEMA o PAC_APROBAR)
+    gestorPermisos.validarPermiso('PAC_APROBAR');  // Lanza error si no es ADMIN
   } catch(e) {
-    throw new Error('Acceso denegado: ' + e.message);
+    throw new Error('❌ Acceso denegado a operación PAC crítica: ' + e.message);
   }
 }

@@ -1069,42 +1069,81 @@ function getSavedReports(usuario) {
 }
 
 function saveReport(nombre, config, filtros, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS (whitelist de roles que pueden crear)
   try {
-    const gestor = new GestorReportes();
-    return gestor.guardarReporte(nombre, config, filtros, usuario);
-  } catch (e) {
-    console.error(`Error en saveReport: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('REPORTES');
+
+    const rol = gestor.obtenerRol(actualUserEmail);
+    const ROLES_PUEDEN_CREAR_REPORTE = ['Administrador', 'Editor', 'Articulador'];
+    if (ROLES_PUEDEN_CREAR_REPORTE.indexOf(rol) === -1) {
+      throw new Error(
+        `❌ ACCESO DENEGADO — Solo ${ROLES_PUEDEN_CREAR_REPORTE.join(', ')} pueden crear reportes. ` +
+        `Tu rol es: ${rol}.`
+      );
+    }
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'CREAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en saveReport (permisos): ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    return gestorReportes.guardarReporte(nombre, config, filtros, usuario);
+  } catch (eLogica) {
+    console.error(`Error en saveReport (lógica): ${eLogica.message}`);
+    return { success: false, error: eLogica.message };
   }
 }
 
 function executeReport(reporteId, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS
   try {
-    const gestor = new GestorReportes();
-    const resultado = gestor.ejecutarReporte(reporteId, usuario);
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('REPORTES');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'EJECUTAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en executeReport (permisos): ${ePermiso.message}`);
+    return JSON.stringify({ success: false, error: ePermiso.message });
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    const resultado = gestorReportes.ejecutarReporte(reporteId, usuario);
     return JSON.stringify(resultado);
-  } catch (e) {
-    console.error(`Error en executeReport: ${e.message}`);
-    return JSON.stringify({
-      success: false,
-      error: e.message
-    });
+  } catch (eLogica) {
+    console.error(`Error en executeReport (lógica): ${eLogica.message}`);
+    return JSON.stringify({ success: false, error: eLogica.message });
   }
 }
 
 function deleteReport(reporteId, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS (requiere ELIMINAR, solo Admin)
   try {
-    const gestor = new GestorReportes();
-    return gestor.eliminarReporte(reporteId, usuario);
-  } catch (e) {
-    console.error(`Error en deleteReport: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('ELIMINAR');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'ELIMINAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en deleteReport (permisos): ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    return gestorReportes.eliminarReporte(reporteId, usuario);
+  } catch (eLogica) {
+    console.error(`Error en deleteReport (lógica): ${eLogica.message}`);
+    return { success: false, error: eLogica.message };
   }
 }
 
@@ -1114,21 +1153,78 @@ function deleteReport(reporteId, usuario) {
  * ═══════════════════════════════════════════════════════════
  */
 
+/**
+ * ✅ SPRINT6-FASE-0: Registra acción en auditoría.
+ * CRÍTICO: Obtiene identidad del usuario SIEMPRE del servidor (Session.getActiveUser),
+ * NUNCA del parámetro 'user' enviado por cliente (que podría ser falsificado).
+ * El parámetro 'user' se mantiene por compatibilidad pero es ignorado.
+ */
 function logAction(user, action, details) {
   try {
+    // ✅ Obtener identidad real del servidor, ignorar el parámetro 'user' del cliente
+    const actualUserEmail = Session.getActiveUser().getEmail();
     const auditoria = new GestorAuditoria();
-    return auditoria.registrarAccion(user, action, details);
+    return auditoria.registrarAccion(actualUserEmail, action, details);
   } catch (e) {
     console.error(`Error en logAction: ${e.message}`);
   }
 }
 
-function getUserLogs(usuario) {
+/**
+ * ✅ [2026-10-06] Tarea R: entrega la URL de la herramienta de Normalización solo a
+ * usuarios con rol Administrador. El valor real vive en la Script Property
+ * NORMALIZACION_URL — nunca en código versionado ni en el frontend (antes estaba
+ * hardcodeada en app_core_js.html, enviada al navegador de cualquiera que abriera la
+ * web app, sin importar su rol). Registra tanto el acceso concedido como el intento
+ * denegado, igual que pac_verificarRolAdmin().
+ */
+function obtenerUrlNormalizacion() {
   try {
+    const actualUserEmail = Session.getActiveUser().getEmail();
+    const gestorPermisos = new GestorPermisos();
+    const rol = gestorPermisos.obtenerRol(actualUserEmail);
+
+    if (rol !== getConfig('ROLES.ADMIN')) {
+      logAction(actualUserEmail, 'INTENTO_ACCESO_NORMALIZACION_DENEGADO', 'Rol actual: ' + rol);
+      return { success: false, mensaje: 'No tiene permiso para acceder a esta herramienta. Requiere rol Administrador.' };
+    }
+
+    const url = getConfigProperty('NORMALIZACION_URL', '');
+    if (!url) {
+      console.warn('⚠️ obtenerUrlNormalizacion: NORMALIZACION_URL no está configurada en Script Properties.');
+      return { success: false, mensaje: 'La herramienta de Normalización no está configurada. Contacte al administrador del sistema.' };
+    }
+
+    logAction(actualUserEmail, 'Acceso a Normalización', 'Abrió CONSOLIDADO Script');
+    return { success: true, url: url };
+  } catch (e) {
+    console.error(`Error en obtenerUrlNormalizacion: ${e.message}`);
+    return { success: false, mensaje: 'Error interno: ' + e.message };
+  }
+}
+
+function getUserLogs(usuario) {
+  const requesterEmail = Session.getActiveUser().getEmail();
+  try {
+    const gestor = new GestorPermisos();
+    const esConsultaPropia = (usuario === requesterEmail);
+
+    // Validar: si no es consulta propia (incluyendo 'ALL'), requerir 'PERMISOS'
+    if (!esConsultaPropia) {
+      gestor.validarPermiso('PERMISOS');
+    }
+
+    // Acceso permitido — proceder a obtener logs
     const auditoria = new GestorAuditoria();
     const logs = auditoria.obtenerLogsUsuario(usuario);
     return JSON.stringify(logs);
+
   } catch (e) {
+    // Log de intento denegado para auditoría
+    logAction(requesterEmail, 'ACCESO_LOGS_DENEGADO', {
+      usuarioSolicitado: usuario,
+      razonRechazo: e.message
+    });
     console.error(`Error en getUserLogs: ${e.message}`);
     return JSON.stringify([]);
   }
@@ -1280,6 +1376,10 @@ function getGeneralStats() {
 
 function initializeSystem() {
   try {
+    // ✅ SPRINT6-FASE-0: Validación RBAC server-side
+    const gestorPermisos = new GestorPermisos();
+    gestorPermisos.validarPermiso('ADMIN_SISTEMA');  // Lanza error si no es ADMIN
+
     validateConfig();
     
     const gestor = new GestorDatos();

@@ -1043,9 +1043,29 @@ function showAbout() {
         </div>
     `;
 
-    new bootstrap.Modal(document.getElementById('detailModal')).show();
+    // ✅ [2026-10-06] FIX: el detalle de RT (app_matriz_js.html, función de clic en celda
+    // de la Matriz) reutiliza este mismo modal/contenedor (#detailModal, #modalTitle,
+    // #detailTable). Antes, esta función reemplazaba el HTML completo del padre de
+    // #detailTable, destruyendo el <table id="detailTable"> en sí. La próxima vez que se
+    // abría el detalle de un RT, el título se actualizaba bien (es un elemento aparte),
+    // pero el cuerpo seguía mostrando "Acerca de" porque #detailTable ya no existía en el
+    // DOM para que DataTables lo reinicializara. Se restaura el HTML original del
+    // contenedor al cerrar este modal, antes de que nadie pueda volver a abrir el detalle.
+    const modalEl = document.getElementById('detailModal');
+    const $contenedorTabla = $('#detailTable').parent();
+    const htmlOriginalTabla = $contenedorTabla.html();
+
+    if (typeof $.fn.DataTable !== 'undefined' && $.fn.DataTable.isDataTable('#detailTable')) {
+        $('#detailTable').DataTable().destroy();
+    }
+
+    new bootstrap.Modal(modalEl).show();
     $('#modalTitle').text('Acerca de');
-    $('#detailTable').parent().html(html);
+    $contenedorTabla.html(html);
+
+    $(modalEl).one('hidden.bs.modal', function () {
+        $contenedorTabla.html(htmlOriginalTabla);
+    });
 }
 
 function logout() {
@@ -1057,25 +1077,25 @@ function logout() {
 }
 
 function abrirNormalizacion() {
-    const URL_NORMALIZACION = 'https://docs.google.com/spreadsheets/d/1pB8sXqsrddUIQY6sE1Sllpqye2V75lGjwgDwoUH3_90/edit?pli=1&gid=2100236556#gid=2100236556';
-
-    console.log('🔧 Abriendo herramienta de Normalización...');
-    window.open(URL_NORMALIZACION, '_blank');
-
-    try {
-        google.script.run
-            .withSuccessHandler(function() {
-                console.log('✅ Acceso a Normalización registrado');
-            })
-            .withFailureHandler(function(error) {
-                console.warn('⚠️ No se pudo registrar el acceso:', error.message);
-            })
-            .logAction(currentUser, 'Acceso a Normalización', 'Abrió CONSOLIDADO Script');
-    } catch (e) {
-        console.warn('⚠️ Error registrando acceso:', e.message);
-    }
-
-    showToast('📂 Abriendo Base de Datos para Normalización...', 'info');
+    // ✅ [2026-10-06] FIX Tarea R: la URL ya no vive hardcodeada en el frontend (se
+    // enviaba al navegador de cualquiera que abriera la web app). Ahora se pide al
+    // backend, que solo la entrega a usuarios con rol Administrador y registra el
+    // acceso (o el intento denegado) por su cuenta — ver obtenerUrlNormalizacion().
+    console.log('🔧 Solicitando acceso a herramienta de Normalización...');
+    google.script.run
+        .withSuccessHandler(function(resp) {
+            if (resp && resp.success && resp.url) {
+                showToast('📂 Abriendo Base de Datos para Normalización...', 'info');
+                window.open(resp.url, '_blank');
+            } else {
+                alert('⚠️ ' + (resp && resp.mensaje ? resp.mensaje : 'No se pudo abrir Normalización.'));
+            }
+        })
+        .withFailureHandler(function(error) {
+            console.warn('⚠️ No se pudo obtener la URL de Normalización:', error.message);
+            alert('⚠️ No se pudo abrir Normalización: ' + (error.message || error));
+        })
+        .obtenerUrlNormalizacion();
 }
 
 console.log('✅ app_core_js.html cargado');

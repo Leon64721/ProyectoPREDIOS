@@ -11,8 +11,14 @@
 // spreadsheet, no un ID distinto) — no crear una property nueva para este valor. Ver
 // DOCUMENTACION_TECNICA_VIVA.md, sección "Migración de IDs sensibles a Script Properties".
 const PAC_CONFIG = {
-  SS_PADRE_ID: getConfigProperty('MAESTRO_PERMISOS_ID', ''),
-  PAC_SPREADSHEET_ID: getConfigProperty('PAC_SPREADSHEET_ID', ''),
+  SS_PADRE_ID: getConfigProperty('MAESTRO_PERMISOS_ID', ''), // ⚠️ [2026-10-06]: ya NO lo usa pac_getSpreadsheet() como respaldo (ver fix abajo) — queda solo por si algo externo a este archivo todavía lo referencia.
+  PAC_SPREADSHEET_ID: getConfigProperty('PAC_SPREADSHEET_ID', ''), // Fuente EXTERNA de solo lectura (hojas "PAC IDU"/"PAC TRANSMILENIO"), usada únicamente por pac_leerHojaExterna(). NO es el destino de escritura.
+  // ✅ [2026-10-06] FIX: PAC_Vigente/PAC_Borrador/PAC_ReglasPAC/etc. se escribían en lo que
+  // devolviera pac_getSpreadsheet() (spreadsheet activo, o si no había ninguno, SS_PADRE_ID —
+  // es decir, el spreadsheet de permisos). Desde la migración multi-spreadsheet [Sección 43],
+  // el destino real es este spreadsheet dedicado, resuelto en runtime vía Script Property
+  // (no hardcodear el ID aquí, mismo criterio de seguridad que SS_PADRE_ID/PAC_SPREADSHEET_ID).
+  PAC_DESTINO_SPREADSHEET_ID: getConfigProperty('PAC_DESTINO_SPREADSHEET_ID', ''),
 
   // --- ⚠️ AGREGAR ESTE BLOQUE FALTANTE ⚠️ ---
   HOJAS_INTERNAS: {
@@ -142,16 +148,16 @@ var _PAC_RUNTIME_CACHE = {
   articuladores: null
 };
 
+// ✅ [2026-10-06] FIX: antes caía a getActiveSpreadsheet() (nunca se cumplía — este es un
+// proyecto independiente, sin appsscript.json/.clasp.json con parentId) y de ahí a SS_PADRE_ID
+// (el spreadsheet de permisos), mezclando las hojas internas de PAC con datos de permisos.
+// Ahora exige explícitamente PAC_DESTINO_SPREADSHEET_ID — sin fallback silencioso.
 function pac_getSpreadsheet() {
   if (_PAC_SS_CACHE) return _PAC_SS_CACHE;
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    if (ss) {
-      _PAC_SS_CACHE = ss;
-      return ss;
-    }
-  } catch(e) {}
-  _PAC_SS_CACHE = SpreadsheetApp.openById(PAC_CONFIG.SS_PADRE_ID);
+  if (!PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID) {
+    throw new Error('PAC_DESTINO_SPREADSHEET_ID no está configurado. PAC_Vigente/PAC_Borrador/PAC_ReglasPAC no tienen destino válido. Setee la Script Property PAC_DESTINO_SPREADSHEET_ID antes de sincronizar o leer datos de PAC.');
+  }
+  _PAC_SS_CACHE = SpreadsheetApp.openById(PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID);
   return _PAC_SS_CACHE;
 }
 
