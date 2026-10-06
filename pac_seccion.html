@@ -1470,7 +1470,12 @@ function pac_sincronizar() {
           pac_aprobarBorrador();
         }
       } else {
-        pac_toast('❌ Error en sync: ' + r.error, 'danger');
+        // ✅ [2026-10-06] FIX: sincronizarPAC() devuelve el fallo en `mensaje`, no en
+        // `error` — de ahí el "Error en sync: undefined". Se tolera cualquiera de los
+        // nombres de campo que ya usa el backend en distintos puntos (mensaje, error,
+        // msg, message), con un texto explícito si ninguno viene.
+        var detalle = r.mensaje || r.error || r.msg || r.message || 'Error desconocido (sin detalle del servidor)';
+        pac_toast('❌ Error en sync: ' + detalle, 'danger');
       }
     })
     .withFailureHandler(function(e) {
