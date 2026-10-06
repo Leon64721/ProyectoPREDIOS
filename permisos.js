@@ -138,22 +138,29 @@ class GestorPermisos {
       // (visto en producción en la fila de un usuario real). obtenerProyectos() (línea 48)
       // sigue esperando una cadena separada por comas o el literal 'ALL' — se normaliza aquí
       // para que coincida con lo que el lado de lectura ya asume.
-      // NO se convierte vacío a 'ALL' en silencio: un vacío llega aquí por descuido de
-      // formulario con la misma frecuencia que por intención real de dar acceso total, y
-      // la diferencia es demasiado importante para adivinarla. Se exige 'ALL' explícito.
+      // ⚠️ [2026-10-06, revisión]: el único llamador real hoy es app_permisos_js.html:112,
+      // que SIEMPRE manda `[]` — ese modal no tiene campo para elegir proyectos, no es un
+      // descuido puntual, es la única convención de llamada que existe. Un arreglo vacío
+      // específicamente se trata como "no se especificó, usar ALL" (con log explícito, no en
+      // silencio). Lo que SÍ se sigue rechazando con error es un string vacío, null o
+      // undefined — esos casos no tienen un origen legítimo conocido hoy, y si aparecen es
+      // más probable que sea un descuido que una intención real.
       let proyectosTexto;
       if (Array.isArray(proyectos)) {
-        proyectosTexto = proyectos.map(p => String(p).trim()).filter(p => p).join(',');
+        if (proyectos.length === 0) {
+          console.warn(`guardarPermiso: 'proyectos' llegó como arreglo vacío para ${email} — se usa 'ALL' (ver app_permisos_js.html:112, no hay selector de proyectos en el modal actual).`);
+          proyectosTexto = 'ALL';
+        } else {
+          proyectosTexto = proyectos.map(p => String(p).trim()).filter(p => p).join(',') || 'ALL';
+        }
       } else if (typeof proyectos === 'string') {
         proyectosTexto = proyectos.trim();
-      } else if (proyectos === null || proyectos === undefined) {
-        proyectosTexto = '';
       } else {
         throw new Error(`guardarPermiso: tipo de dato inválido para 'proyectos' (${typeof proyectos}). Debe ser un string separado por comas, un arreglo, o 'ALL'.`);
       }
 
       if (!proyectosTexto) {
-        throw new Error("guardarPermiso: 'proyectos' no puede quedar vacío. Use 'ALL' para acceso a todos los proyectos, o una lista explícita separada por comas.");
+        throw new Error("guardarPermiso: 'proyectos' no puede quedar vacío (string vacío, null o undefined). Use 'ALL' para acceso a todos los proyectos, un arreglo, o una lista explícita separada por comas.");
       }
 
       // Agregar nuevo permiso

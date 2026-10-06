@@ -3241,3 +3241,21 @@ Se agregó `auditarProyectosPermisos()`: solo lectura sobre la hoja Permisos de 
 1. Decidir qué hacer con `ALERTAS_ACTIVAS`, `ASIGNACIONES_EQUIPOS` y `CONFIG_REGLAS` tras el hallazgo de la tabla de mapeo — es la causa raíz confirmada de las alertas perdidas y probablemente de equipos reasignados a sus valores por defecto.
 2. Correr `auditarProyectosPermisos()` manualmente para ver cuántas filas más, aparte de la de Paula, tienen el mismo problema.
 3. Decidir el caso de Paula específicamente (rol "Seguimiento" sin proyecto) ahora que `guardarPermiso()` exige un valor explícito — probablemente necesite guardarse con `'ALL'` a propósito, o definir un valor "NINGUNO" si se retoma el uso de este campo en el futuro.
+
+## 48. VERIFICACIÓN — Diffs de las Tareas B y C confirmados íntegros + fix de regresión real en guardarPermiso() [2026-10-06]
+
+**Contexto:** una sesión externa (Cursor, sin acceso directo al repositorio, trabajando sobre un reporte de texto) advirtió que los diffs de `pac_getSpreadsheet()` (Sección 46) y `guardarPermiso()`/`auditarProyectosPermisos()` (Sección 47) podían estar truncados o duplicados. Se verificó leyendo `git show HEAD` directamente sobre los tres fragmentos:
+
+- `pac_getSpreadsheet()`: confirmado sin `getActiveSpreadsheet()` ni `openById(SS_PADRE_ID)`, código íntegro.
+- `guardarPermiso()`: la rama `Array.isArray` sí termina en `.join(',')`, sin truncar.
+- `auditarProyectosPermisos()`: un solo bloque `try {`, sin duplicar.
+
+Los tres puntos que Cursor señaló como posible corrupción de código **eran falsos** — mismo patrón de reportes generados sin leer el repo real que se vio en sesiones anteriores (Secciones 44-45).
+
+**Hallazgo real, distinto al que señaló Cursor:** revisando el cuarto punto de la verificación (qué envía la UI como `proyectos`), se encontró que `app_permisos_js.html:112` es el **único llamador real** de `savePermission()` en toda la aplicación, y llama siempre con `savePermission(email, rol, [], currentUser)` — un arreglo vacío fijo, porque el modal de creación de permisos no tiene ningún campo para elegir proyectos. El fix de la Sección 47, tal como quedó committeado, rechazaba cualquier valor vacío con un `Error`, lo que significaba que **crear un permiso nuevo desde esa pantalla iba a fallar siempre** a partir de ese commit. Esto era una regresión real introducida por este mismo agente, no una corrupción de archivo.
+
+**Fix aplicado:** en `guardarPermiso()` (`permisos.js`), un arreglo vacío (`[]`) ahora se trata específicamente como "no se especificó, usar `ALL`" — con `console.warn()` explícito citando el origen (`app_permisos_js.html:112`), no en silencio. Se sigue rechazando con `Error` cualquier `string` vacío, `null` o `undefined`, porque esos casos no tienen un origen legítimo conocido en el código actual — si aparecen, es más probable que sea un descuido real que la convención de un llamador existente.
+
+**Validaciones ejecutadas:** `node --check permisos.js` (sintaxis válida). Se confirmó con `git grep 'savePermission('` que no existe ningún otro llamador en el repositorio que pudiera verse afectado por este cambio.
+
+**Pendiente real:** el modal de permisos sigue sin ofrecer un selector de proyectos real — toda la funcionalidad de "proyectos por permiso" queda, en la práctica, fija en `ALL` para cualquier permiso creado desde la UI hoy. Si se decide retomar el uso de ese campo (recordar: hoy nada lo consume, ver Sección 47), hace falta diseñar el selector en el frontend, no solo el backend.
