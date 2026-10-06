@@ -703,3 +703,18 @@ function _diagRegistrarAccion(hoja, accion, filas) {
     console.warn('No se pudo registrar en el log de acciones (no crítico): ' + e.message);
   }
 }
+
+/**
+ * ✅ [2026-10-06] Envoltorio SIN PARÁMETROS para ejecutar la restauración REAL.
+ * El selector de funciones del editor de Apps Script no permite pasar argumentos al
+ * botón "Ejecutar" — llamar directamente a restaurarHojasDesdeOrigen() desde ahí siempre
+ * corre en modo simulación (ejecutar:false por defecto). Esta función existe solo para
+ * poder seleccionarla en el menú y ejecutar con ejecutar:true de verdad.
+ *
+ * ⚠️ ESTA FUNCIÓN ESCRIBE DATOS REALES. Ejecutar solo después de revisar la simulación
+ * de restaurarHojasDesdeOrigen() (sin argumentos) y confirmar que los respaldos
+ * RESPALDO_2026-10-06 ya existen.
+ */
+function ejecutarRestauracionReal_SOLO_DESPUES_DE_SIMULAR() {
+  return restaurarHojasDesdeOrigen({ ejecutar: true });
+}
