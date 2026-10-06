@@ -27,7 +27,7 @@ const CONFIG = {
     STAGING: '', // ID de Dato 2 / Staging para validaciones y promoción manual
     LOGS: '', // ✅ FASE 5b: spreadsheet separado (BD_OPERACIONAL_PREDIOS) para logs de auditoría (registrarAccion/getUserLogs) — ID real en Script Property DATA_FILES_LOGS_ID
     USUARIOS: '', // ✅ SPRINT5-FASE-A: directorio de identidad/rol (EMAIL/ROL/NOMBRE/ACTIVO/COMPONENTE), spreadsheet separado — ver ARCHITECTURE_V4.md Sección 6.1 — ID real en Script Property DATA_FILES_USUARIOS_ID
-    LOGS_ASIGNACION: 'ID_SPREADSHEET_LOGS_ASIGNACION_AQUI' // ⚠️ SPRINT5-FASE-A: placeholder sin reemplazar — crear spreadsheet dedicado y pegar su ID aquí antes de operar en producción (registrarLogAsignacion() se autodeshabilita mientras esto siga así, ver auditoria.js:31 para el mismo patrón)
+    LOGS_ASIGNACION: '' // ✅ [2026-10-06] SEGURIDAD: ya NO se pega el ID aquí en texto plano (ver nota de seguridad [2026-08-19] arriba) — se resuelve en runtime desde la Script Property DATA_FILES_LOGS_ASIGNACION_ID (CONFIG_SENSITIVE_PROPERTY_MAP). Falta crear el spreadsheet dedicado y setear esa Script Property; hasta entonces registrarLogAsignacion() sigue autodeshabilitado.
   },
 
   // ✅ NUEVO: Compatibilidad con código que usa DATA_FILES_IDS
@@ -252,6 +252,7 @@ const CONFIG_SENSITIVE_PROPERTY_MAP = {
   'DATA_FILES.LOGS': 'DATA_FILES_LOGS_ID',
   'DATA_FILES.USUARIOS': 'DATA_FILES_USUARIOS_ID',
   'DATA_FILES.PRINCIPAL': 'DATA_FILES_PRINCIPAL_ID',
+  'DATA_FILES.LOGS_ASIGNACION': 'DATA_FILES_LOGS_ASIGNACION_ID', // ✅ [2026-10-06]: cierra el mismo hueco de seguridad para LOGS_ASIGNACION (antes solo tenía placeholder en texto plano, ver nota en DATA_FILES)
   'MAESTRO_PERMISOS': 'MAESTRO_PERMISOS_ID'
 };
 

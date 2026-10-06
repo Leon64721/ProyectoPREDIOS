@@ -1147,8 +1147,11 @@ function _asegurarHojaLogsAsignacion(gestor, sheetName) {
 function registrarLogAsignacion(eventoData) {
   try {
     const logsFileId = getConfig('DATA_FILES.LOGS_ASIGNACION');
-    if (!logsFileId || logsFileId === 'ID_SPREADSHEET_LOGS_ASIGNACION_AQUI') {
-      console.error('❌ CONFIG.DATA_FILES.LOGS_ASIGNACION sigue en el valor de placeholder — registrarLogAsignacion() deshabilitado hasta configurar un ID de spreadsheet real en config.js.');
+    // ✅ SEGURIDAD [2026-10-06]: ya no se compara contra el string de placeholder viejo —
+    // el ID real ya no vive en config.js, se lee desde la Script Property
+    // DATA_FILES_LOGS_ASIGNACION_ID (ver CONFIG_SENSITIVE_PROPERTY_MAP en config.js).
+    if (!logsFileId) {
+      console.error('❌ DATA_FILES.LOGS_ASIGNACION no está configurado — falta crear el spreadsheet dedicado y setear la Script Property DATA_FILES_LOGS_ASIGNACION_ID. registrarLogAsignacion() deshabilitado hasta entonces. Ver DOCUMENTACION_TECNICA_VIVA.md.');
       return { success: false, error: 'DATA_FILES.LOGS_ASIGNACION no configurado' };
     }
 

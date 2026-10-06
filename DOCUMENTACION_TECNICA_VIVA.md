@@ -3154,4 +3154,42 @@ Auditoría RBAC: **COMPLETADA Y VERIFICADA** 2026-09-23.
 1. Resolver GitHub billing (externo) → PR #4 mergea automáticamente
 2. Ejecutar `organizarEnCarpetaProgramaPredios()` en Google Apps Script (opcional)
 
+## 44. FIX — Cierre de hueco de seguridad en DATA_FILES.LOGS_ASIGNACION [2026-10-06, COMPLETADO]
+
+**Contexto:** una sesión externa (Claude Sonnet, usando una fuente de Google Drive ajena a este repo) generó un diagnóstico que daba por "desconectados" el módulo PAC y RBAC tras la migración de la Sección 43. Verificación directa contra el código descartó esa premisa: la migración multi-spreadsheet y el cableado de `config.js`/`pac_config.js`/`permisos.js`/`homologacion_usuarios.js`/`gestion_equipos_backend.js`/`auditoria.js` ya estaban correctos y cerrados. El único hallazgo real al verificar fue que `CONFIG.DATA_FILES.LOGS_ASIGNACION` (`config.js:30`, introducido en Sprint 5 Fase A, Sección 19) seguía con el placeholder literal `'ID_SPREADSHEET_LOGS_ASIGNACION_AQUI'`, y que el comentario junto a ese placeholder le indicaba a quien lo resolviera "pegar su ID aquí" en texto plano — exactamente el anti-patrón que el fix de seguridad [2026-08-19] eliminó para `DATA_FILES.LOGS`, `DATA_FILES.USUARIOS` y `MAESTRO_PERMISOS` tras la exposición de IDs en el repo público. `DATA_FILES.LOGS_ASIGNACION` nunca se agregó a `CONFIG_SENSITIVE_PROPERTY_MAP`, así que quedó fuera de ese mismo fix por descuido, no por diseño.
+
+**Qué se cambió (solo código, ningún ID real escrito en ningún archivo versionado):**
+- `config.js` — `CONFIG_SENSITIVE_PROPERTY_MAP` (línea ~251): se agregó la entrada `'DATA_FILES.LOGS_ASIGNACION': 'DATA_FILES_LOGS_ASIGNACION_ID'`, igual al patrón ya usado por `DATA_FILES.LOGS`/`DATA_FILES.USUARIOS`/`DATA_FILES.PRINCIPAL`/`MAESTRO_PERMISOS`.
+- `config.js` — `CONFIG.DATA_FILES.LOGS_ASIGNACION` (línea 30): se reemplazó el placeholder en texto plano por `''`, con comentario actualizado que remite a la Script Property `DATA_FILES_LOGS_ASIGNACION_ID` en vez de pedir pegar el ID en el archivo.
+- `gestion_equipos_backend.js` — `registrarLogAsignacion()` (línea ~1150): el guard que comparaba contra el string exacto del placeholder viejo se simplificó a `if (!logsFileId)`, porque ahora `getConfig('DATA_FILES.LOGS_ASIGNACION')` resuelve el valor real desde Script Properties (o `''` si no está seteada) en vez de devolver el placeholder.
+
+**Impacto funcional:** ninguno todavía en producción — `registrarLogAsignacion()` sigue deshabilitado (`{ success: false, error: 'DATA_FILES.LOGS_ASIGNACION no configurado' }`) hasta que se complete el paso pendiente de abajo. El cambio solo cierra la vía de exposición de IDs en código versionado; no altera ningún flujo que ya funcionara.
+
+**Validaciones ejecutadas:** lectura cruzada de `config.js` (líneas 1-90, 246-392), `gestion_equipos_backend.js` (líneas 1143-1367, 1674-1686) y Sección 19/43 de este documento para confirmar que no existe aún ningún ID real para `LOGS_ASIGNACION` en ningún lado (ni Script Properties ni documentación) — no se inventó ni se copió ningún ID. No se ejecutó `diagnosticarSistema()` ni `clasp push` en esta sesión; pendiente antes de dar por cerrado el fix.
+
+**Pendientes reales (no resueltos por este cambio):**
+1. Crear el spreadsheet dedicado para `LOGS_ASIGNACION` y setear la Script Property `DATA_FILES_LOGS_ASIGNACION_ID` (acción manual en el editor de Apps Script o vía `configurarScriptProperties()`; ningún agente de edición de archivos puede hacerlo).
+2. Ejecutar `clasp push` y `diagnosticarSistema()` para confirmar que el cambio no rompe nada en el proyecto desplegado.
+3. Observación aparte, no bloqueante: la Sección 43 de este mismo documento (líneas 3128-3133) tiene los 4 IDs reales de spreadsheet en texto plano, lo cual reabre el mismo riesgo que motivó el fix de seguridad del 2026-08-19 si este repo volviera a ser público. No se modifica en este fix por estar fuera de su alcance; queda señalado para una decisión explícita.
+
 Fase de Migración: **COMPLETADA Y VERIFICADA** 2026-09-23.
+
+## 45. CORRECCIÓN — El `scriptId` "producción" de la Sección 32 era incorrecto; hay 3 proyectos de Apps Script distintos [2026-10-06]
+
+**Contexto:** una sesión externa (otra IA, usando fuentes de Google Drive ajenas a este repo) propuso la hipótesis de que el código podía haberse desplegado desde una rama sin la migración, pisando el proyecto correcto. Se investigó contra el repositorio real y se confirmó algo más grave y más preciso que esa hipótesis, con confirmación directa del usuario.
+
+**Hallazgo: existen 3 `scriptId` distintos en el historial de `.clasp.json`, no 1:**
+
+| `scriptId` | Introducido en | Rol real (confirmado por el usuario 2026-10-06) |
+|---|---|---|
+| `16gqzy8nb...4qZo` | `37a2a35` (2026-08-04) | **Es el proyecto que usan los usuarios reales en producción.** Quedó congelado en el estado de código de esa fecha — no recibió el fix de seguridad de Script Properties (Sección 32, 2026-08-19), ni la auditoría RBAC (Secciones 38-42), ni la migración multi-spreadsheet (Sección 43, 2026-09-23). El usuario pidió explícitamente **no tocarlo**. |
+| `17Syj1...H69h` | `24f29ed` (2026-08-05), reemplazando al anterior en el mismo `.clasp.json` sin commit explicativo dedicado | **Mal etiquetado como "producción" en la Sección 32.1** (tabla de IDs expuestos, 2026-08-19) — esa sesión asumió que el valor vigente en `.clasp.json` era el proyecto real sin verificarlo con el usuario. El commit `24f29ed` sí deja constancia correcta en su mensaje: "`.clasp.json` scriptId was already pointing at a different (**confirmed dev/test**) project before this session started". Es decir, ya se sabía en agosto que no era producción, y ese dato se perdió al escribir la Sección 32. Sigue siendo `main`'s `scriptId` hoy. Estado real: abandonado, pendiente de que el usuario confirme si tiene triggers/deployments activos que revisar antes de darlo por muerto.|
+| `18vY9...zFGi` | `f8f7bce` (2026-09-23), sin explicación en el commit de por qué se cambia de proyecto | **Es el proyecto sobre el que se está trabajando activamente hoy** (confirmado por el usuario 2026-10-06). Es el `scriptId` vigente en `.clasp.json` de `fix/post-audit-rbac`. Tiene la migración multi-spreadsheet y las Script Properties de la Sección 43 ya configuradas. La Tarea 1 de la Sección 44 se aplicó sobre el código que se despliega aquí. |
+
+**Corrección explícita a la Sección 32.1:** la fila `| 17Syj1...H69h | .clasp.json → scriptId | scriptId del proyecto Apps Script actual (producción) |` de este mismo documento es **incorrecta** y no se reescribe (la Sección 32 se preserva como registro histórico de lo que se creyó en su momento), pero queda anulada por esta sección: `17Syj1` nunca fue producción, y el proyecto de producción real (`16gqzy8nb...`) no ha recibido ninguno de los fixes de seguridad ni de RBAC documentados entre las Secciones 32 y 44.
+
+**Decisión del usuario (2026-10-06):** continuar el trabajo activo sobre `18vY9...` (el estado actual de `fix/post-audit-rbac` ya apunta ahí correctamente, sin cambios necesarios). No tocar `16gqzy8nb...` por ahora. La reconciliación eventual entre el proyecto de producción real y el trabajo migrado queda como decisión futura del usuario, fuera del alcance de esta sesión.
+
+**Pendiente de verificación manual (no ejecutable desde el repo):**
+1. Abrir `17Syj1...` en el editor de Apps Script y confirmar si tiene triggers instalados, deployments activos o permisos de usuarios que deban revisarse antes de considerarlo abandonado.
+2. Cuando el usuario decida reconciliar producción (`16gqzy8nb...`) con el trabajo migrado (`18vY9...`), ese es un cambio de alcance mayor (no un fix de código) que debe planearse aparte, incluyendo migración de datos reales de producción, triggers y permisos de usuarios finales.
