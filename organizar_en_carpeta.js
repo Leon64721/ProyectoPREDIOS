@@ -19,7 +19,12 @@ function organizarEnCarpetaProgramaPredios() {
     'DATA_FILES_LOGS_ID': 'Sistema Predial IDU - Logs',
     'DATA_FILES_USUARIOS_ID': 'Sistema Predial IDU - Usuarios',
     'MAESTRO_PERMISOS_ID': 'Sistema Predial IDU - Permisos RBAC',
-    'PAC_SPREADSHEET_ID': 'Sistema Predial IDU - PAC'
+    // ✅ [2026-10-06] CORRECCIÓN: "Sistema Predial IDU - PAC" es el archivo que apunta
+    // PAC_DESTINO_SPREADSHEET_ID (destino de escritura de PAC_Vigente/Borrador/etc, ver
+    // Sección 46), NO PAC_SPREADSHEET_ID. Esa clave está destinada a cambiar a la fuente
+    // externa real (1i4Qt..., ver pendientes), un archivo que esta función no debe mover
+    // a la carpeta PROGRAMAPREDIOS porque no es propiedad de este sistema.
+    'PAC_DESTINO_SPREADSHEET_ID': 'Sistema Predial IDU - PAC'
   };
   const archivos = {};
   Object.keys(CLAVES_ARCHIVOS).forEach(function (clave) {
@@ -119,7 +124,8 @@ function obtenerURLsArchivos() {
   console.log('🔗 URLS DE LOS ARCHIVOS (⚠️ este log incluirá los IDs reales)');
   console.log('═══════════════════════════════════════════════════════\n');
 
-  const CLAVES = ['DATA_FILES_PRINCIPAL_ID', 'DATA_FILES_LOGS_ID', 'DATA_FILES_USUARIOS_ID', 'MAESTRO_PERMISOS_ID', 'PAC_SPREADSHEET_ID'];
+  // ✅ [2026-10-06] CORRECCIÓN: PAC_DESTINO_SPREADSHEET_ID, no PAC_SPREADSHEET_ID — mismo motivo que en organizarEnCarpetaProgramaPredios() arriba.
+  const CLAVES = ['DATA_FILES_PRINCIPAL_ID', 'DATA_FILES_LOGS_ID', 'DATA_FILES_USUARIOS_ID', 'MAESTRO_PERMISOS_ID', 'PAC_DESTINO_SPREADSHEET_ID'];
   const urls = {};
 
   CLAVES.forEach(function (key) {
