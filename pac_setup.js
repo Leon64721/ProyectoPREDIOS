@@ -214,6 +214,19 @@ function pac_verificarAccesoExterno() {
   }
 }
 
+/**
+ * ✅ [2026-10-06] Envoltorio con LOG: pac_verificarAccesoExterno() nunca imprimió nada
+ * por console.log, solo devuelve un resultado — por eso el panel de "Registro de
+ * ejecución" queda vacío al correr esa función directo desde el editor. Esta función
+ * hace lo mismo y además imprime el resultado completo, para poder copiarlo del log.
+ * No crea ni escribe nada, es la misma verificación de solo lectura.
+ */
+function pac_verificarAccesoExterno_CON_LOG() {
+  const resultado = pac_verificarAccesoExterno();
+  console.log(JSON.stringify(resultado, null, 2));
+  return resultado;
+}
+
 
 /**
  * ✅ [2026-10-06] Verifica el destino interno de PAC (PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID).
