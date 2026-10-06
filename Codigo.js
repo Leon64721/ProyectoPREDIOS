@@ -1170,6 +1170,39 @@ function logAction(user, action, details) {
   }
 }
 
+/**
+ * ✅ [2026-10-06] Tarea R: entrega la URL de la herramienta de Normalización solo a
+ * usuarios con rol Administrador. El valor real vive en la Script Property
+ * NORMALIZACION_URL — nunca en código versionado ni en el frontend (antes estaba
+ * hardcodeada en app_core_js.html, enviada al navegador de cualquiera que abriera la
+ * web app, sin importar su rol). Registra tanto el acceso concedido como el intento
+ * denegado, igual que pac_verificarRolAdmin().
+ */
+function obtenerUrlNormalizacion() {
+  try {
+    const actualUserEmail = Session.getActiveUser().getEmail();
+    const gestorPermisos = new GestorPermisos();
+    const rol = gestorPermisos.obtenerRol(actualUserEmail);
+
+    if (rol !== getConfig('ROLES.ADMIN')) {
+      logAction(actualUserEmail, 'INTENTO_ACCESO_NORMALIZACION_DENEGADO', 'Rol actual: ' + rol);
+      return { success: false, mensaje: 'No tiene permiso para acceder a esta herramienta. Requiere rol Administrador.' };
+    }
+
+    const url = getConfigProperty('NORMALIZACION_URL', '');
+    if (!url) {
+      console.warn('⚠️ obtenerUrlNormalizacion: NORMALIZACION_URL no está configurada en Script Properties.');
+      return { success: false, mensaje: 'La herramienta de Normalización no está configurada. Contacte al administrador del sistema.' };
+    }
+
+    logAction(actualUserEmail, 'Acceso a Normalización', 'Abrió CONSOLIDADO Script');
+    return { success: true, url: url };
+  } catch (e) {
+    console.error(`Error en obtenerUrlNormalizacion: ${e.message}`);
+    return { success: false, mensaje: 'Error interno: ' + e.message };
+  }
+}
+
 function getUserLogs(usuario) {
   const requesterEmail = Session.getActiveUser().getEmail();
   try {

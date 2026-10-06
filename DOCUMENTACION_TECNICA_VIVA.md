@@ -3372,3 +3372,15 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 **Validaciones ejecutadas:** `node --check pac_gestor.js` (sintaxis válida), `node scripts/lint-html-scripts.js pac_seccion.html` → "1/1 bloques de JS válidos". No se ejecutó ninguna sincronización real, por instrucción explícita del usuario.
 
 **Pendiente real:** probar el flujo completo con datos reales una vez se comparta y configure la fuente externa de PAC — en particular, confirmar que la guarda del 20% se comporta como se espera con el caso real de `PAC_Vigente` (1.740 filas, 383 RT que no están en el origen, que representarían ~22% si todas se eliminaran de golpe).
+
+## 52. Tarea R — URL de Normalización movida de frontend hardcodeado a backend con RBAC [2026-10-06]
+
+**Contexto:** el hallazgo nuevo de la Sección 50 (`app_core_js.html:1060`) tenía un ID de spreadsheet distinto a los 5 conocidos, hardcodeado directo en el frontend. Antes de tocarlo, se confirmó que `URL_NORMALIZACION` se usaba en un único punto (`abrirNormalizacion()`), llamada desde un único ítem de menú (`Index.html:80`) — confirmado el alcance antes de editar, como se pidió.
+
+**Qué se cambió:**
+- `app_core_js.html` — `abrirNormalizacion()` ya no tiene ningún ID hardcodeado. Ahora pide la URL al backend vía `google.script.run.obtenerUrlNormalizacion()`, y solo la abre si la respuesta viene con éxito. Si no hay permiso o la Script Property no está configurada, muestra una alerta con el motivo en vez de abrir nada.
+- `Codigo.js` — nueva función `obtenerUrlNormalizacion()`: verifica que el usuario activo tenga rol Administrador (mismo mecanismo que `pac_verificarRolAdmin()` en el módulo PAC) antes de leer y devolver la Script Property `NORMALIZACION_URL`. Registra tanto el acceso concedido como el intento denegado vía `logAction()`. Si la property no está configurada, devuelve un mensaje claro en vez de fallar en silencio.
+
+**Validaciones ejecutadas:** `node --check Codigo.js` (sintaxis válida), `node scripts/lint-html-scripts.js app_core_js.html` → "1/1 bloques de JS válidos". Se confirmó con `git grep` que el ID ya no aparece en ningún archivo rastreado por git.
+
+**Pendiente real, acción del usuario:** crear la Script Property `NORMALIZACION_URL` en el proyecto `18vY9...` con el valor de la URL actual, **antes** de hacer `clasp push` de este cambio — si no, el botón de Normalización deja de funcionar hasta que se configure (el mensaje de error ya es claro sobre esto, pero el botón no funcionará igual).
