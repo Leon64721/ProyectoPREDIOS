@@ -221,9 +221,12 @@ function pac_verificarAccesoExterno() {
  * confirmar que el destino configurado es el correcto antes de que cualquier función
  * (sincronizarPAC, aprobarBorradorPAC, pac_guardarReglasReemplazo, etc.) escriba ahí.
  * No imprime el ID del spreadsheet en los logs, solo nombre y conteos.
+ * ⚠️ [2026-10-06, revisión]: ALERTAS_ACTIVAS se quitó de la lista — vive en
+ * DATA_FILES.PRINCIPAL y la escribe evaluador_alertas.js, no tiene relación con este
+ * destino. Verificarla aquí daría una falsa sensación de cobertura.
  */
 function pac_verificarDestino() {
-  const hojasEsperadas = ['PAC_Vigente', 'PAC_Borrador', 'PAC_ReglasPAC', 'ALERTAS_ACTIVAS'];
+  const hojasEsperadas = ['PAC_Vigente', 'PAC_Borrador', 'PAC_ReglasPAC'];
   try {
     if (!PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID) {
       const msg = 'PAC_DESTINO_SPREADSHEET_ID no configurado. Setee la Script Property antes de continuar.';
