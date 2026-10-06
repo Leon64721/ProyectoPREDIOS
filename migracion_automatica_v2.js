@@ -2,11 +2,20 @@
  * SCRIPT DE MIGRACIÓN AUTOMÁTICA V2
  * Sistema Predial IDU - Migración desde archivo único a arquitectura distribuida
  *
- * BASADO EN LA ESTRUCTURA REAL DEL ARCHIVO:
- * [STAGING] Matriz Principal (1FHC6Z6BeMvgnAMlDY_c3ZE5aokOqyRjah9v_leXkhXM)
+ * BASADO EN LA ESTRUCTURA REAL DEL ARCHIVO: [STAGING] Matriz Principal
+ *
+ * ✅ [2026-10-06] SEGURIDAD: el ID ya NO vive aquí en texto plano — se resuelve desde la
+ * Script Property ORIGEN_STAGING_ID (mismo patrón que el resto del proyecto).
+ * ⚠️ Nota de auditoría: el valor que estaba hardcodeado aquí antes de este fix
+ * ('1FHC6Z6Be...') coincide con el que hoy vive en DATA_FILES_PRINCIPAL_ID, NO con el ID
+ * real del [STAGING] Matriz Principal que el usuario confirmó y configuró en
+ * ORIGEN_STAGING_ID. Es casi seguro un valor de prueba/desarrollo que quedó en el
+ * comentario y la constante sin actualizarse — esta migración ya corrió una vez (Sección
+ * 43) con resultados verificados correctos, así que no se investiga más a fondo aquí; solo
+ * se corrige para que, si esta función se vuelve a ejecutar alguna vez, use la Script
+ * Property correcta en vez del valor viejo hardcodeado.
  */
-
-const ARCHIVO_ORIGEN = '1FHC6Z6BeMvgnAMlDY_c3ZE5aokOqyRjah9v_leXkhXM';
+const ARCHIVO_ORIGEN = getConfigProperty('ORIGEN_STAGING_ID', '');
 const CARPETA_DESTINO = null; // null = raíz de Drive
 
 // ═══════════════════════════════════════════════════════════════════
@@ -114,7 +123,7 @@ function crearEstructuraArchivos() {
     url: ssPrincipal.getUrl(),
     spreadsheet: ssPrincipal
   };
-  console.log(`    ✅ ID: ${ssPrincipal.getId()}`);
+  console.log('    ✅ Creado (ID guardado en nuevosArchivos.principal, no se imprime)'); // ✅ [2026-10-06] SEGURIDAD: el ID ya queda en nuevosArchivos.principal.id para configurarScriptProperties(), no hace falta imprimirlo
 
   // ─────────────────────────────────────────────────────────────────
   // ARCHIVO 2: Logs (Auditoría y trazabilidad)
@@ -137,7 +146,7 @@ function crearEstructuraArchivos() {
     url: ssLogs.getUrl(),
     spreadsheet: ssLogs
   };
-  console.log(`    ✅ ID: ${ssLogs.getId()}`);
+  console.log('    ✅ Creado (ID guardado en nuevosArchivos.logs, no se imprime)'); // ✅ [2026-10-06] SEGURIDAD
 
   // ─────────────────────────────────────────────────────────────────
   // ARCHIVO 3: Usuarios (Directorio y asignaciones)
@@ -157,7 +166,7 @@ function crearEstructuraArchivos() {
     url: ssUsuarios.getUrl(),
     spreadsheet: ssUsuarios
   };
-  console.log(`    ✅ ID: ${ssUsuarios.getId()}`);
+  console.log('    ✅ Creado (ID guardado en nuevosArchivos.usuarios, no se imprime)'); // ✅ [2026-10-06] SEGURIDAD
 
   // ─────────────────────────────────────────────────────────────────
   // ARCHIVO 4: Permisos RBAC
@@ -175,7 +184,7 @@ function crearEstructuraArchivos() {
     url: ssPermisos.getUrl(),
     spreadsheet: ssPermisos
   };
-  console.log(`    ✅ ID: ${ssPermisos.getId()}`);
+  console.log('    ✅ Creado (ID guardado en nuevosArchivos.permisos, no se imprime)'); // ✅ [2026-10-06] SEGURIDAD
 
   // ─────────────────────────────────────────────────────────────────
   // ARCHIVO 5: PAC (Motor de reglas y alertas)
@@ -208,7 +217,7 @@ function crearEstructuraArchivos() {
     url: ssPAC.getUrl(),
     spreadsheet: ssPAC
   };
-  console.log(`    ✅ ID: ${ssPAC.getId()}`);
+  console.log('    ✅ Creado (ID guardado en nuevosArchivos.pac, no se imprime)'); // ✅ [2026-10-06] SEGURIDAD
 
   return nuevosArchivos;
 }

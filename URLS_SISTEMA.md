@@ -28,30 +28,27 @@ https://script.google.com/d/18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSn
 
 ## 📁 Spreadsheets Creados
 
+**✅ [2026-10-06] SEGURIDAD [Tarea K2]:** los IDs y URLs completas que vivían aquí se quitaron. Cada archivo se identifica solo por su nombre; el ID real vive únicamente en la Script Property correspondiente (ver tabla de abajo), consultable desde el editor de Apps Script → Configuración del proyecto → Propiedades del script.
+
 ### 1. Sistema Predial IDU - Principal
-**ID:** `1FHC6Z6BeMvgnAMlDY_c3ZE5aokOqyRjah9v_leXkhXM`  
-**Filas:** 10,108  
-**URL:** https://docs.google.com/spreadsheets/d/1FHC6Z6BeMvgnAMlDY_c3ZE5aokOqyRjah9v_leXkhXM/
+**Filas:** 10,108
+**Script Property:** `DATA_FILES_PRINCIPAL_ID`
 
 ### 2. Sistema Predial IDU - Logs
-**ID:** `1ClFAgntVtjHwnmeTcf3br3eYqZggNTYu8XJZrNaL-LY`  
-**Filas:** 36,107  
-**URL:** https://docs.google.com/spreadsheets/d/1ClFAgntVtjHwnmeTcf3br3eYqZggNTYu8XJZrNaL-LY/
+**Filas:** 36,107
+**Script Property:** `DATA_FILES_LOGS_ID`
 
 ### 3. Sistema Predial IDU - Usuarios
-**ID:** `1TWMKWt9eOK0eVxcqo-vlWLAGzJQFEDx7kuvtOQEjpVo`  
-**Filas:** 291 (usuarios)  
-**URL:** https://docs.google.com/spreadsheets/d/1TWMKWt9eOK0eVxcqo-vlWLAGzJQFEDx7kuvtOQEjpVo/
+**Filas:** 291 (usuarios)
+**Script Property:** `DATA_FILES_USUARIOS_ID`
 
 ### 4. Sistema Predial IDU - Permisos RBAC
-**ID:** `1kWiMu5P0HZwJdoE0_LMwPGmN928gAEBsNYvtL9E0q28`  
-**Filas:** 15 (permisos)  
-**URL:** https://docs.google.com/spreadsheets/d/1kWiMu5P0HZwJdoE0_LMwPGmN928gAEBsNYvtL9E0q28/
+**Filas:** 15 (permisos)
+**Script Property:** `MAESTRO_PERMISOS_ID`
 
 ### 5. Sistema Predial IDU - PAC
-**ID:** `11gmGF1mGBKmUDm4xGGBUGFc3-h9gZPsS9m8eWiEQaYU`  
-**Filas:** 1,741 (registros vigentes)  
-**URL:** https://docs.google.com/spreadsheets/d/11gmGF1mGBKmUDm4xGGBUGFc3-h9gZPsS9m8eWiEQaYU/
+**Filas:** 1,741 (registros vigentes)
+**Script Property:** `PAC_SPREADSHEET_ID`
 
 ---
 
@@ -65,13 +62,17 @@ https://script.google.com/d/18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSn
 
 ## ⚙️ Script Properties Configuradas
 
-```javascript
-DATA_FILES_PRINCIPAL_ID: "1FHC6Z6BeMvgnAMlDY_c3ZE5aokOqyRjah9v_leXkhXM"
-DATA_FILES_LOGS_ID: "1ClFAgntVtjHwnmeTcf3br3eYqZggNTYu8XJZrNaL-LY"
-DATA_FILES_USUARIOS_ID: "1TWMKWt9eOK0eVxcqo-vlWLAGzJQFEDx7kuvtOQEjpVo"
-MAESTRO_PERMISOS_ID: "1kWiMu5P0HZwJdoE0_LMwPGmN928gAEBsNYvtL9E0q28"
-PAC_SPREADSHEET_ID: "11gmGF1mGBKmUDm4xGGBUGFc3-h9gZPsS9m8eWiEQaYU"
-```
+| Script Property | Archivo |
+|---|---|
+| `DATA_FILES_PRINCIPAL_ID` | Sistema Predial IDU - Principal |
+| `DATA_FILES_LOGS_ID` | Sistema Predial IDU - Logs |
+| `DATA_FILES_USUARIOS_ID` | Sistema Predial IDU - Usuarios |
+| `MAESTRO_PERMISOS_ID` | Sistema Predial IDU - Permisos RBAC |
+| `PAC_SPREADSHEET_ID` | Sistema Predial IDU - PAC |
+| `ORIGEN_STAGING_ID` | [STAGING] Matriz Principal (origen monolítico) |
+| `PAC_DESTINO_SPREADSHEET_ID` | Sistema Predial IDU - PAC (destino de escritura, mismo archivo que `PAC_SPREADSHEET_ID` hoy) |
+
+Valores reales: solo en el editor de Apps Script → Configuración del proyecto → Propiedades del script. No se pegan aquí.
 
 ---
 

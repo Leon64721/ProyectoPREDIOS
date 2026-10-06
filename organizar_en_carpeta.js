@@ -10,29 +10,26 @@ function organizarEnCarpetaProgramaPredios() {
   const FOLDER_NAME = 'PROGRAMAPREDIOS';
   const props = PropertiesService.getScriptProperties();
 
-  // IDs de los archivos
-  const archivos = {
-    'DATA_FILES_PRINCIPAL_ID': {
-      id: '1FHC6Z6BeMvgnAMlDY_c3ZE5aokOqyRjah9v_leXkhXM',
-      nombre: 'Sistema Predial IDU - Principal'
-    },
-    'DATA_FILES_LOGS_ID': {
-      id: '1ClFAgntVtjHwnmeTcf3br3eYqZggNTYu8XJZrNaL-LY',
-      nombre: 'Sistema Predial IDU - Logs'
-    },
-    'DATA_FILES_USUARIOS_ID': {
-      id: '1TWMKWt9eOK0eVxcqo-vlWLAGzJQFEDx7kuvtOQEjpVo',
-      nombre: 'Sistema Predial IDU - Usuarios'
-    },
-    'MAESTRO_PERMISOS_ID': {
-      id: '1kWiMu5P0HZwJdoE0_LMwPGmN928gAEBsNYvtL9E0q28',
-      nombre: 'Sistema Predial IDU - Permisos RBAC'
-    },
-    'PAC_SPREADSHEET_ID': {
-      id: '11gmGF1mGBKmUDm4xGGBUGFc3-h9gZPsS9m8eWiEQaYU',
-      nombre: 'Sistema Predial IDU - PAC'
-    }
+  // ✅ [2026-10-06] SEGURIDAD: los IDs ya NO viven aquí en texto plano — este repo estuvo
+  // público en GitHub. Se resuelven en runtime desde Script Properties (mismo patrón que
+  // config.js/pac_config.js). Si alguna property no está seteada, esa entrada se omite
+  // (se reporta y se sigue con las demás, no se detiene todo el proceso).
+  const CLAVES_ARCHIVOS = {
+    'DATA_FILES_PRINCIPAL_ID': 'Sistema Predial IDU - Principal',
+    'DATA_FILES_LOGS_ID': 'Sistema Predial IDU - Logs',
+    'DATA_FILES_USUARIOS_ID': 'Sistema Predial IDU - Usuarios',
+    'MAESTRO_PERMISOS_ID': 'Sistema Predial IDU - Permisos RBAC',
+    'PAC_SPREADSHEET_ID': 'Sistema Predial IDU - PAC'
   };
+  const archivos = {};
+  Object.keys(CLAVES_ARCHIVOS).forEach(function (clave) {
+    const id = getConfigProperty(clave, '');
+    if (!id) {
+      console.warn('⚠️ ' + clave + ' no está configurada — se omite ' + CLAVES_ARCHIVOS[clave] + '.');
+      return;
+    }
+    archivos[clave] = { id: id, nombre: CLAVES_ARCHIVOS[clave] };
+  });
 
   try {
     // 1. Buscar o crear la carpeta "PROGRAMAPREDIOS"
@@ -43,14 +40,10 @@ function organizarEnCarpetaProgramaPredios() {
 
     if (folders.hasNext()) {
       folder = folders.next();
-      console.log(`  ✅ Carpeta encontrada: ${folder.getName()}`);
-      console.log(`     ID: ${folder.getId()}`);
-      console.log(`     URL: ${folder.getUrl()}`);
+      console.log(`  ✅ Carpeta encontrada: ${folder.getName()}`); // ✅ [2026-10-06] SEGURIDAD: ya no imprime ID/URL de la carpeta
     } else {
       folder = DriveApp.createFolder(FOLDER_NAME);
       console.log(`  ✅ Carpeta creada: ${folder.getName()}`);
-      console.log(`     ID: ${folder.getId()}`);
-      console.log(`     URL: ${folder.getUrl()}`);
     }
 
     // 2. Mover cada archivo a la carpeta
@@ -93,10 +86,8 @@ function organizarEnCarpetaProgramaPredios() {
     console.log('\n═══════════════════════════════════════════════════════');
     console.log('📊 RESUMEN');
     console.log('═══════════════════════════════════════════════════════');
-    console.log(`  📁 Carpeta: ${folder.getName()}`);
-    console.log(`  🆔 ID: ${folder.getId()}`);
-    console.log(`  🔗 URL: ${folder.getUrl()}`);
-    console.log(`  📦 Archivos movidos: ${movidosCount}/5`);
+    console.log(`  📁 Carpeta: ${folder.getName()}`); // ✅ [2026-10-06] SEGURIDAD: ya no imprime ID/URL de la carpeta
+    console.log(`  📦 Archivos movidos: ${movidosCount}/${Object.keys(archivos).length}`);
     console.log('\n✅ ORGANIZACIÓN COMPLETADA');
     console.log('═══════════════════════════════════════════════════════');
 
@@ -115,43 +106,42 @@ function organizarEnCarpetaProgramaPredios() {
 }
 
 /**
- * Obtiene las URLs de todos los archivos organizados
+ * Obtiene las URLs de todos los archivos organizados.
+ * ⚠️ [2026-10-06] SEGURIDAD: esta función, a propósito, SÍ imprime URLs completas (que
+ * incluyen el ID del spreadsheet) — es su función: darle al usuario un enlace clicable.
+ * Ejecutarla deja esos IDs en el log de ejecución de Apps Script, visible para cualquier
+ * editor del proyecto. Ejecutar solo cuando de verdad se necesiten los enlaces, no como
+ * parte de un diagnóstico de rutina. Los IDs ya no están hardcodeados aquí — se resuelven
+ * desde Script Properties, igual que en el resto del proyecto.
  */
 function obtenerURLsArchivos() {
   console.log('═══════════════════════════════════════════════════════');
-  console.log('🔗 URLS DE LOS ARCHIVOS');
+  console.log('🔗 URLS DE LOS ARCHIVOS (⚠️ este log incluirá los IDs reales)');
   console.log('═══════════════════════════════════════════════════════\n');
 
-  const archivos = {
-    'DATA_FILES_PRINCIPAL_ID': '1FHC6Z6BeMvgnAMlDY_c3ZE5aokOqyRjah9v_leXkhXM',
-    'DATA_FILES_LOGS_ID': '1ClFAgntVtjHwnmeTcf3br3eYqZggNTYu8XJZrNaL-LY',
-    'DATA_FILES_USUARIOS_ID': '1TWMKWt9eOK0eVxcqo-vlWLAGzJQFEDx7kuvtOQEjpVo',
-    'MAESTRO_PERMISOS_ID': '1kWiMu5P0HZwJdoE0_LMwPGmN928gAEBsNYvtL9E0q28',
-    'PAC_SPREADSHEET_ID': '11gmGF1mGBKmUDm4xGGBUGFc3-h9gZPsS9m8eWiEQaYU'
-  };
-
+  const CLAVES = ['DATA_FILES_PRINCIPAL_ID', 'DATA_FILES_LOGS_ID', 'DATA_FILES_USUARIOS_ID', 'MAESTRO_PERMISOS_ID', 'PAC_SPREADSHEET_ID'];
   const urls = {};
 
-  for (const [key, id] of Object.entries(archivos)) {
+  CLAVES.forEach(function (key) {
+    const id = getConfigProperty(key, '');
+    if (!id) {
+      console.warn(`⚠️ ${key} no está configurada, se omite.`);
+      return;
+    }
     try {
       const file = DriveApp.getFileById(id);
       const url = file.getUrl();
       const nombre = file.getName();
 
-      urls[key] = {
-        nombre: nombre,
-        id: id,
-        url: url
-      };
+      urls[key] = { nombre: nombre, id: id, url: url };
 
       console.log(`✅ ${nombre}`);
-      console.log(`   ID: ${id}`);
       console.log(`   URL: ${url}\n`);
 
     } catch (error) {
       console.error(`❌ Error obteniendo ${key}: ${error.message}\n`);
     }
-  }
+  });
 
   console.log('═══════════════════════════════════════════════════════');
 

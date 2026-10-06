@@ -3126,11 +3126,13 @@ Auditoría RBAC: **COMPLETADA Y VERIFICADA** 2026-09-23.
 - `URLS_SISTEMA.md` — Documentación centralizada de enlaces
 
 **IDs de Spreadsheets creados:**
-- DATA_FILES_PRINCIPAL_ID: `1FHC6Z6BeMvgnAMlDY_c3ZE5aokOqyRjah9v_leXkhXM`
-- DATA_FILES_LOGS_ID: `1ClFAgntVtjHwnmeTcf3br3eYqZggNTYu8XJZrNaL-LY`
-- DATA_FILES_USUARIOS_ID: `1TWMKWt9eOK0eVxcqo-vlWLAGzJQFEDx7kuvtOQEjpVo`
-- MAESTRO_PERMISOS_ID: `1kWiMu5P0HZwJdoE0_LMwPGmN928gAEBsNYvtL9E0q28`
-- PAC_SPREADSHEET_ID: `11gmGF1mGBKmUDm4xGGBUGFc3-h9gZPsS9m8eWiEQaYU`
+- DATA_FILES_PRINCIPAL_ID: Sistema Predial IDU - Principal *(ID real en Script Properties, no en este documento)*
+- DATA_FILES_LOGS_ID: Sistema Predial IDU - Logs *(ID real en Script Properties, no en este documento)*
+- DATA_FILES_USUARIOS_ID: Sistema Predial IDU - Usuarios *(ID real en Script Properties, no en este documento)*
+- MAESTRO_PERMISOS_ID: Sistema Predial IDU - Permisos RBAC *(ID real en Script Properties, no en este documento)*
+- PAC_SPREADSHEET_ID: Sistema Predial IDU - PAC *(ID real en Script Properties, no en este documento)*
+
+**✅ [2026-10-06] SEGURIDAD [Tarea K2]:** los 5 IDs completos que vivían en texto plano aquí se quitaron — sustituidos por el nombre de cada archivo. Los valores reales solo viven en Script Properties del proyecto `18vY9...`. Se encontró además, en la misma revisión, que `migracion_automatica_v2.js` tenía el ID de `ARCHIVO_ORIGEN` hardcodeado con un valor que coincide con `DATA_FILES_PRINCIPAL_ID` (no con el `[STAGING] Matriz Principal` real) — ver el comentario junto a esa constante para el detalle; se corrigió para resolverlo desde `ORIGEN_STAGING_ID` en Script Properties, sin investigar más a fondo la discrepancia porque la migración ya corrió una vez con resultados verificados correctos.
 
 **Commits en rama fix/post-audit-rbac:**
 - 550476c — docs: Agregar documentación de URLs del sistema

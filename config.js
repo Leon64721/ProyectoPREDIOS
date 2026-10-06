@@ -398,7 +398,7 @@ function getConfig(path, defaultValue = null) {
     if (path === 'DATA_FILES.PRINCIPAL' && (value === null || value === undefined || value === '')) {
       try {
         const activeId = SpreadsheetApp.getActiveSpreadsheet().getId();
-        console.log(`✅ DATA_FILES.PRINCIPAL no configurado, usando hoja activa: ${activeId}`);
+        console.log('✅ DATA_FILES.PRINCIPAL no configurado, usando hoja activa.'); // ✅ [2026-10-06] SEGURIDAD: ya no imprime el ID
         return activeId;
       } catch (err) {
         console.warn('⚠️ No se pudo obtener Spreadsheet activo para DATA_FILES.PRINCIPAL: ' + err.message);
@@ -522,7 +522,7 @@ function validateConfig() {
     }
     
     console.log('✅ Configuración válida');
-    console.log(`   DATA_FILES.PRINCIPAL: ${getConfig('DATA_FILES.PRINCIPAL')}`);
+    console.log(`   DATA_FILES.PRINCIPAL: configurado (${getConfig('DATA_FILES.PRINCIPAL') ? 'sí' : 'no'})`); // ✅ [2026-10-06] SEGURIDAD: ya no imprime el ID completo
     console.log(`   DATA_FILES_IDS: ${JSON.stringify(getConfig('DATA_FILES_IDS'))}`);
     
     return true;
@@ -570,7 +570,7 @@ function diagnosticarSistema() {
     }
     const ss = SpreadsheetApp.openById(fileId);
     console.log(`  Nombre: ${ss.getName()}`);
-    console.log(`  ID: ${ss.getId()}`);
+    console.log('  ID: configurado'); // ✅ [2026-10-06] SEGURIDAD: ya no imprime el ID completo
     
     // 5. Listar hojas
     console.log('\n📋 HOJAS DISPONIBLES:');
@@ -650,7 +650,7 @@ function getConfigInfo() {
       sheets: Object.keys(getConfig('SHEETS')),
       columns: Object.keys(getConfig('COLUMNS')),
       roles: Object.keys(getConfig('ROLES')),
-      dataFileId: getConfig('DATA_FILES.PRINCIPAL').substring(0, 15) + '...',
+      dataFileId: getConfig('DATA_FILES.PRINCIPAL') ? 'configurado' : 'no configurado', // ✅ [2026-10-06] SEGURIDAD: ya no devuelve ningún fragmento del ID
       isValid: validateConfig()
     };
   } catch (e) {
