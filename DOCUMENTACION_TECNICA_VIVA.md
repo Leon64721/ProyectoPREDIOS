@@ -3310,3 +3310,19 @@ Los tres puntos que Cursor señaló como posible corrupción de código **eran f
 - Simulación de `restaurarHojasDesdeOrigen()` (sin argumentos, `ejecutar:false` por defecto): sin conflictos. `CONFIG_REGLAS` copiaría 12.670 caracteres de JSON válido (A1/A2 del origen solo tienen la etiqueta `"MOTOR_DE_REGLAS_JSON"`, sin contenido real que se pierda). `ASIGNACIONES_EQUIPOS` copiaría 5.020 filas con encabezados coincidentes. `ReportesGuardados` (5 filas), `LOGS_AUDITORIA` (23 filas) y `ALERTAS_ACTIVAS` (762 filas) se copiarían completas, ninguna existía en Principal. El usuario confirmó los respaldos `RESPALDO_2026-10-06` y autorizó la ejecución real.
 
 **Nota técnica — por qué se agregó `ejecutarRestauracionReal_SOLO_DESPUES_DE_SIMULAR()`:** el selector de funciones del editor de Apps Script no permite pasar argumentos al botón "Ejecutar". Llamar a `restaurarHojasDesdeOrigen` directamente desde ahí siempre corre en modo simulación (es la razón por la que la simulación de arriba fue tan simple de obtener). Se agregó este envoltorio sin parámetros, que internamente llama `restaurarHojasDesdeOrigen({ejecutar:true})`, solo para poder seleccionarlo y ejecutar la escritura real desde el mismo menú.
+
+**EJECUCIÓN REAL completada [2026-10-06]:** el usuario confirmó los respaldos y ejecutó `ejecutarRestauracionReal_SOLO_DESPUES_DE_SIMULAR()` desde el editor. Resultado, sin errores ni conflictos:
+
+| Hoja | Antes | Después | Verificación |
+|---|---|---|---|
+| `CONFIG_REGLAS` | 0 | 1 (B1) | longitud releída coincide con el origen |
+| `ASIGNACIONES_EQUIPOS` | 0 | 5.020 filas | `getLastRow()` coincide con lo copiado |
+| `ReportesGuardados` | 0 | 5 filas | hoja creada por `copyTo()`, no existía |
+| `LOGS_AUDITORIA` | 0 | 23 filas | hoja creada por `copyTo()`, no existía |
+| `ALERTAS_ACTIVAS` | 0 | 762 filas | hoja creada por `copyTo()`, no existía |
+
+Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` vía `_diagRegistrarAccion()` → `GestorAuditoria.registrarAccion()` ("✅ Fila agregada a Logs" tras cada paso del log de ejecución).
+
+**Observación de seguridad, no nueva:** el log de ejecución volvió a imprimir el ID completo de `DATA_FILES.PRINCIPAL` en texto plano (viene de `validateConfig()`, invocada internamente por `GestorDatos`/`GestorAuditoria` en cada paso). Es el mismo pendiente ya anotado sobre `config.js:525` (sustituir por `substring(0,10)`), no un hallazgo nuevo de esta ejecución.
+
+**Siguiente paso, pendiente del usuario:** abrir la pantalla de Equipos y confirmar que aparecen las asignaciones restauradas; luego pulsar "Ejecutar Motor" una sola vez y comparar contra las 762 alertas del origen (como referencia, no como meta exacta — el motor recalcula con la fecha actual). `sincronizarPAC()` sigue sin ejecutarse hasta resolver la reconciliación de `PAC_Vigente` (Sección 49, diagnóstico de `diagnosticarPACVigente()`).
