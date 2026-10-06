@@ -280,22 +280,136 @@ function diagnosticarEstructuraArchivos(escribirInforme) {
 
 
 /**
- * ✅ [2026-10-06] Restaura hojas faltantes en DATA_FILES.PRINCIPAL desde el origen
- * monolítico (ORIGEN_STAGING_ID), con simulación obligatoria por defecto.
+ * ✅ [2026-10-06] Compara PAC_Vigente del origen (ORIGEN_STAGING_ID) contra PAC_Vigente
+ * del archivo PAC migrado (PAC_DESTINO_SPREADSHEET_ID). Solo lectura, no escribe nada.
+ * Clave de fila: columna 'RT' (la misma que usa pac_gestor.js:974 en
+ * _pac_compararYGenerarBorrador() para detectar nuevos/eliminados). No imprime datos
+ * personales, solo encabezados, conteos y la lista de RT (identificadores de predio,
+ * no PII) que sobran en el archivo PAC.
+ * @returns {Object} Resumen de la comparación.
+ */
+function diagnosticarPACVigente() {
+  console.log('=== DIAGNÓSTICO PAC_Vigente: origen vs archivo PAC — INICIO (solo lectura) ===');
+
+  const origenId = getConfigProperty('ORIGEN_STAGING_ID', '');
+  const pacId = getConfigProperty('PAC_DESTINO_SPREADSHEET_ID', '');
+
+  if (!origenId || !pacId) {
+    const msg = 'Faltan Script Properties: ORIGEN_STAGING_ID y/o PAC_DESTINO_SPREADSHEET_ID.';
+    console.error('❌ ' + msg);
+    return { error: msg };
+  }
+
+  function leerHoja(ssId, nombreHoja) {
+    const ss = SpreadsheetApp.openById(ssId);
+    const hoja = ss.getSheetByName(nombreHoja);
+    if (!hoja) return null;
+    const lastRow = hoja.getLastRow();
+    const lastCol = hoja.getLastColumn();
+    if (lastRow < 1 || lastCol < 1) return { headers: [], filas: [] };
+    const datos = hoja.getRange(1, 1, lastRow, lastCol).getValues();
+    const headers = datos[0].map(function (h) { return String(h || '').trim(); });
+    return { headers: headers, filas: datos.slice(1) };
+  }
+
+  let origen, pac;
+  try {
+    origen = leerHoja(origenId, 'PAC_Vigente');
+    pac = leerHoja(pacId, 'PAC_Vigente');
+  } catch (e) {
+    console.error('❌ Error abriendo PAC_Vigente: ' + e.message);
+    return { error: e.message };
+  }
+
+  if (!origen || !pac) {
+    const msg = 'PAC_Vigente no existe en ' + (!origen ? 'el origen' : 'el archivo PAC') + '.';
+    console.error('❌ ' + msg);
+    return { error: msg };
+  }
+
+  // 1. Diferencias de encabezados
+  const headersOrigen = origen.headers;
+  const headersPac = pac.headers;
+  const soloEnOrigen = headersOrigen.filter(function (h) { return headersPac.indexOf(h) === -1; });
+  const soloEnPac = headersPac.filter(function (h) { return headersOrigen.indexOf(h) === -1; });
+
+  console.log('Encabezados — origen: ' + headersOrigen.length + ' columnas, PAC: ' + headersPac.length + ' columnas.');
+  console.log('Columnas solo en origen (faltan en PAC): ' + (soloEnOrigen.join(', ') || '(ninguna)'));
+  console.log('Columnas solo en PAC (no están en origen): ' + (soloEnPac.join(', ') || '(ninguna)'));
+
+  // 2. Clave RT: únicos, duplicados, y filas de PAC que no están en el origen
+  const iRtOrigen = headersOrigen.indexOf('RT');
+  const iRtPac = headersPac.indexOf('RT');
+
+  function analizarClaves(filas, iRt) {
+    if (iRt < 0) return { error: 'No se encontró columna RT' };
+    const conteo = {};
+    filas.forEach(function (fila) {
+      const rt = String(fila[iRt] || '').trim();
+      if (!rt) return;
+      conteo[rt] = (conteo[rt] || 0) + 1;
+    });
+    const claves = Object.keys(conteo);
+    const duplicadas = claves.filter(function (rt) { return conteo[rt] > 1; });
+    return { totalFilas: filas.length, clavesUnicas: claves.length, filasDuplicadas: duplicadas.length, mapa: conteo };
+  }
+
+  const analisisOrigen = analizarClaves(origen.filas, iRtOrigen);
+  const analisisPac = analizarClaves(pac.filas, iRtPac);
+
+  console.log('Origen — ' + analisisOrigen.totalFilas + ' filas, ' + analisisOrigen.clavesUnicas +
+    ' RT únicos, ' + analisisOrigen.filasDuplicadas + ' RT duplicados.');
+  console.log('PAC — ' + analisisPac.totalFilas + ' filas, ' + analisisPac.clavesUnicas +
+    ' RT únicos, ' + analisisPac.filasDuplicadas + ' RT duplicados.');
+
+  let rtSoloEnPac = [];
+  if (analisisOrigen.mapa && analisisPac.mapa) {
+    rtSoloEnPac = Object.keys(analisisPac.mapa).filter(function (rt) { return !(rt in analisisOrigen.mapa); });
+  }
+  console.log('RT en PAC que no existen en el origen: ' + rtSoloEnPac.length);
+  if (rtSoloEnPac.length > 0 && rtSoloEnPac.length <= 50) {
+    console.log('  RT: ' + rtSoloEnPac.join(', '));
+  } else if (rtSoloEnPac.length > 50) {
+    console.log('  (más de 50, se omite la lista completa; primeros 50): ' + rtSoloEnPac.slice(0, 50).join(', '));
+  }
+
+  console.log('=== DIAGNÓSTICO PAC_Vigente — FIN ===');
+
+  return {
+    headers: { origen: headersOrigen.length, pac: headersPac.length, soloEnOrigen: soloEnOrigen, soloEnPac: soloEnPac },
+    origen: { totalFilas: analisisOrigen.totalFilas, clavesUnicas: analisisOrigen.clavesUnicas, filasDuplicadas: analisisOrigen.filasDuplicadas },
+    pac: { totalFilas: analisisPac.totalFilas, clavesUnicas: analisisPac.clavesUnicas, filasDuplicadas: analisisPac.filasDuplicadas },
+    rtEnPacQueNoEstanEnOrigen: rtSoloEnPac
+  };
+}
+
+
+/**
+ * ✅ [2026-10-06, reescrita] Restaura hojas específicas en DATA_FILES.PRINCIPAL desde el
+ * origen monolítico (ORIGEN_STAGING_ID), con reglas distintas por hoja (ya no genéricas).
  *
  * REGLA DE SEGURIDAD: con opciones.ejecutar !== true (incluye omitirlo, undefined, 0,
  * cualquier valor que no sea literalmente el booleano true), esta función NO escribe NADA.
- * Solo imprime qué haría. Hay que llamarla explícitamente con { ejecutar: true } para que
- * escriba, y solo después de revisar la simulación.
+ * Solo imprime qué haría.
  *
- * NUNCA sobrescribe una hoja de destino que ya tenga datos. Política por hoja, evaluada
- * en este orden:
- *   1. No existe en destino          → copiar desde el origen (copyTo + rename).
- *   2. Existe y está vacía/CONFIG_REGLAS con "{}" → renombrar la existente a
- *      BAK_<nombre>_20261006 (nunca se borra) y copiar la del origen en su lugar.
- *   3. Existe y tiene datos           → NO TOCAR. Se reporta como CONFLICTO.
- *   4. 'Permisos' específicamente     → si el destino tiene cualquier dato, nunca se toca,
- *      solo se reportan diferencias de EMAIL/ROL entre origen y destino.
+ * Reglas por hoja (en este orden):
+ * 1. CONFIG_REGLAS — copia el TEXTO de B1 del origen al B1 del destino (NO usa copyTo).
+ *    Solo si B1 del destino es "{}" o vacío; si no, CONFLICTO. Valida JSON.parse del
+ *    origen antes de escribir; si no es válido, aborta esa hoja. Tras escribir, relee y
+ *    compara longitud. Mantiene la hoja oculta. Reporta si el origen tiene contenido en
+ *    A1:A2 (no lo copia, solo informa).
+ * 2. ASIGNACIONES_EQUIPOS — si el destino ya tiene filas de datos, CONFLICTO, no se toca.
+ *    Si no, compara encabezados (sin distinguir mayúsculas/espacios); si coinciden,
+ *    escribe las filas del ORIGEN en bloques de 1000 con setValues(), y verifica
+ *    getLastRow() al final.
+ * 3. ReportesGuardados, LOGS_AUDITORIA, ALERTAS_ACTIVAS — si no existen en el destino, se
+ *    copian completas desde el ORIGEN (nunca desde el archivo PAC) con copyTo() y se
+ *    renombran al nombre exacto. Si ya existen con datos, no se tocan. Si existen pero
+ *    vacías, se reporta como caso no cubierto por la regla (no se asume qué hacer).
+ * 4. Todo lo demás (Permisos, Logs, Datos, Datos2, Seguimiento, Compromisos,
+ *    CASOS ESPECIALES, FiltroMatriz, FESTIVOS, CacheStore, CacheQueue, USUARIOS,
+ *    Asignacion_RT, PAC_*) — NO se toca, ni se abre siquiera. 'Configuracion' de
+ *    Principal se reporta solo informativamente (quién la usa), sin acción.
  *
  * @param {{ejecutar?: boolean}} [opciones] Por defecto { ejecutar: false }.
  * @returns {{resumen: Array, conflictos: Array}} Resumen de acciones (reales o simuladas).
@@ -306,21 +420,13 @@ function restaurarHojasDesdeOrigen(opciones) {
 
   console.log('=== RESTAURACIÓN DE HOJAS — modo: ' + (ejecutar ? 'EJECUCIÓN REAL' : 'SIMULACIÓN (nada se escribe)') + ' ===');
 
-  // ⚠️ Lista fija, pedida explícitamente por el usuario. NO se agregan hojas aquí sin
-  // avisar — si el resultado de diagnosticarEstructuraArchivos() sugiere que falta o sobra
-  // alguna, se ajusta esta lista a mano, en un commit aparte, nunca en automático.
-  const HOJAS_A_RESTAURAR = [
-    'CONFIG_REGLAS',
-    'ReportesGuardados',
-    'FESTIVOS',
-    'ASIGNACIONES_EQUIPOS',
-    'ALERTAS_ACTIVAS',
-    'LOGS_AUDITORIA',
-    'Permisos'
-  ];
-
   const origenId = getConfigProperty('ORIGEN_STAGING_ID', '');
   const principalId = getConfigProperty('DATA_FILES_PRINCIPAL_ID', '');
+  // Se leen por completitud / consistencia con diagnosticarEstructuraArchivos(), aunque
+  // esta función no escribe en Usuarios ni en Logs (ver regla 4 arriba).
+  getConfigProperty('DATA_FILES_USUARIOS_ID', '');
+  getConfigProperty('DATA_FILES_LOGS_ID', '');
+  getConfigProperty('PAC_DESTINO_SPREADSHEET_ID', '');
 
   if (!origenId || !principalId) {
     const msg = 'Faltan Script Properties: ORIGEN_STAGING_ID y/o DATA_FILES_PRINCIPAL_ID. Abortando sin tocar nada.';
@@ -339,109 +445,204 @@ function restaurarHojasDesdeOrigen(opciones) {
 
   const resumen = [];
   const conflictos = [];
-  const SUFIJO_BAK = 'BAK_%s_20261006';
 
-  HOJAS_A_RESTAURAR.forEach(function (nombreHoja) {
+  function agregar(hoja, accion, filasAntes, filasDespues) {
+    resumen.push({ hoja: hoja, accion: accion, filasAntes: filasAntes, filasDespues: filasDespues });
+    console.log(hoja + ' | ' + accion + ' | antes:' + filasAntes + ' | después:' + filasDespues);
+  }
+
+  // ── 1. CONFIG_REGLAS ──────────────────────────────────────────────────────────────
+  (function restaurarConfigReglas() {
+    const nombreHoja = 'CONFIG_REGLAS';
+    const hojaOrigen = ssOrigen.getSheetByName(nombreHoja);
+    const hojaDestino = ssPrincipal.getSheetByName(nombreHoja);
+
+    if (!hojaOrigen) {
+      agregar(nombreHoja, 'OMITIDA — no existe en el origen', '-', '-');
+      return;
+    }
+    if (!hojaDestino) {
+      agregar(nombreHoja, 'CONFLICTO — no existe en Principal, requiere crear la hoja primero (fuera de esta regla)', '-', '-');
+      conflictos.push({ hoja: nombreHoja, tipo: 'NO_EXISTE_EN_DESTINO', mensaje: 'CONFIG_REGLAS no existe en Principal.' });
+      return;
+    }
+
+    const b1Destino = String(hojaDestino.getRange('B1').getValue() || '').trim();
+    const destinoVacio = (b1Destino === '{}' || b1Destino === '');
+    if (!destinoVacio) {
+      conflictos.push({ hoja: nombreHoja, tipo: 'B1_DESTINO_NO_VACIO', mensaje: 'B1 de Principal no es "{}" ni está vacío — no se toca.' });
+      agregar(nombreHoja, 'CONFLICTO — B1 de Principal ya tiene contenido, no se toca', 1, 1);
+      return;
+    }
+
+    const b1Origen = String(hojaOrigen.getRange('B1').getValue() || '');
+    try {
+      JSON.parse(b1Origen);
+    } catch (e) {
+      conflictos.push({ hoja: nombreHoja, tipo: 'JSON_INVALIDO_EN_ORIGEN', mensaje: 'B1 del origen no es JSON válido: ' + e.message });
+      agregar(nombreHoja, 'ABORTADA — JSON inválido en el origen, no se toca nada', 1, 1);
+      return;
+    }
+
+    const a1Origen = hojaOrigen.getRange('A1').getValue();
+    const a2Origen = hojaOrigen.getRange('A2').getValue();
+    const notaA1A2 = (a1Origen || a2Origen)
+      ? ('El origen tiene contenido en A1/A2 que esta regla NO copia — revisar a mano si hace falta: A1="' + a1Origen + '", A2="' + a2Origen + '".')
+      : 'A1:A2 del origen están vacías, no hay nada que copiar ahí.';
+    console.log('CONFIG_REGLAS — ' + notaA1A2);
+
+    if (ejecutar) {
+      try {
+        const estabaOculta = (function () { try { return hojaDestino.isSheetHidden(); } catch (e) { return false; } })();
+        hojaDestino.getRange('B1').setValue(b1Origen);
+        if (estabaOculta) { try { hojaDestino.hideSheet(); } catch (e) { /* no crítico */ } }
+
+        const b1Releido = String(hojaDestino.getRange('B1').getValue() || '');
+        const longitudCoincide = (b1Releido.length === b1Origen.length);
+        if (!longitudCoincide) {
+          console.error('❌ CONFIG_REGLAS: longitud tras escribir (' + b1Releido.length + ') no coincide con el origen (' + b1Origen.length + ').');
+        }
+        _diagRegistrarAccion(nombreHoja, 'B1_COPIADO_DESDE_ORIGEN', 1);
+        agregar(nombreHoja, 'B1 copiado desde el origen' + (longitudCoincide ? ' (longitud verificada OK)' : ' (ADVERTENCIA: longitud no coincide)') + '. ' + notaA1A2, 0, 1);
+      } catch (e) {
+        agregar(nombreHoja, 'ERROR al escribir B1: ' + e.message, '-', '-');
+      }
+    } else {
+      agregar(nombreHoja, 'SE COPIARÍA el texto de B1 desde el origen (' + b1Origen.length + ' caracteres, JSON válido). ' + notaA1A2, 0, '-');
+    }
+  })();
+
+  // ── 2. ASIGNACIONES_EQUIPOS ───────────────────────────────────────────────────────
+  (function restaurarAsignacionesEquipos() {
+    const nombreHoja = 'ASIGNACIONES_EQUIPOS';
+    const hojaOrigen = ssOrigen.getSheetByName(nombreHoja);
+    const hojaDestino = ssPrincipal.getSheetByName(nombreHoja);
+
+    if (!hojaOrigen) {
+      agregar(nombreHoja, 'OMITIDA — no existe en el origen', '-', '-');
+      return;
+    }
+    if (!hojaDestino) {
+      agregar(nombreHoja, 'CONFLICTO — no existe en Principal, requiere crear la hoja primero (fuera de esta regla)', '-', '-');
+      conflictos.push({ hoja: nombreHoja, tipo: 'NO_EXISTE_EN_DESTINO', mensaje: 'ASIGNACIONES_EQUIPOS no existe en Principal.' });
+      return;
+    }
+
+    const filasDestinoAntes = Math.max(0, hojaDestino.getLastRow() - 1);
+    if (filasDestinoAntes > 0) {
+      conflictos.push({ hoja: nombreHoja, tipo: 'DESTINO_YA_TIENE_DATOS', mensaje: 'El destino ya tiene ' + filasDestinoAntes + ' fila(s) de datos — no se toca.' });
+      agregar(nombreHoja, 'CONFLICTO — destino ya tiene ' + filasDestinoAntes + ' fila(s), no se toca', filasDestinoAntes, filasDestinoAntes);
+      return;
+    }
+
+    const lastColOrigen = hojaOrigen.getLastColumn();
+    const lastColDestino = hojaDestino.getLastColumn();
+    const headersOrigen = hojaOrigen.getRange(1, 1, 1, lastColOrigen).getValues()[0]
+      .map(function (h) { return String(h || '').trim().toUpperCase(); });
+    const headersDestino = hojaDestino.getRange(1, 1, 1, lastColDestino).getValues()[0]
+      .map(function (h) { return String(h || '').trim().toUpperCase(); });
+
+    const headersCoinciden = (headersOrigen.length === headersDestino.length) &&
+      headersOrigen.every(function (h, i) { return h === headersDestino[i]; });
+
+    if (!headersCoinciden) {
+      conflictos.push({
+        hoja: nombreHoja, tipo: 'ENCABEZADOS_NO_COINCIDEN',
+        mensaje: 'Encabezados de origen (' + headersOrigen.join(',') + ') no coinciden con destino (' + headersDestino.join(',') + ').'
+      });
+      agregar(nombreHoja, 'CONFLICTO — encabezados no coinciden, no se toca', 0, 0);
+      return;
+    }
+
+    const filasOrigen = Math.max(0, hojaOrigen.getLastRow() - 1);
+    if (filasOrigen === 0) {
+      agregar(nombreHoja, 'OMITIDA — el origen no tiene filas de datos', 0, 0);
+      return;
+    }
+
+    if (ejecutar) {
+      try {
+        const BLOQUE = 1000;
+        const datos = hojaOrigen.getRange(2, 1, filasOrigen, lastColOrigen).getValues();
+        for (let i = 0; i < datos.length; i += BLOQUE) {
+          const bloque = datos.slice(i, i + BLOQUE);
+          hojaDestino.getRange(2 + i, 1, bloque.length, lastColOrigen).setValues(bloque);
+        }
+        const filasDespues = Math.max(0, hojaDestino.getLastRow() - 1);
+        const coincide = (filasDespues === filasOrigen);
+        if (!coincide) {
+          console.error('❌ ASIGNACIONES_EQUIPOS: getLastRow tras escribir (' + filasDespues + ') no coincide con el origen (' + filasOrigen + ').');
+        }
+        _diagRegistrarAccion(nombreHoja, 'FILAS_COPIADAS_DESDE_ORIGEN', filasOrigen);
+        agregar(nombreHoja, 'Copiadas ' + filasOrigen + ' fila(s) desde el origen en bloques de 1000' + (coincide ? ' (verificado OK)' : ' (ADVERTENCIA: no coincide)'), 0, filasDespues);
+      } catch (e) {
+        agregar(nombreHoja, 'ERROR al copiar filas: ' + e.message, 0, '-');
+      }
+    } else {
+      agregar(nombreHoja, 'SE COPIARÍAN ' + filasOrigen + ' fila(s) desde el origen en bloques de 1000 (encabezados coinciden)', 0, '-');
+    }
+  })();
+
+  // ── 3. ReportesGuardados, LOGS_AUDITORIA, ALERTAS_ACTIVAS — copia completa si falta ──
+  function restaurarHojaCompletaSiFalta(nombreHoja) {
     const hojaOrigen = ssOrigen.getSheetByName(nombreHoja);
     if (!hojaOrigen) {
-      resumen.push({ hoja: nombreHoja, accion: 'OMITIDA — no existe en el origen', filas: 0 });
-      console.warn('⚠️ ' + nombreHoja + ': no existe en el origen, se omite.');
+      agregar(nombreHoja, 'OMITIDA — no existe en el origen', '-', '-');
       return;
     }
     const filasOrigen = Math.max(0, hojaOrigen.getLastRow() - 1);
     const hojaDestino = ssPrincipal.getSheetByName(nombreHoja);
 
-    // Caso especial: Permisos nunca se toca si el destino tiene cualquier dato.
-    if (nombreHoja === 'Permisos') {
-      if (hojaDestino && hojaDestino.getLastRow() > 1) {
-        const diffPermisos = _diagCompararPermisos(hojaOrigen, hojaDestino);
-        conflictos.push({
-          hoja: 'Permisos',
-          tipo: 'PERMISOS_PROTEGIDO',
-          mensaje: 'Destino tiene datos — NUNCA se sobrescribe. Solo se reportan diferencias.',
-          filasOrigen: filasOrigen,
-          filasDestino: hojaDestino.getLastRow() - 1,
-          diferencias: diffPermisos
-        });
-        console.warn('⚠️ Permisos: destino tiene datos, NO se toca. Diferencias: ' + JSON.stringify(diffPermisos));
-        resumen.push({ hoja: 'Permisos', accion: 'PROTEGIDA — no se toca (tiene datos)', filas: hojaDestino.getLastRow() - 1 });
+    if (hojaDestino) {
+      const filasDestino = Math.max(0, hojaDestino.getLastRow() - 1);
+      if (filasDestino > 0) {
+        conflictos.push({ hoja: nombreHoja, tipo: 'YA_EXISTE_CON_DATOS', mensaje: 'Ya existe en Principal con ' + filasDestino + ' fila(s) — no se toca.' });
+        agregar(nombreHoja, 'NO TOCADA — ya existe en Principal con ' + filasDestino + ' fila(s)', filasDestino, filasDestino);
         return;
       }
-      // Si Permisos en destino está vacía, sigue el flujo normal de abajo (caso 1 o 2).
-    }
-
-    if (!hojaDestino) {
-      // Caso 1: no existe en destino → copiar.
-      resumen.push({ hoja: nombreHoja, accion: ejecutar ? 'COPIADA desde origen (no existía)' : 'SE COPIARÍA desde origen (no existe en destino)', filas: filasOrigen });
-      console.log((ejecutar ? '✅' : '🔎 [SIMULADO]') + ' ' + nombreHoja + ': copiar desde origen, ' + filasOrigen + ' fila(s).');
-      if (ejecutar) {
-        try {
-          const copia = hojaOrigen.copyTo(ssPrincipal);
-          copia.setName(nombreHoja);
-          _diagRegistrarAccion(nombreHoja, 'COPIADA_NUEVA', filasOrigen);
-        } catch (e) {
-          console.error('❌ Error copiando ' + nombreHoja + ': ' + e.message);
-          resumen[resumen.length - 1].accion = 'ERROR al copiar: ' + e.message;
-        }
-      }
+      conflictos.push({ hoja: nombreHoja, tipo: 'EXISTE_VACIA_SIN_REGLA', mensaje: 'Existe en Principal pero vacía. La regla pedida solo cubre "no existe"; este caso no está definido, se omite por seguridad.' });
+      agregar(nombreHoja, 'OMITIDA — existe vacía en Principal, caso no cubierto por la regla, requiere decisión', 0, 0);
       return;
     }
 
-    const filasDestino = Math.max(0, hojaDestino.getLastRow() - 1);
-    const destinoEsConfigReglasVacio = (nombreHoja === 'CONFIG_REGLAS' &&
-      String(hojaDestino.getRange('B1').getValue() || '').trim() === '{}');
-    const destinoEstaVacio = (filasDestino === 0) || destinoEsConfigReglasVacio;
-
-    if (destinoEstaVacio) {
-      // Caso 2: existe pero vacía (o CONFIG_REGLAS con "{}") → respaldar con BAK_ y reemplazar.
-      const nombreBak = SUFIJO_BAK.replace('%s', nombreHoja);
-      resumen.push({
-        hoja: nombreHoja,
-        accion: ejecutar
-          ? ('REEMPLAZADA — existente renombrada a ' + nombreBak + ', copiada la del origen')
-          : ('SE REEMPLAZARÍA — existente se renombraría a ' + nombreBak + ' (vacía/"{}"), se copiaría la del origen'),
-        filas: filasOrigen
-      });
-      console.log((ejecutar ? '✅' : '🔎 [SIMULADO]') + ' ' + nombreHoja +
-        ': destino vacío, renombrar a ' + nombreBak + ' y copiar origen (' + filasOrigen + ' fila(s)).');
-      if (ejecutar) {
-        try {
-          const estabaOculta = (nombreHoja === 'CONFIG_REGLAS') ? (function () { try { return hojaDestino.isSheetHidden(); } catch (e) { return false; } })() : null;
-          hojaDestino.setName(nombreBak);
-          const copia = hojaOrigen.copyTo(ssPrincipal);
-          copia.setName(nombreHoja);
-          if (nombreHoja === 'CONFIG_REGLAS' && estabaOculta) {
-            try { copia.hideSheet(); } catch (e) { /* no crítico */ }
-          }
-          _diagRegistrarAccion(nombreHoja, 'REEMPLAZADA_VACIA', filasOrigen);
-        } catch (e) {
-          console.error('❌ Error reemplazando ' + nombreHoja + ': ' + e.message);
-          resumen[resumen.length - 1].accion = 'ERROR al reemplazar: ' + e.message;
-        }
+    if (ejecutar) {
+      try {
+        const copia = hojaOrigen.copyTo(ssPrincipal); // crea "Copia de <nombre>"
+        copia.setName(nombreHoja);
+        _diagRegistrarAccion(nombreHoja, 'COPIADA_COMPLETA_DESDE_ORIGEN', filasOrigen);
+        agregar(nombreHoja, 'Copiada completa desde el origen (no existía en Principal)', 0, filasOrigen);
+      } catch (e) {
+        agregar(nombreHoja, 'ERROR al copiar: ' + e.message, 0, '-');
       }
-      return;
+    } else {
+      agregar(nombreHoja, 'SE COPIARÍA completa desde el origen (no existe en Principal), ' + filasOrigen + ' fila(s)', 0, '-');
     }
+  }
 
-    // Caso 3: existe y tiene datos → NO TOCAR, reportar conflicto.
-    conflictos.push({
-      hoja: nombreHoja,
-      tipo: 'CONFLICTO_DATOS_EN_AMBOS',
-      mensaje: 'Origen y destino tienen datos — requiere decisión manual, no se toca.',
-      filasOrigen: filasOrigen,
-      filasDestino: filasDestino
-    });
-    resumen.push({ hoja: nombreHoja, accion: 'CONFLICTO — ambos tienen datos, requiere decisión', filas: filasDestino });
-    console.warn('⚠️ CONFLICTO ' + nombreHoja + ': origen=' + filasOrigen + ' filas, destino=' + filasDestino + ' filas. No se toca.');
-  });
+  restaurarHojaCompletaSiFalta('ReportesGuardados');
+  restaurarHojaCompletaSiFalta('LOGS_AUDITORIA');
+  restaurarHojaCompletaSiFalta('ALERTAS_ACTIVAS'); // ⚠️ siempre desde ssOrigen, nunca desde el archivo PAC
+
+  // ── 4. Todo lo demás: NO se toca, ni se abre. Solo una nota informativa. ───────────
+  const EXCLUIDAS_A_PROPOSITO = [
+    'Permisos', 'Logs', 'Datos', 'Datos2', 'Seguimiento', 'Compromisos', 'CASOS ESPECIALES',
+    'FiltroMatriz', 'FESTIVOS', 'CacheStore', 'CacheQueue', 'USUARIOS', 'Asignacion_RT',
+    'PAC_Vigente', 'PAC_Borrador', 'PAC_Historial', 'PAC_Alertas', 'PAC_Articuladores',
+    'PAC_ReglasPAC', 'LOG_PAC_SISTEMA'
+  ];
+  console.log('\nExcluidas a propósito, no evaluadas ni abiertas en esta ejecución: ' + EXCLUIDAS_A_PROPOSITO.join(', '));
+  console.log('"Configuracion" (Principal): solo la crea y la lee migracion_automatica_v2.js:100-106 ' +
+    '(VERSION_SISTEMA, MODO_MANTENIMIENTO) — ningún otro código del proyecto la usa hoy. ' +
+    'El MODO_MANTENIMIENTO real se controla por Script Property, no por esta hoja.');
 
   console.log('\n=== RESUMEN FINAL ===');
   resumen.forEach(function (r) {
-    console.log(r.hoja + ' | ' + r.accion + ' | ' + r.filas + ' fila(s)');
+    console.log(r.hoja + ' | ' + r.accion + ' | antes:' + r.filasAntes + ' | después:' + r.filasDespues);
   });
   if (conflictos.length > 0) {
     console.log('\n=== CONFLICTOS QUE REQUIEREN DECISIÓN ===');
     conflictos.forEach(function (c) {
-      console.log(c.hoja + ': ' + c.mensaje);
+      console.log(c.hoja + ' (' + c.tipo + '): ' + c.mensaje);
     });
   }
   console.log('=== RESTAURACIÓN DE HOJAS — FIN ===');
