@@ -4,11 +4,16 @@
 
 /**
  * Instalación completa del módulo PAC.
+ * ⚠️ [2026-10-06] NO ejecutar tras la migración: crea hojas (PAC_Vigente, PAC_Borrador,
+ * PAC_Articuladores, hoja de log, etc.) en el destino configurado en
+ * PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID. Si ese destino ya existe y tiene datos reales,
+ * esta función puede insertar hojas vacías de más o pisar estructura existente. Solo
+ * para instalación inicial en un spreadsheet nuevo y vacío.
  */
 function instalarModuloPACCompleto() {
   try {
     console.log('=== INSTALACIÓN MÓDULO PAC v2.0 INICIADA ===');
-    console.log('SS_PADRE_ID: ' + PAC_CONFIG.SS_PADRE_ID);
+    console.log('PAC_DESTINO_SPREADSHEET_ID configurado: ' + (PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID ? 'sí' : 'no'));
 
     // ── Activar buffer de logs — evita timeouts durante la instalación ──────
     pac_logIniciarBuffer();
@@ -206,6 +211,58 @@ function pac_verificarAccesoExterno() {
       status: 'ERROR',
       msg: 'Sin acceso al PAC externo: ' + e.message
     };
+  }
+}
+
+
+/**
+ * ✅ [2026-10-06] Verifica el destino interno de PAC (PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID).
+ * Solo lectura: NO crea ni escribe ninguna hoja. Ejecutar antes de sincronizar(), para
+ * confirmar que el destino configurado es el correcto antes de que cualquier función
+ * (sincronizarPAC, aprobarBorradorPAC, pac_guardarReglasReemplazo, etc.) escriba ahí.
+ * No imprime el ID del spreadsheet en los logs, solo nombre y conteos.
+ */
+function pac_verificarDestino() {
+  const hojasEsperadas = ['PAC_Vigente', 'PAC_Borrador', 'PAC_ReglasPAC', 'ALERTAS_ACTIVAS'];
+  try {
+    if (!PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID) {
+      const msg = 'PAC_DESTINO_SPREADSHEET_ID no configurado. Setee la Script Property antes de continuar.';
+      console.error('❌ pac_verificarDestino: ' + msg);
+      return { paso: 'DESTINO_PAC', status: 'ERROR', msg: msg };
+    }
+
+    const destSS = SpreadsheetApp.openById(PAC_CONFIG.PAC_DESTINO_SPREADSHEET_ID);
+    const encontradas = [];
+    const faltantes = [];
+
+    hojasEsperadas.forEach(nombre => {
+      const h = destSS.getSheetByName(nombre);
+      if (h) {
+        const filas = Math.max(0, h.getLastRow() - 1); // sin contar encabezado
+        encontradas.push(nombre + ' (' + filas + ' filas de datos)');
+        console.log('✅ pac_verificarDestino: ' + nombre + ' — ' + filas + ' filas de datos');
+      } else {
+        faltantes.push(nombre);
+        console.warn('⚠️ pac_verificarDestino: falta la hoja ' + nombre);
+      }
+    });
+
+    const resultado = {
+      paso: 'DESTINO_PAC',
+      status: faltantes.length === 0 ? 'OK' : 'ADVERTENCIA',
+      nombreSpreadsheet: destSS.getName(),
+      hojasEncontradas: encontradas,
+      hojasFaltantes: faltantes,
+      msg: faltantes.length === 0
+        ? 'Destino OK. Todas las hojas esperadas existen.'
+        : 'Faltan hojas en el destino: ' + faltantes.join(', ')
+    };
+    console.log('[pac_verificarDestino] ' + resultado.msg);
+    return resultado;
+
+  } catch (e) {
+    console.error('❌ pac_verificarDestino EXCEPCIÓN: ' + e.message);
+    return { paso: 'DESTINO_PAC', status: 'ERROR', msg: 'Error abriendo el destino: ' + e.message };
   }
 }
 
