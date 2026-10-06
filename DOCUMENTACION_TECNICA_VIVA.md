@@ -3259,3 +3259,26 @@ Los tres puntos que Cursor señaló como posible corrupción de código **eran f
 **Validaciones ejecutadas:** `node --check permisos.js` (sintaxis válida). Se confirmó con `git grep 'savePermission('` que no existe ningún otro llamador en el repositorio que pudiera verse afectado por este cambio.
 
 **Pendiente real:** el modal de permisos sigue sin ofrecer un selector de proyectos real — toda la funcionalidad de "proyectos por permiso" queda, en la práctica, fija en `ALL` para cualquier permiso creado desde la UI hoy. Si se decide retomar el uso de ese campo (recordar: hoy nada lo consume, ver Sección 47), hace falta diseñar el selector en el frontend, no solo el backend.
+
+## 49. NUEVO ARCHIVO — diagnostico_estructura.js: diagnóstico de solo lectura + restauración con simulación obligatoria [2026-10-06]
+
+**Contexto:** tras confirmar en la Sección 47 que la migración de septiembre envió `LOGS_AUDITORIA`, `ASIGNACIONES_EQUIPOS`, `Permisos` y `ALERTAS_ACTIVAS` a archivos distintos de los que el código lee (`DATA_FILES.PRINCIPAL`), y que `CONFIG_REGLAS`/`ReportesGuardados` nunca se migraron a ningún lado, se necesita una herramienta para: (1) confirmar el estado real de cada archivo antes de tocar nada, y (2) restaurar lo que falte en Principal sin arriesgar datos que ya existan ahí. Se creó `diagnostico_estructura.js` con dos funciones, en dos commits separados.
+
+**`diagnosticarEstructuraArchivos(escribirInforme = false)` — solo lectura, sin excepción:**
+- Lee las Script Properties `ORIGEN_STAGING_ID`, `DATA_FILES_PRINCIPAL_ID`, `DATA_FILES_LOGS_ID`, `DATA_FILES_USUARIOS_ID`, `MAESTRO_PERMISOS_ID` y `PAC_DESTINO_SPREADSHEET_ID` — nunca imprime sus valores, solo si están configuradas.
+- Para cada archivo configurado, abre el spreadsheet y resume cada hoja: filas con datos, columnas, si está oculta, encabezados (máximo 12). Para `CONFIG_REGLAS` además la longitud del JSON en B1 y los primeros 200 caracteres.
+- Arma una tabla comparativa: cada hoja del origen (`ORIGEN_STAGING_ID`) contra su conteo de filas en Principal y en el archivo migrado que le corresponde según `_DIAG_MAPA_DESTINO_HOJA` — un mapa de nombre de hoja → nombre de Script Property, construido a partir de la tabla real `mapeoMigracion` de `migracion_automatica_v2.js:224-247` (ningún ID se repite en este archivo).
+- Lista hojas ocultas en Principal y hojas que están en Principal pero no en el origen.
+- Resuelve por análisis de código (no de hojas en vivo) quién lee `FESTIVOS`/`CacheStore`/`CacheQueue`: `FESTIVOS` no la usa esta app (la usa `MatrizSeguimiento_script/Festivos.js`, un proyecto de Apps Script distinto con su propio contenedor); `CacheStore`/`CacheQueue` sí viven en `DATA_FILES.PRINCIPAL` y se autocrean si faltan.
+- Solo escribe algo (una hoja `DIAGNOSTICO_MIGRACION` en Principal) si se llama con `escribirInforme === true` explícito.
+
+**`restaurarHojasDesdeOrigen(opciones = {ejecutar:false})` — simulación obligatoria por defecto:**
+- Con `ejecutar` distinto de `true` (incluido omitirlo), no escribe absolutamente nada, solo imprime qué haría.
+- Lista fija de hojas a restaurar (pedida explícitamente por el usuario, no se agrega ninguna sin avisar): `CONFIG_REGLAS`, `ReportesGuardados`, `FESTIVOS`, `ASIGNACIONES_EQUIPOS`, `ALERTAS_ACTIVAS`, `LOGS_AUDITORIA`, `Permisos`.
+- Política estricta por hoja: si no existe en destino, se copia desde el origen (`copyTo`); si existe vacía (o `CONFIG_REGLAS` con `"{}"`), se renombra la existente a `BAK_<nombre>_20261006` (nunca se borra) y se copia la del origen en su lugar, conservando el estado oculto de `CONFIG_REGLAS`; si existe y tiene datos, no se toca, se reporta como conflicto que requiere decisión manual.
+- `Permisos` tiene una regla aparte: si el destino tiene cualquier dato, nunca se toca bajo ninguna circunstancia — solo se comparan EMAIL/ROL entre origen y destino y se reportan las diferencias.
+- Cada acción (real o simulada) se registra por `console` y, si `GestorAuditoria` está disponible, también vía `registrarAccion()` en la hoja `Logs` de `DATA_FILES.LOGS` — no en `LOGS_AUDITORIA` de Principal, que está pensada para diffs de campo, no para eventos de sistema; queda anotado como ajustable si se prefiere lo contrario.
+
+**Validaciones ejecutadas:** `node --check diagnostico_estructura.js` en ambos commits (sintaxis válida). No se ejecutó ninguna función en el Apps Script en vivo — ninguna de las dos funciones puede probarse fuera de ese entorno, así que el riesgo real se evalúa corriendo primero `diagnosticarEstructuraArchivos()` y luego `restaurarHojasDesdeOrigen()` sin `ejecutar:true`, revisando la salida antes de autorizar la escritura real.
+
+**Pendiente real:** ejecutar ambas funciones en el proyecto en vivo y revisar su salida es responsabilidad del usuario — ningún agente de edición de archivos tiene acceso a Apps Script ni a las Script Properties reales.
