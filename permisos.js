@@ -132,11 +132,35 @@ class GestorPermisos {
         throw new Error(`Permiso ya existe para: ${email}`);
       }
       
+      // ✅ [2026-10-06] FIX: antes se escribía `proyectos` tal cual (`proyectos || 'ALL'`).
+      // Si quien llama pasaba un arreglo de JS en vez de una cadena separada por comas,
+      // Apps Script lo serializaba como "[Ljava.lang.Object;@..." al escribirlo en la celda
+      // (visto en producción en la fila de un usuario real). obtenerProyectos() (línea 48)
+      // sigue esperando una cadena separada por comas o el literal 'ALL' — se normaliza aquí
+      // para que coincida con lo que el lado de lectura ya asume.
+      // NO se convierte vacío a 'ALL' en silencio: un vacío llega aquí por descuido de
+      // formulario con la misma frecuencia que por intención real de dar acceso total, y
+      // la diferencia es demasiado importante para adivinarla. Se exige 'ALL' explícito.
+      let proyectosTexto;
+      if (Array.isArray(proyectos)) {
+        proyectosTexto = proyectos.map(p => String(p).trim()).filter(p => p).join(',');
+      } else if (typeof proyectos === 'string') {
+        proyectosTexto = proyectos.trim();
+      } else if (proyectos === null || proyectos === undefined) {
+        proyectosTexto = '';
+      } else {
+        throw new Error(`guardarPermiso: tipo de dato inválido para 'proyectos' (${typeof proyectos}). Debe ser un string separado por comas, un arreglo, o 'ALL'.`);
+      }
+
+      if (!proyectosTexto) {
+        throw new Error("guardarPermiso: 'proyectos' no puede quedar vacío. Use 'ALL' para acceso a todos los proyectos, o una lista explícita separada por comas.");
+      }
+
       // Agregar nuevo permiso
       const fila = [
         email,
         rol,
-        proyectos || 'ALL',
+        proyectosTexto,
         'SI',
         new Date()
       ];
@@ -362,5 +386,46 @@ function getAllowedProjects(email) {
   } catch (e) {
     console.error(`Error en getAllowedProjects: ${e.message}`);
     return 'ALL';
+  }
+}
+
+/**
+ * ✅ [2026-10-06] Auditoría de solo lectura sobre la hoja Permisos de DATA_FILES.PRINCIPAL.
+ * Lista las filas cuya columna PROYECTOS no es texto normal: contiene "[Ljava" (arreglo
+ * serializado mal, el bug de guardarPermiso() antes de este fix) o no es un string válido.
+ * No escribe ni modifica nada. Pensada para correr manualmente antes de decidir qué hacer
+ * con cada fila afectada (ver Sección 44+ de DOCUMENTACION_TECNICA_VIVA.md, caso de Paula).
+ * @returns {{total:number, filasAfectadas:Array<{fila:number,email:string,valorCrudo:string}>}}
+ */
+function auditarProyectosPermisos() {
+  try {
+    const gestor = new GestorDatos(); // sin fileId → DATA_FILES.PRINCIPAL, igual que GestorPermisos()
+    const { rows, headers } = gestor.leerDatos(getConfig('SHEETS.PERMISOS'));
+
+    const emailIndex = findColumnIndex(headers, 'EMAIL');
+    const proyectosIndex = findColumnIndex(headers, 'PROYECTOS');
+
+    const filasAfectadas = [];
+    rows.forEach((row, i) => {
+      const valorCrudo = row[headers[proyectosIndex]];
+      const esTextoNormal = typeof valorCrudo === 'string' || valorCrudo === '' || valorCrudo === undefined || valorCrudo === null;
+      const contieneJava = typeof valorCrudo === 'string' && valorCrudo.indexOf('[Ljava') !== -1;
+
+      if (!esTextoNormal || contieneJava) {
+        filasAfectadas.push({
+          fila: i + 2, // +2: fila 1 es encabezado, rows es 0-indexado
+          email: row[headers[emailIndex]] || '(sin email)',
+          valorCrudo: String(valorCrudo)
+        });
+      }
+    });
+
+    console.log(`[auditarProyectosPermisos] ${filasAfectadas.length} fila(s) afectada(s) de ${rows.length} revisadas.`);
+    filasAfectadas.forEach(f => console.warn(`  Fila ${f.fila} (${f.email}): "${f.valorCrudo}"`));
+
+    return { total: rows.length, filasAfectadas: filasAfectadas };
+  } catch (e) {
+    console.error(`Error en auditarProyectosPermisos: ${e.message}`);
+    return { total: 0, filasAfectadas: [], error: e.message };
   }
 }

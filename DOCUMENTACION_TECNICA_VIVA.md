@@ -3213,3 +3213,31 @@ Fase de Migración: **COMPLETADA Y VERIFICADA** 2026-09-23.
 1. Decidir y setear el valor real de `PAC_DESTINO_SPREADSHEET_ID` en Script Properties (el spreadsheet "Sistema Predial IDU - PAC" de la Sección 43, o uno nuevo si ese archivo resultó tener datos mezclados de permisos tras la revisión manual del usuario).
 2. La investigación de por qué el Dashboard no muestra alertas sigue abierta — es un módulo distinto (`evaluador_alertas.js`), no se toca aquí.
 3. El bloque `HOJAS_INTERNAS` duplicado en `pac_config.js` queda documentado pero sin corregir.
+
+## 47. DIAGNÓSTICO — Causa raíz confirmada de las alertas perdidas + fix de normalización en guardarPermiso() [2026-10-06]
+
+**Hallazgo principal: el propio script de migración envió hojas a archivos distintos de los que el código espera.** Comparando `migracion_automatica_v2.js` (tabla `mapeoMigracion`, líneas 224-247) contra los módulos que las leen:
+
+- `ALERTAS_ACTIVAS` se migró a `destino: 'pac'` (línea 242). Pero `MotorEvaluadorReglas` (`evaluador_alertas.js:98`) y `obtenerAlertasWeb()` (línea 640) leen y escriben esa hoja exclusivamente en `DATA_FILES.PRINCIPAL`. Las alertas reales con datos al 23-sep (vistas por el usuario en el archivo PAC migrado) quedaron en el archivo equivocado para el código que las consume hoy.
+- `ASIGNACIONES_EQUIPOS` se migró a `destino: 'usuarios'` (línea 237). Pero `_leerAsignacionesEquipos()` (`gestion_equipos_backend.js:125`) la lee explícitamente de `DATA_FILES.PRINCIPAL`. Mismo patrón, afecta las asignaciones de equipo hechas antes de la migración.
+- `CONFIG_REGLAS` (hoja de reglas de negocio del motor de alertas) **no aparece en ningún punto de la tabla de mapeo** — no se migró a ningún archivo. `ejecutarMotor()` (`evaluador_alertas.js:112`) la lee sin chequeo de nulo; si falta, lanza excepción. Si en cambio alguien abrió la pantalla de configuración de reglas al menos una vez desde la migración, `obtenerReglasJSON()` (línea 8) la auto-crea oculta con `{}` — reglas vacías, no las originales.
+
+No se corrigió nada de esto en esta sesión: mover hojas entre spreadsheets es una decisión de datos, no solo de código, y queda pendiente de que el usuario decida (¿mover las hojas físicamente a Principal, o repuntar el código a los archivos nuevos?).
+
+**Corrección a hallazgos previos de esta misma investigación:**
+- Se confirmó que `GestorFiltroMatriz.obtenerProyectosVisibles()` no depende de usuario ni de rol — es un filtro global de toda la app, sin relación con el problema de alertas. Descarta una hipótesis anterior.
+- Se quitó `ALERTAS_ACTIVAS` de la lista que verifica `pac_verificarDestino()` (Sección 46): no tiene relación con `PAC_DESTINO_SPREADSHEET_ID`, incluirla ahí daba una falsa sensación de cobertura.
+- Se corrigió el texto de la Sección 46 para no afirmar como hecho ("se estaban escribiendo") algo que solo está confirmado por lectura de código, no por ejecución en vivo, y se quitó el ID parcial que había quedado ahí.
+
+**Fix aplicado — normalización en `guardarPermiso()` (`permisos.js`):** antes escribía `proyectos || 'ALL'` sin validar el tipo. Si quien llamaba pasaba un arreglo de JavaScript en vez de una cadena, Apps Script lo serializaba como `"[Ljava.lang.Object;@..."` al guardarlo en la celda — el bug real detrás de la fila corrupta de un usuario en producción (columna PROYECTOS). Ahora: arreglo → `join(',')`; string → `trim()`; vacío/null/undefined → **rechazado con `Error` explícito** pidiendo `'ALL'` o una lista concreta (no se convierte a `'ALL'` en silencio, para no dar acceso total por un descuido de formulario); cualquier otro tipo → `Error` explícito. `obtenerProyectos()` (lectura) no se tocó, ni el significado de `'ALL'` en datos ya existentes.
+
+Se agregó `auditarProyectosPermisos()`: solo lectura sobre la hoja Permisos de `DATA_FILES.PRINCIPAL`, lista las filas cuyo valor de PROYECTOS no es texto normal o contiene `"[Ljava"`. No escribe nada.
+
+**Por qué se bajó la prioridad de este fix pero se mantuvo:** se buscó exhaustivamente quién consume `obtenerProyectos()`/`getAllowedProjects()` en el resto de la aplicación (backend y frontend) y no se encontró ningún llamador — la función existe duplicada (`Codigo.js:1044` y `permisos.js:382`, cuerpos idénticos) pero nadie la invoca hoy. El dato corrupto no está causando ningún problema de acceso activo en este momento, pero se corrige igual porque es un bug real y de bajo riesgo arreglarlo.
+
+**Validaciones ejecutadas:** `node --check permisos.js` (sintaxis válida). No se ejecutó `clasp push` ni ninguna función en el Apps Script en vivo.
+
+**Pendiente real:**
+1. Decidir qué hacer con `ALERTAS_ACTIVAS`, `ASIGNACIONES_EQUIPOS` y `CONFIG_REGLAS` tras el hallazgo de la tabla de mapeo — es la causa raíz confirmada de las alertas perdidas y probablemente de equipos reasignados a sus valores por defecto.
+2. Correr `auditarProyectosPermisos()` manualmente para ver cuántas filas más, aparte de la de Paula, tienen el mismo problema.
+3. Decidir el caso de Paula específicamente (rol "Seguimiento" sin proyecto) ahora que `guardarPermiso()` exige un valor explícito — probablemente necesite guardarse con `'ALL'` a propósito, o definir un valor "NINGUNO" si se retoma el uso de este campo en el futuro.
