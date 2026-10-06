@@ -3354,3 +3354,21 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 1. Decidir qué hacer con el ID hardcodeado en `app_core_js.html:1060` (`URL_NORMALIZACION`), nuevo hallazgo de esta sesión, sin tocar todavía.
 2. Confirmar manualmente si `pac_verificarAccesoExterno()` pasa contra la fuente real una vez compartida y configurada, antes de autorizar cualquier sync.
 3. Probar en navegador que el fix del modal de detalle de RT funciona como se espera (abrir "Acerca de", cerrarlo, y confirmar que el detalle de un RT se ve correcto después).
+
+## 51. Tarea S — sync seguro de PAC: dedup, guarda de eliminación y respaldo [2026-10-06]
+
+**Contexto:** tras el diagnóstico de la Sección 50, se confirmó que `sincronizarPAC()` no acumula duplicados entre corridas (cada aprobación reemplaza `PAC_Vigente` por completo), pero no deduplicaba RT repetidos dentro de la fuente externa, y las filas que dejan de estar en la fuente desaparecen de `PAC_Vigente` al aprobar, sin ningún aviso ni respaldo previo. Esta sección cierra esos tres huecos, sin ejecutar ninguna sincronización real.
+
+**1. Deduplicación por RT (`_pac_compararYGenerarBorrador()`, `pac_gestor.js`):** antes de comparar o construir el borrador, se filtran las filas de la fuente externa por `RT`, conservando solo la primera aparición de cada clave. El conteo de duplicados descartados queda en `res.duplicadosDescartados` (nunca se imprime el contenido de las filas, solo el número). Las filas sin `RT` no se deduplican, porque no hay clave para comparar.
+
+**2. Guarda de seguridad del 20% (`sincronizarPAC()`, `pac_gestor.js`):** si el borrador resultante eliminaría más del 20% de las filas actuales de `PAC_Vigente`, la función **nunca** autoaprueba, sin importar qué tan "limpio" se vea el resto del cambio. Devuelve `{ok:true, requiereRevision:true, mensaje, eliminadas, nuevas, total}` además de los campos existentes (`success`, `cambios`, `nuevos`, `eliminados`, `modificados`, `duplicadosDescartados`), y registra la advertencia por `pac_log()`. Solo bloquea la escritura automática — la aprobación manual sigue siendo posible desde la hoja `PAC_Borrador` o desde `aprobarBorradorPAC()` directamente, a propósito (es una guarda, no un bloqueo absoluto).
+
+**3. Respaldo automático antes de aprobar (`_pac_respaldarVigenteAntesDeAprobar()`, nueva, `pac_gestor.js`):** se llama desde `aprobarBorradorPAC()` justo antes de `hojaVigente.clearContents()`. Copia `PAC_Vigente` completa a una hoja oculta `BAK_PAC_Vigente_<yyyyMMdd_HHmm>` dentro del mismo spreadsheet destino, y conserva solo los 3 respaldos más recientes de ese prefijo (borra los demás). No es crítico: si el respaldo falla, se registra el error y la aprobación continúa igual, para no bloquear la operación principal por un problema de respaldo.
+
+**4. Resumen del borrador antes de aprobar (`pac_seccion.html`, frontend):** `pac_sincronizar()` ahora muestra nuevas/eliminadas/modificadas/duplicados descartados antes de ofrecer el botón de aprobar. Si el backend marcó `requiereRevision:true`, no se ofrece aprobar desde ese flujo en absoluto — se muestra una alerta explícita pidiendo revisar `PAC_Borrador` manualmente.
+
+**Bonus, mismo archivo:** se quitó un ID de spreadsheet que `sincronizarPAC()` imprimía en el mensaje de error cuando ninguna fuente trae datos (`'... (ID: ' + PAC_CONFIG.PAC_SPREADSHEET_ID + ')'`), consistente con la política de la Tarea K2/K2b.
+
+**Validaciones ejecutadas:** `node --check pac_gestor.js` (sintaxis válida), `node scripts/lint-html-scripts.js pac_seccion.html` → "1/1 bloques de JS válidos". No se ejecutó ninguna sincronización real, por instrucción explícita del usuario.
+
+**Pendiente real:** probar el flujo completo con datos reales una vez se comparta y configure la fuente externa de PAC — en particular, confirmar que la guarda del 20% se comporta como se espera con el caso real de `PAC_Vigente` (1.740 filas, 383 RT que no están en el origen, que representarían ~22% si todas se eliminaran de golpe).
