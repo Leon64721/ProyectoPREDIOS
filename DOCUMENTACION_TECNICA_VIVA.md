@@ -3445,3 +3445,11 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 **Validación:** `node --check` en `seguimiento_alertas.js`, `motor_reglas.js` y `Codigo.js`. Lint de los HTML tocados: bloques válidos.
 
 **Spike 2026-10-18 13:22:** `spikeHiloGmailSeguimiento` falló porque el manifiesto solo tenía `gmail.send`. Se agregó `gmail.modify`. A las 13:26 se hizo `clasp push --force` al script `18vY9…` (54 archivos). La API del proyecto remoto confirma `seguimiento_alertas`, `app_seguimiento_alertas_js`, `despacharCorreoAlertas_` y el scope `gmail.modify`. Falta que el dueño acepte la autorización nueva y repita la prueba del hilo. Si `replyAll` falla después de autorizar, el scope pasa a `https://mail.google.com/`. La Web App publicada no cambia hasta una versión nueva.
+
+## 59. Retroalimentación visible en la bandeja [2026-10-18]
+
+**Agente:** Cursor. Sin `clasp push`.
+
+**Qué se hizo:** en `#page-alertas` el Administrador tiene el botón Retroalimentación. El cuadro vive en `app_reglas_editor_js.html` (`abrirRetroalimentacionAlertas`, `guardarRetroalimentacionAlertas`). Escribe `seguimiento_correo` con `persistirConfigReglas`, que ahora acepta callbacks para no usar el modal del constructor. `cargarJSONenPantalla` acepta un callback y, si se llama desde la bandeja, pregunta antes de pisar el Modo JSON. La validación de este guardado solo mira el bloque de retroalimentación. No se tocaron el correo, la hoja de seguimiento ni PAC.
+
+**Validación:** lint de `Index.html`, `app_alertas_js.html` y `app_reglas_editor_js.html`. Falta verlo en la URL de desarrollo: entrar a Alertas tempranas sin abrir antes el Motor, marcar Crítica y guardar.

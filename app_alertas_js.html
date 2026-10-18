@@ -31,8 +31,16 @@ function aplicarVisibilidadAdminReglas() {
 //  showLoader/hideLoader/showToast/showConfirmation/onError, currentUser)
 // ═══════════════════════════════════════════════════════════════════════════════════
 
-function cargarJSONenPantalla() {
-    showLoader('Cargando Motor de Reglas...');
+function cargarJSONenPantalla(alTerminar) {
+    var callback = typeof alTerminar === 'function' ? alTerminar : null;
+    if (callback && motorReglasData) {
+        var editorPrevio = document.getElementById('editorJSONReglas');
+        var enMemoria = JSON.stringify(motorReglasData, null, 4);
+        if (editorPrevio && editorPrevio.value.trim() && editorPrevio.value.trim() !== enMemoria.trim()) {
+            if (!confirm('Hay cambios sin guardar en el Modo JSON que se descartarán. ¿Continuar?')) return;
+        }
+    }
+    showLoader(callback ? 'Cargando reglas...' : 'Cargando Motor de Reglas...');
     google.script.run
         .withSuccessHandler(function(response) {
             hideLoader();
@@ -46,6 +54,7 @@ function cargarJSONenPantalla() {
                     } catch (e) {
                         showToast('Error procesando el JSON guardado', 'danger');
                         motorReglasData = { ReglasDeNegocio: [] };
+                        return;
                     }
                 } else {
                     motorReglasData = { ReglasDeNegocio: [] };
@@ -56,6 +65,7 @@ function cargarJSONenPantalla() {
                 renderizarTarjetasReglas();
                 renderizarFuentesDeDatos();
                 aplicarVisibilidadAdminReglas();
+                if (callback) callback();
             } else {
                 showToast('Error cargando reglas: ' + (response.error || response.message), 'danger');
             }

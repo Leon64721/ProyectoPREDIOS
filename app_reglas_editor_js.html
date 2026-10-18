@@ -353,31 +353,50 @@ function previsualizarReglaJSON() {
   try { pre.textContent = JSON.stringify(construirReglaDesdeFormulario(), null, 2); } catch (e) { pre.textContent = ''; }
 }
 
-function persistirConfigReglas(nuevaConfig, mensajeOk) {
+function persistirConfigReglas(nuevaConfig, mensajeOk, opciones) {
   const editor = document.getElementById('editorJSONReglas');
   const enMemoria = JSON.stringify(motorReglasData, null, 4);
   if (editor && editor.value.trim() && editor.value.trim() !== enMemoria.trim()) {
     if (!confirm('Hay cambios sin guardar en el Modo JSON que se descartarán. ¿Continuar?')) return;
   }
   const json = JSON.stringify(nuevaConfig, null, 2);
-  if (json.length > 49000) { showToast('El JSON supera 49.000 caracteres.', 'danger'); return; }
+  if (json.length > 49000) {
+    const msgTope = 'El JSON supera 49.000 caracteres.';
+    if (opciones && opciones.alError) opciones.alError({ error: msgTope });
+    else showToast(msgTope, 'danger');
+    return;
+  }
   showLoader('Guardando regla...');
   google.script.run
     .withSuccessHandler(function(res) {
       hideLoader();
-      if (res && res.conflicto) { showToast(res.error, 'warning'); cargarJSONenPantalla(); return; }
+      if (res && res.conflicto) {
+        showToast(res.error, 'warning');
+        if (opciones && opciones.alError) opciones.alError(res);
+        cargarJSONenPantalla();
+        return;
+      }
       if (res && res.success) {
         showToast(mensajeOk || res.message, 'success');
-        const modal = bootstrap.Modal.getInstance(document.getElementById('modalConstructorRegla'));
-        if (modal) modal.hide();
+        if (opciones && opciones.alExito) opciones.alExito(res);
+        else {
+          const modal = bootstrap.Modal.getInstance(document.getElementById('modalConstructorRegla'));
+          if (modal) modal.hide();
+        }
         cargarJSONenPantalla();
       } else {
-        const caja = document.getElementById('crErrores');
         const msg = (res && res.error) || 'No se pudo guardar';
-        if (caja) caja.textContent = msg; else showToast(msg, 'danger');
+        if (opciones && opciones.alError) opciones.alError(res || { error: msg });
+        else {
+          const caja = document.getElementById('crErrores');
+          if (caja) caja.textContent = msg; else showToast(msg, 'danger');
+        }
       }
     })
-    .withFailureHandler(onError)
+    .withFailureHandler(function(err) {
+      if (opciones && opciones.alError) opciones.alError({ error: String(err && err.message || err) });
+      onError(err);
+    })
     .guardarReglasJSON(json, currentUser, motorReglasVersion);
 }
 
@@ -392,6 +411,134 @@ function guardarReglaDesdeConstructor() {
   if (indiceReglaEnEdicion === null) copia.ReglasDeNegocio.push(regla);
   else copia.ReglasDeNegocio[indiceReglaEnEdicion] = regla;
   persistirConfigReglas(copia, 'Regla guardada.');
+}
+
+var ETIQUETAS_NIVEL_RETRO = { ROJO: 'Crítica', NARANJA: 'Riesgo', AMARILLO: 'Preventiva' };
+
+function asegurarModalRetroalimentacion() {
+  if (document.getElementById('modalRetroalimentacion')) return;
+  var html = '<div class="modal fade" id="modalRetroalimentacion" tabindex="-1" data-bs-backdrop="static">' +
+    '<div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content">' +
+    '<div class="modal-header bg-dark text-white"><h5 class="modal-title">Retroalimentación por regla</h5>' +
+    '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>' +
+    '<div class="modal-body"><div id="retroErrores" class="text-danger small mb-2"></div><div id="retroReglas"></div></div>' +
+    '<div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>' +
+    '<button type="button" class="btn btn-primary" id="btnGuardarRetroalimentacion">Guardar</button></div>' +
+    '</div></div></div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstElementChild);
+}
+
+function abrirRetroalimentacionAlertas() {
+  if (!motorReglasData) {
+    cargarJSONenPantalla(function() { pintarYAbrirRetroalimentacion(); });
+    return;
+  }
+  pintarYAbrirRetroalimentacion();
+}
+
+function pintarYAbrirRetroalimentacion() {
+  asegurarModalRetroalimentacion();
+  var cont = document.getElementById('retroReglas');
+  var errores = document.getElementById('retroErrores');
+  if (errores) errores.textContent = '';
+  var reglas = (motorReglasData && motorReglasData.ReglasDeNegocio) || [];
+  if (!reglas.length) {
+    cont.innerHTML = '<div class="text-muted">No hay reglas definidas.</div>';
+  } else {
+    cont.innerHTML = reglas.map(function(regla, index) {
+      var seg = regla.seguimiento_correo || {};
+      var filas = ['ROJO', 'NARANJA', 'AMARILLO'].map(function(nivel) {
+        var item = seg[nivel] || {};
+        var avisoOculto = item.permitir_no_uso === true ? '' : ' d-none';
+        return '<div class="border rounded p-2 mt-2"><div class="fw-bold small">' + ETIQUETAS_NIVEL_RETRO[nivel] + '</div>' +
+          '<label class="small me-3"><input type="checkbox" id="retroExigir_' + index + '_' + nivel + '"' + (item.exigir_observacion === true ? ' checked' : '') + '> Exigir comentario</label>' +
+          '<label class="small"><input type="checkbox" class="retro-no-uso" data-index="' + index + '" data-nivel="' + nivel + '" id="retroNoUso_' + index + '_' + nivel + '"' + (item.permitir_no_uso === true ? ' checked' : '') + '> Puede decir que no se va a usar</label>' +
+          (nivel === 'ROJO' ? ' <button type="button" class="btn btn-sm btn-outline-secondary" onclick="pegarTextoAvaluoRetro(' + index + ')">Usar texto de avalúo</button>' : '') +
+          '<textarea id="retroNota_' + index + '_' + nivel + '" class="form-control form-control-sm mt-1" rows="2" maxlength="600" placeholder="Nota que sale en el correo">' + escapeHtml(item.nota_correo || '') + '</textarea>' +
+          '<textarea id="retroAviso_' + index + '_' + nivel + '" class="form-control form-control-sm mt-1 retro-aviso' + avisoOculto + '" rows="2" maxlength="600" placeholder="Aviso si marcan que no se va a usar">' + escapeHtml(item.texto_no_uso || '') + '</textarea></div>';
+      }).join('');
+      return '<div class="border rounded p-2 mb-3"><div class="fw-bold">' + escapeHtml(regla.nombre || 'Sin nombre') + '</div>' + filas + '</div>';
+    }).join('');
+  }
+  cont.querySelectorAll('.retro-no-uso').forEach(function(chk) {
+    chk.onchange = function() {
+      var aviso = document.getElementById('retroAviso_' + chk.getAttribute('data-index') + '_' + chk.getAttribute('data-nivel'));
+      if (aviso) aviso.classList.toggle('d-none', !chk.checked);
+    };
+  });
+  document.getElementById('btnGuardarRetroalimentacion').onclick = guardarRetroalimentacionAlertas;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRetroalimentacion')).show();
+}
+
+function pegarTextoAvaluoRetro(index) {
+  document.getElementById('retroExigir_' + index + '_ROJO').checked = true;
+  document.getElementById('retroNoUso_' + index + '_ROJO').checked = true;
+  document.getElementById('retroNota_' + index + '_ROJO').value = TEXTO_AVALUO_NOTA;
+  var aviso = document.getElementById('retroAviso_' + index + '_ROJO');
+  aviso.value = TEXTO_AVALUO_AVISO;
+  aviso.classList.remove('d-none');
+}
+
+function seguimientoDesdeRetro(index) {
+  var out = {};
+  var activo = false;
+  ['ROJO', 'NARANJA', 'AMARILLO'].forEach(function(nivel) {
+    var exigir = document.getElementById('retroExigir_' + index + '_' + nivel).checked;
+    var noUso = document.getElementById('retroNoUso_' + index + '_' + nivel).checked;
+    var nota = document.getElementById('retroNota_' + index + '_' + nivel).value.trim();
+    var aviso = document.getElementById('retroAviso_' + index + '_' + nivel).value.trim();
+    if (!(exigir || noUso || nota || aviso)) return;
+    activo = true;
+    out[nivel] = { exigir_observacion: exigir, permitir_no_uso: noUso, nota_correo: nota, texto_no_uso: aviso };
+  });
+  return activo ? out : null;
+}
+
+function validarSoloSeguimiento(seg, nombre) {
+  var errores = [];
+  if (!seg) return errores;
+  ['ROJO', 'NARANJA', 'AMARILLO'].forEach(function(nivel) {
+    var item = seg[nivel];
+    if (!item) return;
+    var donde = (nombre || 'Regla') + ' / ' + ETIQUETAS_NIVEL_RETRO[nivel];
+    if (String(item.nota_correo || '').length > 600) errores.push(donde + ': la nota supera 600 caracteres.');
+    if (String(item.texto_no_uso || '').length > 600) errores.push(donde + ': el aviso supera 600 caracteres.');
+    if (item.exigir_observacion && !String(item.nota_correo || '').trim()) errores.push(donde + ': si exiges comentario, escribe la nota del correo.');
+    if (item.permitir_no_uso && !item.exigir_observacion) errores.push(donde + ': no uso solo se permite si también exiges comentario.');
+    if (item.permitir_no_uso && !String(item.texto_no_uso || '').trim()) errores.push(donde + ': si permites no uso, escribe el aviso.');
+  });
+  return errores;
+}
+
+function guardarRetroalimentacionAlertas() {
+  var caja = document.getElementById('retroErrores');
+  var copia = JSON.parse(JSON.stringify(motorReglasData));
+  if (!Array.isArray(copia.ReglasDeNegocio)) copia.ReglasDeNegocio = [];
+  var errores = [];
+  copia.ReglasDeNegocio.forEach(function(regla, index) {
+    var seg = seguimientoDesdeRetro(index);
+    errores = errores.concat(validarSoloSeguimiento(seg, regla.nombre || 'Regla ' + (index + 1)));
+    if (seg) regla.seguimiento_correo = seg;
+    else delete regla.seguimiento_correo;
+  });
+  if (errores.length) {
+    caja.innerHTML = errores.map(function(e) { return '<div>' + escapeHtml(e) + '</div>'; }).join('');
+    return;
+  }
+  caja.textContent = '';
+  persistirConfigReglas(copia, 'Retroalimentación guardada.', {
+    alExito: function() {
+      var inst = bootstrap.Modal.getInstance(document.getElementById('modalRetroalimentacion'));
+      if (inst) inst.hide();
+    },
+    alError: function(res) {
+      var msg = (res && res.error) || 'No se pudo guardar';
+      caja.textContent = msg;
+      showToast(msg, 'danger');
+    }
+  });
 }
 
 function alternarActivaRegla(index) {
