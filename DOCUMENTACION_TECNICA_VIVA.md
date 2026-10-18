@@ -3384,3 +3384,64 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 **Validaciones ejecutadas:** `node --check Codigo.js` (sintaxis válida), `node scripts/lint-html-scripts.js app_core_js.html` → "1/1 bloques de JS válidos". Se confirmó con `git grep` que el ID ya no aparece en ningún archivo rastreado por git.
 
 **Pendiente real, acción del usuario:** crear la Script Property `NORMALIZACION_URL` en el proyecto `18vY9...` con el valor de la URL actual, **antes** de hacer `clasp push` de este cambio — si no, el botón de Normalización deja de funcionar hasta que se configure (el mensaje de error ya es claro sobre esto, pero el botón no funcionará igual).
+
+## 53. Cursor entra al modelo multi-agente y queda anclado al script 18vY9 [2026-10-18]
+
+**Agente:** Cursor. Sin cambios de código del tablero y sin `clasp push`.
+
+**Qué se hizo:** Claude Code ya tenía el skill de graphify en `~/.claude/skills/graphify` y Copilot en `~/.copilot/skills/graphify`. Cursor no tenía el equivalente. Se instaló con `graphify cursor install`, que escribió `.cursor/rules/graphify.mdc` (`alwaysApply: true`). El grafo ya existía (`graphify-out/graph.json`, 876 nodos).
+
+**Reglas nuevas, solo para Cursor:**
+- `.cursor/rules/script-unico.mdc` — único Apps Script permitido: `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi`. Prohibido tocar `16gqzy…` y `17Syj1…`.
+- `.cursor/rules/convivencia-agentes.mdc` — misma convivencia que la Sección 16 y `CONTRIBUTING.md`: un checkout a la vez, no revertir trabajo ajeno, bitácora única, `clasp push` solo si el usuario lo pide y solo a `18vY9…`.
+
+**Consulta de grafo sobre alertas (misma fecha):** `graphify query` une `MotorEvaluadorReglas.ejecutarMotor` / `_guardarAlertasEnHoja` con `evaluarAlertasDataset` y, por otro lado, `MotorReglas.reglasBase`. `graphify path MotorReglas MotorEvaluadorReglas` no encuentra camino dirigido: son dos motores paralelos. `graphify explain obtenerReglasJSON` es ambiguo: el símbolo existe en `evaluador_alertas.js` y en `motor_reglas.js`. Los `.html` siguen clasificados como documentación en el grafo (ver `.graphifyignore`), así que `app_alertas_js.html` no aparece como nodo de código.
+
+## 54. Motor de reglas y alertas — antes del cambio [2026-10-18]
+
+**Agente:** Cursor. Línea base: `node scripts/lint-html-scripts.js motor_reglas.js evaluador_alertas.js Codigo.js app_alertas_js.html Index.html` → `6/6 bloques de JS válidos`. `.clasp.json` confirma el script `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi`.
+
+**Archivos que se van a tocar:** `motor_reglas.js` (guardar JSON y, hasta ahora, reglas fijas del dashboard), `evaluador_alertas.js` (evaluación y una copia duplicada del guardado), `Codigo.js` (dashboard y correo), `app_alertas_js.html` (bandeja, CSV y el botón que llama a una función inexistente), `Index.html` (botón Nueva Regla sin acción y botones copiados en Permisos). Se añade `app_reglas_editor_js.html` y el permiso de Calendar en `appsscript.json`.
+
+**Cambio previsto:** una sola fuente de reglas, dashboard leyendo `ALERTAS_ACTIVAS`, constructor gráfico, solo Administrador para guardar/ejecutar/enviar, CSV con columnas reales, trigger diario propio, cruce marcado como no evaluado. Plan: `PLAN_MOTOR_REGLAS_ALERTAS.md`.
+
+## 55. Motor de reglas y alertas — después del cambio [2026-10-18]
+
+**Agente:** Cursor. Código local listo. El 2026-10-18 a las 10:41 el usuario confirmó el respaldo del JSON y se ejecutó `clasp push --force` al script `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi` (52 archivos, incluido `app_reglas_editor_js.html`). Sin `clasp deploy`. No se instaló el trigger desde el agente.
+
+**Funciones:**
+- `motor_reglas.js`: quedó solo el almacén. Nuevas `_exigirAdminMotorReglas_`, `_obtenerHojaConfigReglas_`, `_versionReglas_`, `_leerEncabezadosDatosReglas_`, `validarConfigReglas_`, `obtenerMetadatosEditorReglas`. `obtenerReglasJSON` devuelve `version`. `guardarReglasJSON` exige Administrador, valida, limita 49.000 caracteres y rechaza un guardado si otro administrador cambió la hoja. Se borró `class MotorReglas`.
+- `evaluador_alertas.js`: se borraron la copia de obtener/guardar, `evaluarAlertasDataset` y `_normalizarSeveridadAlertas`. `ejecutarMotor` lee por `obtenerReglasJSON`, ignora una regla mala sin tumbar el resto, cuenta reglas con cruce no evaluado y cruce ignorado, escribe `ALERTAS_ACTIVAS` e invalida el caché. Nuevas `resumirAlertasActivasParaDashboard_`, `ejecutarMotorReglasInterno_`, `triggerDiarioMotorReglas`, `instalarTriggerMotorReglas`, `eliminarTriggerMotorReglas` y las constantes de operadores.
+- `Codigo.js`: el dashboard llama a `resumirAlertasActivasParaDashboard_`. `procesarReporteAlertas` exige Administrador.
+- `app_alertas_js.html`: badges ROJO/NARANJA/AMARILLO, aviso "Sin evaluar", CSV con `DIAS RESTANTES` y `ESTADO PREDIAL ACTUAL`, se quitó `programarReporte`.
+- `Index.html`: botón Nueva Regla abre el constructor, Guardar JSON quedó en el modo desarrollador, Permisos ya no tiene los cuatro botones de alertas, nota de alcance para Articulador y Gestor.
+- `app_reglas_editor_js.html`: constructor gráfico nuevo.
+- `appsscript.json`: se añadió `calendar.readonly`.
+
+**Validación:** `node --check` en `motor_reglas.js`, `evaluador_alertas.js` y `Codigo.js` sin error. `node scripts/lint-html-scripts.js` en los HTML tocados: bloques válidos. Una sola definición de `obtenerReglasJSON` y `guardarReglasJSON`, ambas en `motor_reglas.js`.
+
+**Pendiente manual:** reautorizar el script por el permiso nuevo de Calendar; ejecutar una vez `instalarTriggerMotorReglas()` con la cuenta Administrador y comprobar en Activadores el handler `triggerDiarioMotorReglas` diario a las 6:00; recorrer el checklist de la Web App (constructor, bandeja, aviso "Sin evaluar", CSV y página Permisos). El checklist de tiempos de la Web App queda para cuando el usuario lo recorra.
+
+## 56. Plan de seguimiento del correo de alertas [2026-10-18]
+
+**Agente:** Cursor. Solo plan. Sin cambios de código del tablero y sin `clasp push`.
+
+**Qué se hizo:** se escribió `PLAN_SEGUIMIENTO_CORREO_ALERTAS.md`. El correo actual (`procesarReporteAlertas` en `Codigo.js`) adjunta el Excel y agrupa cantidades, sin listar RT ni pedir respuesta. El plan propone lista de RT por semáforo, política por regla y color en el constructor, cuadro en la Web App y respuesta en el mismo hilo, con historial en la hoja `SEGUIMIENTO_ALERTAS`.
+
+**Auditoría:** Claude, mismo día, veredicto APROBAR CON CAMBIOS. El plan conjunto quedó en la sección 12. Fabian cerró D1–D5. El correo de jefatura se pide en el cuadro de envío; no va a la hoja de usuarios.
+
+## 57. Seguimiento del correo de alertas — antes del cambio [2026-10-18]
+
+**Agente:** Cursor. `procesarReporteAlertas` en `Codigo.js` enviaba con `MailApp.sendEmail` un Excel y un cuerpo que contaba articuladores y gestores, sin listar RT. `_obtenerObservacionesPorRT` copia la observación de la hoja Datos al adjunto; no es historial. `doGet` niega el ingreso a quien no tiene rol en Permisos (cerca de la línea 171). No se pudo leer la hoja Permisos en vivo: hay que confirmar ahí que los gestores que deben responder tienen rol, porque si no, el enlace no abre. El spike de Gmail (`createDraft` → `send` → `replyAll`) no se ejecutó en el editor. Por eso `appsscript.json` todavía no lleva el scope nuevo.
+
+## 58. Seguimiento del correo de alertas — después del cambio local [2026-10-18]
+
+**Agente:** Cursor. Sin `clasp push`.
+
+**Funciones nuevas:** `seguimiento_alertas.js` crea la hoja `SEGUIMIENTO_ALERTAS` y la carpeta "Seguimiento alertas", lee la política `seguimiento_correo` de cada regla, arma las filas pendientes y guarda la respuesta. `despacharCorreoAlertas_` sustituye los dos `MailApp.sendEmail` de `procesarReporteAlertas`. El PDF, el trigger del motor y el PAC no se tocaron.
+
+**Pantalla:** el constructor pinta Seguimiento del correo dentro de `pintarConstructor`. El modal de envío pide la jefatura. El enlace `?sa=` abre `app_seguimiento_alertas_js.html` después de cargar el tablero.
+
+**Validación:** `node --check` en `seguimiento_alertas.js`, `motor_reglas.js` y `Codigo.js`. Lint de los HTML tocados: bloques válidos.
+
+**Pendiente antes de subir:** correr en el editor el spike de Gmail y anotar si bastó `gmail.modify` o hizo falta `https://mail.google.com/`. Recién ahí se agrega el scope, se reautoriza y se publica una versión nueva. Confirmar en Permisos que los gestores tienen rol.

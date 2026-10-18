@@ -1,89 +1,20 @@
 /**
- * ═══════════════════════════════════════════════════════════
- * MOTOR DE REGLAS - ALMACENAMIENTO Y LECTURA
- * ═══════════════════════════════════════════════════════════
+ * Debe coincidir con el switch de _cumpleCondiciones.
  */
-
-// Función para obtener el JSON actual de las reglas
-function obtenerReglasJSON() {
-  try {
-    const fileId = getConfig('DATA_FILES.PRINCIPAL');
-    const ss = SpreadsheetApp.openById(fileId);
-    let hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
-
-    // Si la hoja no existe, la crea (Instalación automática)
-    if (!hojaReglas) {
-      // ✅ SEC-P1.5: LockService para evitar creación duplicada de la hoja bajo concurrencia
-      const lock = LockService.getScriptLock();
-      try {
-        lock.waitLock(20000);
-        // Re-chequear tras adquirir el lock: otro proceso pudo haberla creado mientras esperábamos
-        hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
-        if (!hojaReglas) {
-          hojaReglas = ss.insertSheet('CONFIG_REGLAS');
-          hojaReglas.hideSheet(); // La oculta para que los usuarios no la dañen
-          hojaReglas.getRange("A1").setValue("MOTOR_DE_REGLAS_JSON");
-          hojaReglas.getRange("A1").setFontWeight("bold").setBackground("#34495e").setFontColor("white");
-          hojaReglas.getRange("B1").setValue("{}"); // JSON vacío por defecto
-        }
-      } catch (lockError) {
-        // ✅ CONC-P2.1: diferenciar timeout de lock de otros errores (antes se tragaba en silencio
-        // y caía al TypeError de hojaReglas null, con mensaje técnico confuso)
-        console.error("Error adquiriendo lock para crear CONFIG_REGLAS:", lockError);
-        return { success: false, message: 'El sistema se encuentra ocupado por otro administrador. Por favor intente de nuevo en unos segundos.' };
-      } finally {
-        try { lock.releaseLock(); } catch (er) {}
-      }
-    }
-
-    const jsonString = hojaReglas.getRange("B1").getValue();
-    return { success: true, data: jsonString };
-
-  } catch (error) {
-    console.error("Error leyendo reglas:", error);
-    return { success: false, error: error.message };
-  }
-}
-
-// Función para que el Administrador guarde cambios en el JSON desde la UI
-function guardarReglasJSON(jsonString, usuario) {
-  // ✅ CONC-P2.1: validar el JSON ANTES de tocar el lock, para que un JSON invalido
-  // nunca se reporte como timeout ni un timeout se reporte como JSON invalido
-  try {
-    JSON.parse(jsonString);
-  } catch (parseError) {
-    return { success: false, error: "El formato JSON es inválido. Revisa la sintaxis." };
-  }
-
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(20000);
-  } catch (lockError) {
-    return { success: false, message: 'El sistema se encuentra ocupado por otro administrador. Por favor intente de nuevo en unos segundos.' };
-  }
-
-  try {
-    const fileId = getConfig('DATA_FILES.PRINCIPAL');
-    const ss = SpreadsheetApp.openById(fileId);
-    let hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
-
-    // 2. Guardar en la celda B1
-    hojaReglas.getRange("B1").setValue(jsonString);
-
-    // 3. Registrar en auditoría (usando tu Gestor de Auditoría actual)
-    try {
-      const auditoria = new GestorAuditoria(fileId);
-      auditoria.registrarAccion(usuario, 'ACTUALIZAR_MOTOR_REGLAS', 'Se actualizó el JSON maestro de reglas de negocio');
-    } catch(e) { console.warn("No se pudo auditar:", e); }
-
-    return { success: true, message: "Reglas actualizadas correctamente en la base de datos." };
-
-  } catch (error) {
-    return { success: false, error: 'Error al guardar las reglas: ' + error.message };
-  } finally {
-    try { lock.releaseLock(); } catch (er) {}
-  }
-}
+const OPERADORES_CONDICION_REGLAS = {
+  EQUALS:                     { etiqueta: 'Es igual a',                         parametros: ['valor'] },
+  NOT_EQUAL:                  { etiqueta: 'Es distinto de',                     parametros: ['valor'] },
+  IN:                         { etiqueta: 'Está en la lista',                   parametros: ['valores'] },
+  NOT_IN:                     { etiqueta: 'No está en la lista',                parametros: ['valores'] },
+  IS_NULL:                    { etiqueta: 'Está vacío (vacío, N/A, -)',         parametros: [] },
+  IS_NOT_NULL:                { etiqueta: 'Tiene dato (no vacío, 0 ni N/A)',    parametros: [] },
+  LESS_THAN:                  { etiqueta: 'Número menor que',                   parametros: ['valor'] },
+  DATE_BEFORE_COLUMN:         { etiqueta: 'Fecha anterior a otra columna',      parametros: ['columna_destino'] },
+  PERCENTAGE_BETWEEN_COLUMNS: { etiqueta: '(Columna ÷ otra columna) × 100 entre min y max', parametros: ['columna_destino', 'min_pct', 'max_pct'] },
+  DAYS_PASSED_LESS_THAN:      { etiqueta: 'Días transcurridos hasta hoy ≤',     parametros: ['valor'] }
+};
+const NIVELES_ALERTA_REGLAS = ['ROJO', 'NARANJA', 'AMARILLO'];
+const TIPOS_DIAS_REGLAS = ['HABILES', 'CALENDARIO'];
 
 /**
  * ═══════════════════════════════════════════════════════════
@@ -98,6 +29,7 @@ class MotorEvaluadorReglas {
     this.fileId = getConfig('DATA_FILES.PRINCIPAL');
     this.ss = SpreadsheetApp.openById(this.fileId);
     this.hoy = new Date();
+    this.festivosCargados = false;
     this.festivosColombia = this._cargarFestivosColombia(this.hoy.getFullYear());
     this.alertasGeneradas = [];
   }
@@ -107,16 +39,28 @@ class MotorEvaluadorReglas {
    */
   ejecutarMotor() {
     console.log("🚀 Iniciando Motor Evaluador de Reglas...");
-    
-    // 1. Obtener el JSON de Reglas
-    const jsonString = this.ss.getSheetByName('CONFIG_REGLAS').getRange("B1").getValue();
-    if (!jsonString || jsonString === "{}") {
-      console.warn("⚠️ No hay reglas JSON configuradas.");
-      return { success: false, error: "No hay reglas configuradas" };
+
+    const lectura = obtenerReglasJSON();
+    if (!lectura.success) return { success: false, error: lectura.error || lectura.message };
+    let configReglas;
+    try {
+      configReglas = JSON.parse(lectura.data || '{}');
+    } catch (e) {
+      return { success: false, error: 'El JSON de reglas no se pudo leer.' };
     }
-    
-    const configReglas = JSON.parse(jsonString);
+    if (!configReglas || !Array.isArray(configReglas.ReglasDeNegocio)) {
+      return { success: false, error: 'El JSON de reglas no tiene ReglasDeNegocio[]' };
+    }
+    if (!configReglas.ReglasDeNegocio.length || lectura.data === '{}' || lectura.data === '') {
+      this.alertasGeneradas = [];
+      const vacio = this._guardarAlertasEnHoja();
+      if (!vacio) return { success: false, error: 'No se pudo limpiar ALERTAS_ACTIVAS.' };
+      return { success: false, error: 'No hay reglas configuradas', totalAlertas: 0, reglasNoEvaluables: 0, reglasConCruceIgnorado: 0 };
+    }
+
     const reglasActivas = configReglas.ReglasDeNegocio.filter(r => r.activa);
+    const reglasNoEvaluables = reglasActivas.filter(r => r.evaluacion_cruzada && r.alerta_bloqueo && !r.regla_tiempo).length;
+    const reglasConCruceIgnorado = reglasActivas.filter(r => r.evaluacion_cruzada && r.regla_tiempo).length;
     console.log(`📋 Se encontraron ${reglasActivas.length} reglas activas en el JSON.`);
 
     // 2. Leer la Matriz de Datos (Modo Solo Lectura)
@@ -154,6 +98,7 @@ class MotorEvaluadorReglas {
       if (!rt) return; // Saltar filas vacías
 
       reglasActivas.forEach(regla => {
+        try {
         // A. Verificar si cumple las CONDICIONES previas
         if (this._cumpleCondiciones(filaMatriz, regla.condiciones)) {
           
@@ -181,14 +126,27 @@ class MotorEvaluadorReglas {
             }
           }
         }
+        } catch (errorRegla) {
+          console.error('Regla omitida por error:', regla && regla.nombre, errorRegla);
+        }
       });
     });
 
-    // 4. Guardar resultados en hoja separada (Aplica Deduplicación antes de guardar)
-    this._guardarAlertasEnHoja();
+    const guardado = this._guardarAlertasEnHoja();
+    if (!guardado) return { success: false, error: 'No se pudo escribir ALERTAS_ACTIVAS.' };
+    if (typeof invalidateDataCache === 'function') invalidateDataCache();
+    try {
+      PropertiesService.getScriptProperties().setProperty('MOTOR_REGLAS_ULTIMA_EVALUACION_ISO', new Date().toISOString());
+    } catch (e) {}
 
     console.log(`✅ Motor finalizado. ${this.alertasGeneradas.length} alertas generadas únicas.`);
-    return { success: true, totalAlertas: this.alertasGeneradas.length };
+    return {
+      success: true,
+      totalAlertas: this.alertasGeneradas.length,
+      reglasNoEvaluables: reglasNoEvaluables,
+      reglasConCruceIgnorado: reglasConCruceIgnorado,
+      festivosCargados: this.festivosCargados
+    };
   }
 
   /**
@@ -414,8 +372,11 @@ class MotorEvaluadorReglas {
       hojaAlertas.getRange(1, 1, 1, headers.length).setBackground("#c0392b").setFontColor("white").setFontWeight("bold");
 
       if (this.alertasGeneradas.length === 0) {
-        hojaAlertas.getRange(2, 1).setValue("No hay alertas activas en el sistema.");
-        return;
+        const tsVacio = this.hoy.toLocaleString('es-CO');
+        hojaAlertas.getRange(2, 1, 1, headers.length).setValues([[
+          tsVacio, '', '', '', '', '', '', '', '', '', 'No hay alertas activas en el sistema.', ''
+        ]]);
+        return true;
       }
 
       // Ordenar alertas (ROJO primero, luego NARANJA, luego AMARILLO)
@@ -448,8 +409,10 @@ class MotorEvaluadorReglas {
 
       hojaAlertas.setConditionalFormatRules([ruleRojo, ruleNaranja, ruleAmarillo]);
       hojaAlertas.autoResizeColumns(1, headers.length);
+      return true;
     } catch (error) {
       console.error("Error guardando ALERTAS_ACTIVAS:", error);
+      return false;
     } finally {
       try { lock.releaseLock(); } catch (er) {}
     }
@@ -469,8 +432,10 @@ class MotorEvaluadorReglas {
         const endDate = new Date(year + 1, 11, 31);
         const events = calendar.getEvents(startDate, endDate);
         festivosStr = events.map(e => e.getStartTime().toISOString().split('T')[0]);
+        this.festivosCargados = festivosStr.length > 0;
       }
     } catch (e) {
+      this.festivosCargados = false;
       console.warn("⚠️ No se pudo cargar calendario de festivos. Se usarán solo fines de semana.", e);
     }
     return festivosStr;
@@ -511,127 +476,155 @@ function _resolverEmailDesdeCeldaAlertas(valor) {
   return REGEX_EMAIL_SIMPLE_ALERTAS.test(texto) ? texto.toLowerCase() : '';
 }
 
-function _normalizarSeveridadAlertas(valor) {
-  const nivel = String(valor || '').toUpperCase();
-  if (['CRITICA', 'ALERTA', 'ADVERTENCIA', 'INFO'].includes(nivel)) return nivel;
-  return 'INFO';
+function _resumenAlertasVacio_(estado, error) {
+  return {
+    success: estado !== 'ERROR',
+    estado: estado,
+    totalAlertas: 0,
+    severidades: { ROJO: 0, NARANJA: 0, AMARILLO: 0 },
+    proyectosImpactados: 0,
+    rtImpactados: 0,
+    alertas: [],
+    ultimaEvaluacion: '',
+    obsoleta: false,
+    error: error || ''
+  };
 }
 
-function evaluarAlertasDataset(dataset) {
+function resumirAlertasActivasParaDashboard_(registrosVisibles) {
   try {
-    const registros = Array.isArray(dataset) ? dataset : [];
-    const MotorReglasClass = (typeof globalThis !== 'undefined' && globalThis.MotorReglas) ? globalThis.MotorReglas : null;
-
-    if (!MotorReglasClass) {
-      return {
-        success: true,
-        totalAlertas: 0,
-        severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
-        proyectosImpactados: 0,
-        rtImpactados: 0,
-        alertas: [],
-        ultimaEvaluacion: new Date().toISOString()
-      };
-    }
-
-    const motor = new MotorReglasClass();
-    const alertas = [];
-    const severidades = { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 };
+    const rts = new Set((Array.isArray(registrosVisibles) ? registrosVisibles : []).map(function(r) {
+      return String((r && (r.RT || r['NUMERO RT'])) || '').trim();
+    }).filter(Boolean));
+    const ss = SpreadsheetApp.openById(getConfig('DATA_FILES.PRINCIPAL'));
+    const hoja = ss.getSheetByName('ALERTAS_ACTIVAS');
+    if (!hoja || hoja.getLastRow() < 2) return _resumenAlertasVacio_('SIN_EVALUAR');
+    const datos = hoja.getDataRange().getValues();
+    const headers = datos[0].map(function(h) { return String(h || '').trim(); });
+    const idx = {};
+    headers.forEach(function(h, i) { idx[h] = i; });
+    const filas = datos.slice(1).filter(function(fila) {
+      const rt = String(fila[idx.RT] || '').trim();
+      return rt && rts.has(rt);
+    });
+    const mensajeVacio = filas.length === 1 && String(filas[0][idx.MENSAJE] || '') === 'No hay alertas activas en el sistema.';
+    const peso = { ROJO: 1, NARANJA: 2, AMARILLO: 3 };
+    const severidades = { ROJO: 0, NARANJA: 0, AMARILLO: 0 };
     const proyectos = new Set();
-    const rts = new Set();
-
-    registros.forEach((registro) => {
-      if (!registro || typeof registro !== 'object') return;
-
-      const evaluados = motor.evaluarRegistro(registro);
-      if (!Array.isArray(evaluados) || evaluados.length === 0) return;
-
-      evaluados.forEach((alerta) => {
-        const nivel = _normalizarSeveridadAlertas(alerta.severidad);
-        severidades[nivel] = (severidades[nivel] || 0) + 1;
-
-        const proyecto = String(alerta.proyecto || registro.PROYECTO || 'SIN PROYECTO').trim() || 'SIN PROYECTO';
-        const rt = String(alerta.rt || registro.RT || registro['NUMERO RT'] || 'SIN_RT').trim() || 'SIN_RT';
-
+    const rtSet = new Set();
+    const alertas = [];
+    if (!mensajeVacio) {
+      filas.forEach(function(fila) {
+        const nivel = String(fila[idx.NIVEL] || '').trim().toUpperCase();
+        if (!severidades.hasOwnProperty(nivel)) return;
+        severidades[nivel] += 1;
+        const rt = String(fila[idx.RT] || '').trim();
+        const proyecto = String(fila[idx.PROYECTO] || 'SIN PROYECTO').trim() || 'SIN PROYECTO';
         proyectos.add(proyecto);
-        rts.add(rt);
-
-        const articuladorEmail = _resolverEmailDesdeCeldaAlertas(registro['ARTICULADOR JUIRIDICO']);
-        const gestorEmail = _resolverEmailDesdeCeldaAlertas(registro['GESTOR JURÍDICO']);
-
+        rtSet.add(rt);
+        const art = String(fila[idx.ARTICULADOR_EMAIL] || '');
+        const ges = String(fila[idx.GESTOR_EMAIL] || '');
         alertas.push({
           RT: rt,
           PROYECTO: proyecto,
-          REGLA: alerta.nombre || alerta.codigo || 'DESCONOCIDA',
+          REGLA: String(fila[idx.REGLA] || ''),
           NIVEL: nivel,
-          MENSAJE: alerta.mensaje || '',
-          FECHA_EVALUACION: alerta.fechaEvaluacion || new Date().toISOString(),
-          // ✅ SPRINT5-FASE-C: enrutamiento — vacío si la celda todavía tiene el nombre libre
-          // histórico (no migrado); SIN_RESPONSABLE marca los RTs que hoy no se pueden notificar.
-          ARTICULADOR_EMAIL: articuladorEmail,
-          GESTOR_EMAIL: gestorEmail,
-          SIN_RESPONSABLE: !articuladorEmail && !gestorEmail
+          MENSAJE: String(fila[idx.MENSAJE] || ''),
+          FECHA_EVALUACION: String(fila[idx.TIMESTAMP] || ''),
+          ARTICULADOR_EMAIL: art,
+          GESTOR_EMAIL: ges,
+          SIN_RESPONSABLE: !art && !ges
         });
       });
-    });
-
-    const pesoNivel = { CRITICA: 1, ALERTA: 2, ADVERTENCIA: 3, INFO: 4 };
-    const alertasOrdenadas = alertas
-      .sort((a, b) => (pesoNivel[a.NIVEL] || 99) - (pesoNivel[b.NIVEL] || 99))
-      .slice(0, MAX_ALERTAS_PAYLOAD);
-
-    const resumen = {
-      success: true,
-      totalAlertas: alertas.length,
-      severidades,
-      proyectosImpactados: proyectos.size,
-      rtImpactados: rts.size,
-      alertas: alertasOrdenadas,
-      ultimaEvaluacion: new Date().toISOString()
-    };
-
-    if (severidades.CRITICA > 0) {
-      try {
-        const emailUsuario = (typeof Session !== 'undefined' && Session.getActiveUser && Session.getActiveUser())
-          ? Session.getActiveUser().getEmail()
-          : 'Sistema';
-
-        logAction(emailUsuario, 'ALERTA_CRITICA_DETECTADA', JSON.stringify({
-          totalCriticas: severidades.CRITICA,
-          proyectosImpactados: Array.from(proyectos).slice(0, 10),
-          alertas: alertasOrdenadas.filter(a => a.NIVEL === 'CRITICA').slice(0, 10)
-        }));
-      } catch (e) {
-        console.warn('No se pudo registrar alerta crítica en LOGS:', e && e.message ? e.message : e);
-      }
     }
-
-    return resumen;
-  } catch (e) {
-    console.error('Error evaluando alertas por dataset:', e && e.message ? e.message : e);
+    alertas.sort(function(a, b) { return (peso[a.NIVEL] || 99) - (peso[b.NIVEL] || 99); });
+    let iso = '';
+    try { iso = PropertiesService.getScriptProperties().getProperty('MOTOR_REGLAS_ULTIMA_EVALUACION_ISO') || ''; } catch (e) {}
+    const obsoleta = iso ? (Date.now() - new Date(iso).getTime()) > (36 * 60 * 60 * 1000) : false;
     return {
-      success: false,
-      totalAlertas: 0,
-      severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
-      proyectosImpactados: 0,
-      rtImpactados: 0,
-      alertas: [],
-      error: e && e.message ? e.message : String(e),
-      ultimaEvaluacion: new Date().toISOString()
+      success: true,
+      estado: 'OK',
+      totalAlertas: mensajeVacio ? 0 : alertas.length,
+      severidades: severidades,
+      proyectosImpactados: proyectos.size,
+      rtImpactados: rtSet.size,
+      alertas: alertas.slice(0, MAX_ALERTAS_PAYLOAD),
+      ultimaEvaluacion: mensajeVacio || alertas.length ? String((filas[0] && filas[0][idx.TIMESTAMP]) || '') : '',
+      obsoleta: obsoleta
     };
+  } catch (e) {
+    return _resumenAlertasVacio_('ERROR', e && e.message ? e.message : String(e));
   }
 }
 
 /**
- * ═══════════════════════════════════════════════════════════
- * FUNCIONES PARA LLAMAR DESDE LA INTERFAZ Y TRIGGERS
- * ═══════════════════════════════════════════════════════════
+ * Ejecutar UNA VEZ desde el editor con la cuenta Administrador. Independiente de instalarTriggersPAC().
  */
-
-// Ejecución manual desde el botón "Recargar Motor" o Trigger Diario
-function ejecutarEvaluadorAlertas() {
+function ejecutarMotorReglasInterno_() {
   const motor = new MotorEvaluadorReglas();
-  return motor.ejecutarMotor();
+  const resultado = motor.ejecutarMotor();
+  try {
+    const auditoria = new GestorAuditoria(getConfig('DATA_FILES.PRINCIPAL'));
+    auditoria.registrarAccion('SISTEMA', 'MOTOR_REGLAS_EJECUTADO', JSON.stringify({
+      totalAlertas: resultado.totalAlertas,
+      reglasNoEvaluables: resultado.reglasNoEvaluables,
+      reglasConCruceIgnorado: resultado.reglasConCruceIgnorado,
+      festivosCargados: resultado.festivosCargados
+    }));
+  } catch (e) {}
+  return resultado;
+}
+
+function ejecutarEvaluadorAlertas() {
+  const denegado = _exigirAdminMotorReglas_('EJECUTAR_MOTOR_REGLAS');
+  if (denegado) return denegado;
+  return ejecutarMotorReglasInterno_();
+}
+
+function triggerDiarioMotorReglas(e) {
+  if (!e || !e.triggerUid) return { success: false, error: 'Solo invocable por el trigger instalado' };
+  const conocido = ScriptApp.getProjectTriggers().some(function(t) { return t.getUniqueId() === e.triggerUid; });
+  if (!conocido) return { success: false, error: 'Solo invocable por el trigger instalado' };
+  try {
+    const r = ejecutarMotorReglasInterno_();
+    if (!r.success && r.error !== 'No hay reglas configuradas') throw new Error(r.error || 'Fallo del motor');
+    return r;
+  } catch (err) {
+    console.error(err);
+    try {
+      const destino = Session.getEffectiveUser().getEmail();
+      if (destino) {
+        MailApp.sendEmail({
+          to: destino,
+          subject: '[Motor de Reglas] Fallo en trigger diario',
+          htmlBody: '<p>El motor de reglas falló: ' + String(err.message || err).replace(/</g, '') + '</p>'
+        });
+      }
+    } catch (mailErr) {}
+    return { success: false, error: String(err.message || err) };
+  }
+}
+
+function _eliminarTriggerMotorReglas_() {
+  const triggers = ScriptApp.getProjectTriggers().filter(function(t) {
+    return t.getHandlerFunction() === 'triggerDiarioMotorReglas';
+  });
+  triggers.forEach(function(t) { ScriptApp.deleteTrigger(t); });
+  return triggers.length;
+}
+
+function instalarTriggerMotorReglas() {
+  const denegado = _exigirAdminMotorReglas_('INSTALAR_TRIGGER_MOTOR');
+  if (denegado) return denegado;
+  _eliminarTriggerMotorReglas_();
+  ScriptApp.newTrigger('triggerDiarioMotorReglas').timeBased().everyDays(1).atHour(6).create();
+  return { success: true, mensaje: 'Trigger diario 6:00 instalado' };
+}
+
+function eliminarTriggerMotorReglas() {
+  const denegado = _exigirAdminMotorReglas_('ELIMINAR_TRIGGER_MOTOR');
+  if (denegado) return denegado;
+  return { success: true, eliminados: _eliminarTriggerMotorReglas_() };
 }
 
 // Función para obtener las alertas para la interfaz web (Dashboard)

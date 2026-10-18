@@ -197,6 +197,9 @@ function doGet(e) {
       // expresiones complejas dentro de <?!= ... ?>.
       template.userEmail = userEmail;
       template.safeUserEmailJS = JSON.stringify(userEmail || '');
+      var tokenSeguimiento = (e && e.parameter && e.parameter.sa) ? String(e.parameter.sa) : '';
+      if (!/^[A-Za-z0-9-]{20,64}$/.test(tokenSeguimiento)) tokenSeguimiento = '';
+      template.tokenJs = JSON.stringify(tokenSeguimiento);
 
       return template.evaluate()
         .setTitle('Tablero de Gestión Predial - Enterprise Modular')
@@ -534,7 +537,7 @@ function getDashboardData() {
     });
     console.timeEnd('dashboard:sheetRead');
 
-    const alertasResumen = evaluarAlertasDataset(allRecords);
+    const alertasResumen = resumirAlertasActivasParaDashboard_(allRecords);
 
     console.time('dashboard:serialize');
     const cacheableResponse = {
@@ -578,7 +581,7 @@ function getDashboardData() {
       alertasResumen: JSON.stringify({
         success: false,
         totalAlertas: 0,
-        severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+        severidades: { ROJO: 0, NARANJA: 0, AMARILLO: 0 },
         proyectosImpactados: 0,
         rtImpactados: 0,
         alertas: [],
@@ -1980,97 +1983,66 @@ function _obtenerObservacionesPorRT(rtsObjetivo) {
   return mapa;
 }
 
-function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino) {
+function _etiquetaSemaforoAlerta_(nivel) {
+  var n = String(nivel || '').toUpperCase();
+  if (n === 'ROJO') return 'Crítica';
+  if (n === 'NARANJA') return 'Riesgo';
+  if (n === 'AMARILLO') return 'Preventiva';
+  return n || 'Sin nivel';
+}
+
+function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeguimiento, mapaPolitica) {
   const filas = Array.isArray(alertasRows) ? alertasRows : [];
   const f = filtros || {};
+  const mapa = mapaPolitica || (typeof mapaPoliticasSeguimiento_ === 'function' ? mapaPoliticasSeguimiento_() : {});
   const total = filas.length;
-
   const count = { ROJO: 0, NARANJA: 0, AMARILLO: 0 };
-  const porTipo = {};
+  const grupos = {};
   filas.forEach(function(row) {
-    const nivel = String(row.NIVEL || '').toUpperCase();
+    const nivel = String(row.NIVEL || '').toUpperCase() || 'SIN NIVEL';
     if (count[nivel] !== undefined) count[nivel]++;
-
     const regla = String(row.REGLA || 'SIN REGLA').trim() || 'SIN REGLA';
-    const tipoKey = nivel + '||' + regla;
-    if (!porTipo[tipoKey]) {
-      porTipo[tipoKey] = {
-        nivel: nivel || 'SIN NIVEL',
-        regla: regla,
-        total: 0,
-        articuladores: {}
-      };
-    }
-    porTipo[tipoKey].total++;
-
-    const articulador = String(row.ARTICULADOR_EMAIL || row.ARTICULADOR || 'ARTICULADOR SIN ASIGNAR').trim() || 'ARTICULADOR SIN ASIGNAR';
-    const gestor = String(row.GESTOR_EMAIL || 'GESTOR SIN ASIGNAR').trim() || 'GESTOR SIN ASIGNAR';
-    if (!porTipo[tipoKey].articuladores[articulador]) {
-      porTipo[tipoKey].articuladores[articulador] = { total: 0, gestores: {} };
-    }
-    porTipo[tipoKey].articuladores[articulador].total++;
-    porTipo[tipoKey].articuladores[articulador].gestores[gestor] = (porTipo[tipoKey].articuladores[articulador].gestores[gestor] || 0) + 1;
+    if (!grupos[nivel]) grupos[nivel] = {};
+    if (!grupos[nivel][regla]) grupos[nivel][regla] = [];
+    grupos[nivel][regla].push(row);
   });
 
   function colorTipo(nivel) {
-    if (nivel === 'ROJO') return { bg: '#fdecec', border: '#c0392b', text: '#9b1c1c', badge: 'rgba(192,57,43,.12)' };
-    if (nivel === 'NARANJA') return { bg: '#fff4ea', border: '#e67e22', text: '#b45309', badge: 'rgba(230,126,34,.14)' };
-    if (nivel === 'AMARILLO') return { bg: '#fffbea', border: '#f1c40f', text: '#8a6d00', badge: 'rgba(241,196,15,.20)' };
-    return { bg: '#eef2f7', border: '#64748b', text: '#334155', badge: 'rgba(100,116,139,.14)' };
+    if (nivel === 'ROJO') return { bg: '#fdecec', border: '#c0392b', text: '#9b1c1c' };
+    if (nivel === 'NARANJA') return { bg: '#fff4ea', border: '#e67e22', text: '#b45309' };
+    if (nivel === 'AMARILLO') return { bg: '#fffbea', border: '#f1c40f', text: '#8a6d00' };
+    return { bg: '#eef2f7', border: '#64748b', text: '#334155' };
   }
 
-  const tiposOrdenados = Object.keys(porTipo).sort(function(a, b) {
-    return porTipo[b].total - porTipo[a].total;
-  });
-
-  const tiposHtml = tiposOrdenados.map(function(tipoKey) {
-    const tipo = porTipo[tipoKey];
-    const c = colorTipo(tipo.nivel);
-    const articuladoresOrdenados = Object.keys(tipo.articuladores).sort(function(a, b) {
-      return tipo.articuladores[b].total - tipo.articuladores[a].total;
-    });
-
-    const articuladoresHtml = articuladoresOrdenados.map(function(articulador) {
-      const dataArt = tipo.articuladores[articulador];
-      const gestoresRows = Object.keys(dataArt.gestores).sort(function(a, b) {
-        return dataArt.gestores[b] - dataArt.gestores[a];
-      }).map(function(gestor) {
-        return '<tr><td style="padding:6px 8px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(gestor) + '</td><td style="padding:6px 8px;border:1px solid #d9e2ec;text-align:right;font-weight:600;">' + dataArt.gestores[gestor] + '</td></tr>';
+  const orden = ['ROJO', 'NARANJA', 'AMARILLO'].concat(Object.keys(grupos).filter(function(n) {
+    return n !== 'ROJO' && n !== 'NARANJA' && n !== 'AMARILLO';
+  }));
+  const bloques = [];
+  let hayObligacion = false;
+  orden.forEach(function(nivel) {
+    if (!grupos[nivel]) return;
+    const c = colorTipo(nivel);
+    const reglasHtml = Object.keys(grupos[nivel]).map(function(regla) {
+      const lista = grupos[nivel][regla];
+      const pol = typeof politicaSeguimientoDeRegla_ === 'function' ? politicaSeguimientoDeRegla_(regla, nivel, mapa) : null;
+      if (pol && pol.exigir_observacion) hayObligacion = true;
+      const visibles = lista.slice(0, MAX_RT_CUERPO_ALERTAS || 40);
+      const resto = lista.length - visibles.length;
+      const items = visibles.map(function(row) {
+        return '<li style="margin:2px 0;">RT ' + _escapeHtmlAlertaEmail(row.RT) + ' · ' + _escapeHtmlAlertaEmail(row.PROYECTO || '') + '</li>';
       }).join('');
-
-      return [
-        '<div style="margin-top:10px;border:1px solid #dde6ef;border-radius:8px;overflow:hidden;background:#fff;">',
-        '<div style="padding:8px 10px;background:#f8fafc;color:#1f3a5f;font-weight:700;">',
-        '👤 Articulador: ' + _escapeHtmlAlertaEmail(articulador) + ' <span style="color:#52606d;">(' + dataArt.total + ')</span>',
-        '</div>',
-        '<table style="border-collapse:collapse;width:100%;font-size:12px;">',
-        '<thead><tr><th style="padding:6px 8px;border:1px solid #d9e2ec;background:#f1f5f9;text-align:left;">Gestor</th><th style="padding:6px 8px;border:1px solid #d9e2ec;background:#f1f5f9;text-align:right;">Cantidad</th></tr></thead>',
-        '<tbody>', gestoresRows, '</tbody>',
-        '</table>',
-        '</div>'
-      ].join('');
+      const nota = (pol && pol.nota_correo) ? '<p style="margin:8px 0 0 0;font-weight:700;">' + _escapeHtmlAlertaEmail(pol.nota_correo) + '</p>' : '';
+      const mas = resto > 0 ? '<p style="margin:6px 0 0 0;">Los demás están en el archivo adjunto (' + resto + ').</p>' : '';
+      return '<div style="margin-top:8px;"><div style="font-weight:700;">' + _escapeHtmlAlertaEmail(regla) + ' · ' + lista.length + '</div><ul style="margin:4px 0 0 18px;padding:0;">' + items + '</ul>' + mas + nota + '</div>';
     }).join('');
-
-    return [
-      '<div style="margin-top:14px;border:1px solid ' + c.border + ';border-radius:10px;overflow:hidden;background:' + c.bg + ';">',
-      '<div style="padding:10px 12px;border-bottom:1px solid ' + c.border + ';display:flex;justify-content:space-between;align-items:center;gap:12px;">',
-      '<div style="color:' + c.text + ';font-weight:800;">',
-      '🔔 ' + _escapeHtmlAlertaEmail(tipo.regla),
-      '</div>',
-      '<div style="background:' + c.badge + ';color:' + c.text + ';padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700;">',
-      _escapeHtmlAlertaEmail(tipo.nivel) + ' · ' + tipo.total,
-      '</div>',
-      '</div>',
-      '<div style="padding:10px 12px;">',
-      articuladoresHtml,
-      '</div>'
-    ].join('');
-  }).join('');
+    bloques.push('<div style="margin-top:14px;border:1px solid ' + c.border + ';border-radius:10px;background:' + c.bg + ';padding:10px 12px;"><div style="color:' + c.text + ';font-weight:800;">' + _escapeHtmlAlertaEmail(_etiquetaSemaforoAlerta_(nivel)) + '</div>' + reglasHtml + '</div>');
+  });
 
   const lblNivel = (!f.nivel || f.nivel === 'ALL') ? 'Todos' : f.nivel;
   const lblRegla = (!f.regla || f.regla === 'ALL') ? 'Todas' : f.regla;
   const lblProyecto = (!f.proyecto || f.proyecto === 'ALL') ? 'Todos' : f.proyecto;
   const lblArt = (!f.articulador || f.articulador === 'ALL') ? 'Todos' : f.articulador;
+  const enlace = (hayObligacion && urlSeguimiento) ? '<p style="margin-top:14px;"><a href="' + _escapeHtmlAlertaEmail(urlSeguimiento) + '" style="display:inline-block;background:#1f3a5f;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:700;">Cargar observaciones</a></p>' : '';
 
   return [
     '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;max-width:920px;margin:0 auto;">',
@@ -2078,24 +2050,60 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino) {
     '<h2 style="margin:0;font-size:22px;">Informe de Alertas Tempranas</h2>',
     '<div style="margin-top:6px;font-size:13px;opacity:.92;">Destinatario: <b>' + _escapeHtmlAlertaEmail(etiquetaDestino) + '</b></div>',
     '</div>',
-    '<table style="border-collapse:collapse;width:100%;margin-top:12px;font-size:13px;background:#fff;border:1px solid #d9e2ec;border-radius:8px;overflow:hidden;">',
+    '<table style="border-collapse:collapse;width:100%;margin-top:12px;font-size:13px;background:#fff;border:1px solid #d9e2ec;">',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Nivel</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblNivel) + '</td></tr>',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Regla</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblRegla) + '</td></tr>',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Proyecto</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblProyecto) + '</td></tr>',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Articulador</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblArt) + '</td></tr>',
     '</table>',
     '<div style="margin-top:12px;padding:10px 12px;border:1px solid #d9e2ec;background:#f8fafc;border-radius:8px;">',
-    '<b>Total alertas:</b> ' + total + ' &nbsp;|&nbsp; <b style="color:#9b1c1c;">ROJO:</b> ' + count.ROJO + ' &nbsp;|&nbsp; <b style="color:#b45309;">NARANJA:</b> ' + count.NARANJA + ' &nbsp;|&nbsp; <b style="color:#8a6d00;">AMARILLO:</b> ' + count.AMARILLO,
+    '<b>Total alertas:</b> ' + total + ' &nbsp;|&nbsp; <b style="color:#9b1c1c;">Crítica:</b> ' + count.ROJO + ' &nbsp;|&nbsp; <b style="color:#b45309;">Riesgo:</b> ' + count.NARANJA + ' &nbsp;|&nbsp; <b style="color:#8a6d00;">Preventiva:</b> ' + count.AMARILLO,
     '</div>',
-    '<h3 style="margin:16px 0 8px 0;color:#1f3a5f;">Agrupación por tipo de alerta → articulador → gestor</h3>',
-    tiposHtml,
+    bloques.join(''),
+    enlace,
     '<p style="margin-top:14px;color:#52606d;">Se adjunta archivo tabular con cuadrícula y columna OBSERVACIONES.</p>',
     '</div>'
   ].join('');
 }
 
+function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaPolitica) {
+  const filas = Array.isArray(alertasRows) ? alertasRows : [];
+  const mapa = mapaPolitica || {};
+  const grupos = {};
+  filas.forEach(function(row) {
+    const nivel = String(row.NIVEL || '').toUpperCase() || 'SIN NIVEL';
+    const regla = String(row.REGLA || 'SIN REGLA').trim() || 'SIN REGLA';
+    if (!grupos[nivel]) grupos[nivel] = {};
+    if (!grupos[nivel][regla]) grupos[nivel][regla] = [];
+    grupos[nivel][regla].push(row);
+  });
+  const lineas = ['Informe de Alertas Tempranas', 'Destinatario: ' + (etiquetaDestino || '')];
+  let hayObligacion = false;
+  Object.keys(grupos).forEach(function(nivel) {
+    lineas.push('');
+    lineas.push(_etiquetaSemaforoAlerta_(nivel));
+    Object.keys(grupos[nivel]).forEach(function(regla) {
+      const lista = grupos[nivel][regla];
+      const pol = typeof politicaSeguimientoDeRegla_ === 'function' ? politicaSeguimientoDeRegla_(regla, nivel, mapa) : null;
+      if (pol && pol.exigir_observacion) hayObligacion = true;
+      lineas.push(regla + ' (' + lista.length + ')');
+      lista.slice(0, MAX_RT_CUERPO_ALERTAS || 40).forEach(function(row) {
+        lineas.push('- RT ' + (row.RT || '') + ' · ' + (row.PROYECTO || ''));
+      });
+      if (lista.length > (MAX_RT_CUERPO_ALERTAS || 40)) lineas.push('Los demás están en el archivo adjunto.');
+      if (pol && pol.nota_correo) lineas.push(pol.nota_correo);
+    });
+  });
+  if (hayObligacion && urlSeguimiento) lineas.push('', 'Cargar observaciones: ' + urlSeguimiento);
+  lineas.push('', 'Se adjunta el archivo con el detalle.');
+  return lineas.join('\n');
+}
+
+
 function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
   try {
+    const denegado = _exigirAdminMotorReglas_('ENVIAR_REPORTE_ALERTAS');
+    if (denegado) return denegado;
     const config = (emailDestinoOrConfig && typeof emailDestinoOrConfig === 'object' && !Array.isArray(emailDestinoOrConfig))
       ? emailDestinoOrConfig
       : {
@@ -2177,6 +2185,16 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
     const correoRespaldo = String(config.correoRespaldo || '').trim().toLowerCase();
     const emailUnico = String(config.emailDestino || '').trim().toLowerCase();
     const hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    const remitenteReporte = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    const jefeEmail = String(config.jefeEmail || '').trim().toLowerCase();
+    const mapaPolitica = mapaPoliticasSeguimiento_();
+    const exigeJefe = filasObj.some(function(fila) {
+      const pol = politicaSeguimientoDeRegla_(fila.REGLA, fila.NIVEL, mapaPolitica);
+      return pol && pol.permitir_no_uso;
+    });
+    if (exigeJefe && !_esCorreoValidoAlertas(jefeEmail)) {
+      return { success: false, error: 'Indica el correo de la jefatura inmediata. Hay alertas que permiten declarar que un proceso no se va a usar.' };
+    }
 
     if (modoEnvio === 'GESTOR_Y_ARTICULADOR') {
       const grupos = {};
@@ -2214,22 +2232,33 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
         const etiquetaGestor = (key === '__GESTOR_SIN_ASIGNAR__') ? 'GESTOR SIN ASIGNAR' : key;
         const nombreBase = 'Reporte_Alertas_' + etiquetaGestor.replace(/[^\w.-]+/g, '_') + '_' + hoy;
         const attachment = _buildAlertasEmailAttachmentGrid(groupRows, nombreBase);
-        const htmlBody = _buildResumenHtmlAgrupado(groupRows, filtros, etiquetaGestor);
-
-        MailApp.sendEmail({
-          to: destinatario,
-          cc: ccStr,
-          subject: '📊 Alertas Tempranas - ' + etiquetaGestor + ' [' + hoy + ']',
-          htmlBody: htmlBody,
-          attachments: [attachment]
-        });
-
-        enviados.push({ to: destinatario, cc: ccList, gestor: etiquetaGestor, total: groupRows.length });
+        try {
+          const envio = despacharCorreoAlertas_({
+            to: destinatario,
+            ccStr: ccStr,
+            subject: '📊 Alertas Tempranas - ' + etiquetaGestor + ' [' + hoy + ']',
+            rows: groupRows,
+            filtros: filtros,
+            etiqueta: etiquetaGestor,
+            attachment: attachment,
+            remitente: remitenteReporte,
+            jefeEmail: jefeEmail,
+            mapa: mapaPolitica
+          });
+          if (!envio || !envio.success) {
+            omitidos.push({ gestor: key, motivo: (envio && envio.error) || 'No se pudo enviar' });
+            return;
+          }
+          const aviso = envio.seguimiento && envio.seguimiento.ok === false ? ' Correo enviado, pero el seguimiento no quedó armado.' : '';
+          enviados.push({ to: destinatario, cc: ccList, gestor: etiquetaGestor, total: groupRows.length, aviso: aviso });
+        } catch (envioError) {
+          omitidos.push({ gestor: key, motivo: envioError.message });
+        }
       });
 
       return {
         success: enviados.length > 0,
-        message: 'Envíos por gestor completados: ' + enviados.length + '. Omitidos: ' + omitidos.length + '.',
+        message: 'Envíos por gestor completados: ' + enviados.length + '. Omitidos: ' + omitidos.length + '.' + (enviados.some(function(e) { return e.aviso; }) ? ' Revisa el seguimiento: algún correo salió sin dejar filas pendientes.' : ''),
         enviados: enviados,
         omitidos: omitidos
       };
@@ -2241,20 +2270,25 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
 
     const fileNameBase = 'Reporte_Alertas_GP_' + hoy;
     const attachment = _buildAlertasEmailAttachmentGrid(filasObj, fileNameBase);
-    const htmlBody = _buildResumenHtmlAgrupado(filasObj, filtros, emailUnico);
     const ccStr = ccExtras.length ? ccExtras.join(',') : undefined;
-
-    MailApp.sendEmail({
+    const envio = despacharCorreoAlertas_({
       to: emailUnico,
-      cc: ccStr,
+      ccStr: ccStr,
       subject: '📊 Informe de Alertas Tempranas [' + hoy + ']',
-      htmlBody: htmlBody,
-      attachments: [attachment]
+      rows: filasObj,
+      filtros: filtros,
+      etiqueta: emailUnico,
+      attachment: attachment,
+      remitente: remitenteReporte,
+      jefeEmail: jefeEmail,
+      mapa: mapaPolitica
     });
+    if (!envio || !envio.success) return { success: false, error: (envio && envio.error) || 'No se pudo enviar' };
+    const aviso = envio.seguimiento && envio.seguimiento.ok === false ? ' El correo salió, pero el seguimiento no quedó armado.' : '';
 
     return {
       success: true,
-      message: 'Informe enviado exitosamente a ' + emailUnico + '.',
+      message: 'Informe enviado exitosamente a ' + emailUnico + '.' + aviso,
       totalAlertas: filasObj.length
     };
   } catch (e) {

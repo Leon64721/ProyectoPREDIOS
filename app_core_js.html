@@ -838,6 +838,7 @@ function loadDashboardData() {
     if (!response.success) {
       if (!paintedFromCache) hideDashboardSkeleton();
       showAlert('Error: ' + response.message, 'warning');
+      if (typeof abrirSeguimientoSiHayToken === 'function') abrirSeguimientoSiHayToken();
       return;
     }
 
@@ -864,9 +865,11 @@ function loadDashboardData() {
         if (filterBadge) filterBadge.innerHTML = '';
       }
 
+      if (typeof abrirSeguimientoSiHayToken === 'function') abrirSeguimientoSiHayToken();
     } catch (e) {
       console.error('Error parseando datos:', e);
       showAlert('Error procesando datos: ' + e.message, 'danger');
+      if (typeof abrirSeguimientoSiHayToken === 'function') abrirSeguimientoSiHayToken();
     }
 
   }).withFailureHandler(error => {
@@ -874,6 +877,7 @@ function loadDashboardData() {
     hideSyncingIndicator();
     if (!paintedFromCache) hideDashboardSkeleton();
     showAlert('Error cargando datos: ' + error, 'danger');
+    if (typeof abrirSeguimientoSiHayToken === 'function') abrirSeguimientoSiHayToken();
   }).getDashboardData();
 }
 
