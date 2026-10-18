@@ -3444,4 +3444,4 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 
 **Validación:** `node --check` en `seguimiento_alertas.js`, `motor_reglas.js` y `Codigo.js`. Lint de los HTML tocados: bloques válidos.
 
-**Pendiente antes de subir:** correr en el editor el spike de Gmail y anotar si bastó `gmail.modify` o hizo falta `https://mail.google.com/`. Recién ahí se agrega el scope, se reautoriza y se publica una versión nueva. Confirmar en Permisos que los gestores tienen rol.
+**Spike 2026-10-18 13:22:** `spikeHiloGmailSeguimiento` falló porque el manifiesto solo tenía `gmail.send`. Se agregó `gmail.modify`. A las 13:26 se hizo `clasp push --force` al script `18vY9…` (54 archivos). La API del proyecto remoto confirma `seguimiento_alertas`, `app_seguimiento_alertas_js`, `despacharCorreoAlertas_` y el scope `gmail.modify`. Falta que el dueño acepte la autorización nueva y repita la prueba del hilo. Si `replyAll` falla después de autorizar, el scope pasa a `https://mail.google.com/`. La Web App publicada no cambia hasta una versión nueva.
