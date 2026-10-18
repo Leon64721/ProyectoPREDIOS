@@ -3448,8 +3448,8 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 
 ## 59. Retroalimentación visible en la bandeja [2026-10-18]
 
-**Agente:** Cursor. Sin `clasp push`.
+**Agente:** Cursor.
 
 **Qué se hizo:** en `#page-alertas` el Administrador tiene el botón Retroalimentación. El cuadro vive en `app_reglas_editor_js.html` (`abrirRetroalimentacionAlertas`, `guardarRetroalimentacionAlertas`). Escribe `seguimiento_correo` con `persistirConfigReglas`, que ahora acepta callbacks para no usar el modal del constructor. `cargarJSONenPantalla` acepta un callback y, si se llama desde la bandeja, pregunta antes de pisar el Modo JSON. La validación de este guardado solo mira el bloque de retroalimentación. No se tocaron el correo, la hoja de seguimiento ni PAC.
 
-**Validación:** lint de `Index.html`, `app_alertas_js.html` y `app_reglas_editor_js.html`. Falta verlo en la URL de desarrollo: entrar a Alertas tempranas sin abrir antes el Motor, marcar Crítica y guardar.
+**Validación:** lint de `Index.html`, `app_alertas_js.html` y `app_reglas_editor_js.html`. A las 15:28 se hizo `clasp push --force` al script `18vY9…` (54 archivos). Un `clasp pull` posterior coincide, archivo por archivo, con el repositorio. El botón Retroalimentación está en el `Index.html` remoto. La Web App publicada no cambia hasta una versión nueva: hay que probarlo en la URL de desarrollo, como Administrador.
