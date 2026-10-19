@@ -240,6 +240,20 @@ function despacharCorreoAlertas_(opts) {
   return { success: true, seguimiento: seguimiento };
 }
 
+function autorizarGmailSeguimiento() {
+  var denegado = _exigirAdminMotorReglas_('AUTORIZAR_GMAIL');
+  if (denegado) {
+    console.log(denegado.error || 'Requiere rol Administrador.');
+    return denegado;
+  }
+  var yo = String(Session.getActiveUser().getEmail() || '').trim();
+  if (!yo) throw new Error('No se pudo leer el correo de la sesión.');
+  var draft = GmailApp.createDraft(yo, 'Autorización Gmail - no enviar', 'Este borrador solo pide el permiso. No se envía.');
+  draft.deleteDraft();
+  console.log('Permiso de Gmail aceptado. No se envió ningún correo.');
+  return { success: true };
+}
+
 function _tokenSeguimientoValido_(token) {
   return /^[A-Za-z0-9-]{20,64}$/.test(String(token || ''));
 }
