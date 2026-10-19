@@ -17,7 +17,7 @@ class GestorDatos {
       this.ss = SpreadsheetApp.openById(this.fileId);
       this.cache = {};
       
-      console.log(`✅ GestorDatos inicializado: ${this.fileId.substring(0, 10)}...`);
+      console.log('✅ GestorDatos inicializado: configurado'); // ✅ [2026-10-06] SEGURIDAD: ya no imprime ningún fragmento del ID
     } catch (e) {
       console.error(`❌ Error en GestorDatos: ${e.message}`);
       throw e;

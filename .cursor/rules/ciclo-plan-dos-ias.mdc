@@ -1,0 +1,10 @@
+---
+description: Ciclo fijo de plan, auditoría y ejecución entre IAs en este repo.
+alwaysApply: true
+---
+
+# Ciclo de trabajo entre IAs
+
+Misma regla que `~/.cursor/rules/armonia-ias.mdc`: un modelo avanzado planifica, otro audita, se publica un plan conjunto y un modelo económico ejecuta. Cursor, Claude y Copilot alternan esos roles. No hay un segundo plan en paralelo.
+
+En este repo, al ejecutar: script único `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi`. Graphify antes de explorar código (`graphify query` / `path` / `explain`).

@@ -812,10 +812,10 @@ function sincronizarPAC() {
     });
 
     if (todasLasFilas.length === 0) {
+      // ✅ [2026-10-06] SEGURIDAD: ya no imprime el ID del archivo externo en el mensaje
       respuesta.mensaje = 'Ninguna fuente PAC devolvió datos. ' +
                           'Verifique que las hojas "PAC IDU" y "PAC TRANSMILENIO" ' +
-                          'existan en el archivo externo (ID: ' +
-                          PAC_CONFIG.PAC_SPREADSHEET_ID + ').';
+                          'existan en el archivo externo configurado en PAC_SPREADSHEET_ID.';
       pac_log('sincronizarPAC: ' + respuesta.mensaje, 'ADVERTENCIA');
       return respuesta;
     }
@@ -831,21 +831,45 @@ function sincronizarPAC() {
     if (!hojaVigente)  hojaVigente  = ss.insertSheet(nombreVigente);
     if (!hojaBorrador) hojaBorrador = ss.insertSheet(nombreBorrador);
 
+    // ✅ [2026-10-06] Tarea S: filas de PAC_Vigente ANTES de comparar, para la guarda de
+    // seguridad de abajo (porcentaje de eliminación). _pac_compararYGenerarBorrador() no
+    // toca PAC_Vigente, así que este conteo es válido tanto antes como después de llamarla.
+    const filasVigentesAntes = Math.max(0, hojaVigente.getLastRow() - 1);
+
     // ── FIX #3: Pasar el array de filas (objetos planos) al comparador ────
     const diff = _pac_compararYGenerarBorrador(hojaVigente, hojaBorrador, todasLasFilas);
 
-    respuesta.success     = true;
-    respuesta.cambios     = diff.totalCambios || 0;
-    respuesta.nuevos      = diff.nuevos       || 0;
-    respuesta.modificados = diff.modificados  || 0;
-    respuesta.eliminados  = diff.eliminados   || 0;
+    respuesta.success              = true;
+    respuesta.cambios              = diff.totalCambios || 0;
+    respuesta.nuevos               = diff.nuevos       || 0;
+    respuesta.modificados          = diff.modificados  || 0;
+    respuesta.eliminados           = diff.eliminados   || 0;
+    respuesta.duplicadosDescartados = diff.duplicadosDescartados || 0;
     respuesta.mensaje     = diff.totalCambios === 0
       ? 'Sincronización exitosa. ' + todasLasFilas.length + ' registros procesados sin cambios.'
       : diff.totalCambios + ' cambio(s) detectado(s) en ' + todasLasFilas.length + ' registros.';
 
+    // ✅ [2026-10-06] Tarea S: guarda de seguridad — si el borrador eliminaría más del 20%
+    // de las filas actuales de PAC_Vigente, NUNCA se autoaprueba, sin importar el caso.
+    // Requiere revisión manual explícita del borrador antes de aprobar.
+    const UMBRAL_ELIMINACION_MAXIMA = 0.20;
+    const porcentajeEliminado = filasVigentesAntes > 0 ? (diff.eliminados / filasVigentesAntes) : 0;
+
     if (diff.totalCambios === 0) {
       respuesta.aprobadoAutomaticamente = true;
       try { aprobarBorradorPAC('Auto-aprobado: sin cambios'); } catch(e) { /* no crítico */ }
+    } else if (porcentajeEliminado > UMBRAL_ELIMINACION_MAXIMA) {
+      respuesta.aprobadoAutomaticamente = false;
+      respuesta.ok = true;
+      respuesta.requiereRevision = true;
+      respuesta.eliminadas = diff.eliminados;
+      respuesta.nuevas = diff.nuevos;
+      respuesta.total = todasLasFilas.length;
+      respuesta.mensaje = 'GUARDA DE SEGURIDAD: el borrador eliminaría ' + diff.eliminados +
+        ' de ' + filasVigentesAntes + ' filas actuales de PAC_Vigente (' +
+        (porcentajeEliminado * 100).toFixed(1) + '%), por encima del umbral de seguridad (20%). ' +
+        'NO se aprobó automáticamente. Revise la hoja PAC_Borrador manualmente antes de aprobar.';
+      pac_log('sincronizarPAC: ' + respuesta.mensaje, 'ADVERTENCIA');
     } else {
       respuesta.aprobadoAutomaticamente = false;
     }
@@ -857,6 +881,46 @@ function sincronizarPAC() {
     respuesta.mensaje = 'Error inesperado: ' + e.message;
     pac_log('sincronizarPAC EXCEPCIÓN: ' + e.message, 'ERROR');
     return respuesta;
+  }
+}
+
+/**
+ * ✅ [2026-10-06] FIX Tarea S: respalda PAC_Vigente en una hoja oculta
+ * "BAK_<nombreVigente>_<yyyyMMdd_HHmm>" dentro del mismo spreadsheet destino, antes de
+ * que aprobarBorradorPAC() la sobrescriba. Conserva solo los 3 respaldos más recientes
+ * de este prefijo (borra los demás). No crítico: si falla, se registra y la aprobación
+ * continúa igual — no bloquea la operación principal por un respaldo fallido.
+ */
+function _pac_respaldarVigenteAntesDeAprobar(ss, hojaVigente, nombreVigente) {
+  try {
+    if (hojaVigente.getLastRow() < 1) return; // nada que respaldar
+
+    const zona = Session.getScriptTimeZone() || 'America/Bogota';
+    const timestamp = Utilities.formatDate(new Date(), zona, 'yyyyMMdd_HHmm');
+    const prefijo = 'BAK_' + nombreVigente + '_';
+    const nombreBak = prefijo + timestamp;
+
+    const copia = hojaVigente.copyTo(ss);
+    copia.setName(nombreBak);
+    try { copia.hideSheet(); } catch (e) { /* no crítico */ }
+    pac_log('_pac_respaldarVigenteAntesDeAprobar: respaldo creado (' + nombreBak + ').');
+
+    // Conservar solo los 3 respaldos más recientes de este prefijo (orden alfabético del
+    // timestamp yyyyMMdd_HHmm coincide con orden cronológico).
+    const backups = ss.getSheets()
+      .filter(function (h) { return h.getName().indexOf(prefijo) === 0; })
+      .sort(function (a, b) { return a.getName() < b.getName() ? 1 : -1; }); // más reciente primero
+
+    backups.slice(3).forEach(function (h) {
+      try {
+        ss.deleteSheet(h);
+        pac_log('_pac_respaldarVigenteAntesDeAprobar: respaldo antiguo eliminado (' + h.getName() + ').');
+      } catch (e) {
+        pac_log('_pac_respaldarVigenteAntesDeAprobar: no se pudo eliminar respaldo antiguo ' + h.getName() + ': ' + e.message, 'ADVERTENCIA');
+      }
+    });
+  } catch (e) {
+    pac_log('_pac_respaldarVigenteAntesDeAprobar ERROR (no crítico, la aprobación continúa): ' + e.message, 'ERROR');
   }
 }
 
@@ -886,6 +950,10 @@ function aprobarBorradorPAC(motivo) {
     if (!hojaVigente) {
       return { success: false, mensaje: 'No se encontró la hoja "' + nombreVigente + '".' };
     }
+
+    // ✅ [2026-10-06] FIX Tarea S: respaldo de PAC_Vigente ANTES de sobrescribirla.
+    // Conserva solo los 3 respaldos más recientes (ver _pac_respaldarVigenteAntesDeAprobar).
+    _pac_respaldarVigenteAntesDeAprobar(ss, hojaVigente, nombreVigente);
 
     const datosBorrador = hojaBorrador.getDataRange().getValues();
     hojaVigente.clearContents();
@@ -954,13 +1022,34 @@ function rechazarBorradorPAC() {
  *         El borrador se escribe aplanando los datos mensuales en columnas.
  */
 function _pac_compararYGenerarBorrador(hojaVigente, hojaBorrador, filasExternas) {
-  var res = { totalCambios: 0, nuevos: 0, modificados: 0, eliminados: 0 };
+  var res = { totalCambios: 0, nuevos: 0, modificados: 0, eliminados: 0, duplicadosDescartados: 0 };
   // ✅ SEC-P1.5: LockService — genera/reescribe PAC_Borrador (escritura masiva compartida)
   var lock = LockService.getScriptLock();
 
   try {
     lock.waitLock(20000);
     hojaBorrador.clearContents();
+
+    // ✅ [2026-10-06] FIX Tarea S: deduplicar filasExternas por RT ANTES de comparar o
+    // construir el borrador. Si la fuente externa trae RT repetidos, se conserva solo la
+    // primera aparición de cada uno; el resto se descarta y se cuenta en
+    // res.duplicadosDescartados (nunca se imprime el contenido de la fila, solo el conteo).
+    (function deduplicarPorRT() {
+      var vistos = {};
+      var filasUnicas = [];
+      filasExternas.forEach(function(item) {
+        var rt = String(item.RT || '').trim();
+        if (!rt) { filasUnicas.push(item); return; } // sin RT no se puede deduplicar por clave, se conserva tal cual
+        if (vistos[rt]) { res.duplicadosDescartados++; return; }
+        vistos[rt] = true;
+        filasUnicas.push(item);
+      });
+      if (res.duplicadosDescartados > 0) {
+        pac_log('_pac_compararYGenerarBorrador: ' + res.duplicadosDescartados +
+          ' fila(s) duplicada(s) por RT descartada(s) de la fuente externa.', 'ADVERTENCIA');
+      }
+      filasExternas = filasUnicas; // todo lo siguiente usa la lista ya deduplicada
+    })();
 
     // ── 1. Detectar nuevos y eliminados ───────────────────────────────────
     var mapaVigente = {};
