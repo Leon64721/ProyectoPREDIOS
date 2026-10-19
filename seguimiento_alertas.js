@@ -8,7 +8,8 @@ var ENCABEZADOS_SEGUIMIENTO_ALERTAS = [
   'ID', 'TOKEN', 'ESTADO', 'CREADO_EN', 'RESPONDIDO_EN', 'PERIODO', 'RT', 'REGLA', 'NIVEL',
   'PROYECTO', 'GESTOR_EMAIL', 'ARTICULADOR_EMAIL', 'JEFE_EMAIL', 'REMITENTE_EMAIL',
   'HILO_GMAIL_ID', 'MENSAJE_GMAIL_ID', 'OBSERVACION_PREVIA', 'OBSERVACION_NUEVA',
-  'OBSERVACION_VIGENTE', 'NO_USO', 'AVISO_ACEPTADO', 'ARCHIVO_JURIDICO_URL', 'ARCHIVO_TECNICO_URL'
+  'OBSERVACION_VIGENTE', 'NO_USO', 'AVISO_ACEPTADO', 'ARCHIVO_JURIDICO_URL', 'ARCHIVO_TECNICO_URL',
+  'REVISION_ESTADO', 'FECHA_DOCUMENTO', 'REVISOR_NOMBRE', 'REVISOR_EMAIL'
 ];
 
 var MAX_BYTES_ANEXO_SEGUIMIENTO = 5 * 1024 * 1024;
@@ -71,22 +72,79 @@ function requiereCorreoJefeSeguimiento(pares) {
   if (denegado) return denegado;
   var mapa = mapaPoliticasSeguimiento_();
   var lista = Array.isArray(pares) ? pares : [];
+  var requiere = false;
+  var exigeObservacion = false;
   for (var i = 0; i < lista.length; i++) {
     var p = politicaSeguimientoDeRegla_(lista[i] && lista[i].regla, lista[i] && lista[i].nivel, mapa);
-    if (p && p.permitir_no_uso) return { success: true, requiere: true };
+    if (!p) continue;
+    exigeObservacion = true;
+    if (p.permitir_no_uso) requiere = true;
   }
-  return { success: true, requiere: false };
+  return { success: true, requiere: requiere, exigeObservacion: exigeObservacion };
+}
+
+function textosInicialesSeguimiento_() {
+  var mapa = {};
+  var leido = obtenerReglasJSON();
+  if (!leido || !leido.success) return mapa;
+  var parsed;
+  try { parsed = JSON.parse(leido.data || '{}'); } catch (e) { return mapa; }
+  var reglas = parsed && Array.isArray(parsed.ReglasDeNegocio) ? parsed.ReglasDeNegocio : [];
+  reglas.forEach(function(regla) {
+    var nombre = String(regla && regla.nombre || '').trim().toUpperCase();
+    var texto = String(regla && regla.texto_inicial_correo || '').trim();
+    if (nombre && texto) mapa[nombre] = texto;
+  });
+  return mapa;
+}
+
+function _completarEncabezadosSeguimiento_(hoja) {
+  var ancho = Math.max(hoja.getLastColumn(), 1);
+  var actuales = hoja.getRange(1, 1, 1, ancho).getValues()[0].map(function(h) { return String(h || '').trim(); });
+  while (actuales.length && !actuales[actuales.length - 1]) actuales.pop();
+  if (!actuales.length) {
+    hoja.getRange(1, 1, 1, ENCABEZADOS_SEGUIMIENTO_ALERTAS.length).setValues([ENCABEZADOS_SEGUIMIENTO_ALERTAS]);
+    hoja.getRange(1, 1, 1, ENCABEZADOS_SEGUIMIENTO_ALERTAS.length).setFontWeight('bold');
+    hoja.setFrozenRows(1);
+    return;
+  }
+  for (var i = 0; i < actuales.length; i++) {
+    if (actuales[i] !== ENCABEZADOS_SEGUIMIENTO_ALERTAS[i]) {
+      throw new Error('La hoja SEGUIMIENTO_ALERTAS tiene encabezados distintos. No se agregan columnas para no mezclar los datos.');
+    }
+  }
+  var faltan = ENCABEZADOS_SEGUIMIENTO_ALERTAS.slice(actuales.length);
+  if (!faltan.length) return;
+  hoja.getRange(1, actuales.length + 1, 1, faltan.length).setValues([faltan]);
+  hoja.getRange(1, actuales.length + 1, 1, faltan.length).setFontWeight('bold');
 }
 
 function _hojaSeguimientoAlertas_(crearSiFalta) {
   var ss = SpreadsheetApp.openById(getConfig('DATA_FILES.PRINCIPAL'));
   var hoja = ss.getSheetByName('SEGUIMIENTO_ALERTAS');
-  if (hoja || !crearSiFalta) return hoja;
-  hoja = ss.insertSheet('SEGUIMIENTO_ALERTAS');
-  hoja.getRange(1, 1, 1, ENCABEZADOS_SEGUIMIENTO_ALERTAS.length).setValues([ENCABEZADOS_SEGUIMIENTO_ALERTAS]);
-  hoja.setFrozenRows(1);
-  hoja.getRange(1, 1, 1, ENCABEZADOS_SEGUIMIENTO_ALERTAS.length).setFontWeight('bold');
+  if (!hoja && !crearSiFalta) return null;
+  if (!hoja) {
+    hoja = ss.insertSheet('SEGUIMIENTO_ALERTAS');
+    hoja.getRange(1, 1, 1, ENCABEZADOS_SEGUIMIENTO_ALERTAS.length).setValues([ENCABEZADOS_SEGUIMIENTO_ALERTAS]);
+    hoja.setFrozenRows(1);
+    hoja.getRange(1, 1, 1, ENCABEZADOS_SEGUIMIENTO_ALERTAS.length).setFontWeight('bold');
+    return hoja;
+  }
+  _completarEncabezadosSeguimiento_(hoja);
   return hoja;
+}
+
+function _fechaDocumentoSeguimiento_(valor) {
+  var t = String(valor || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return '';
+  var partes = t.split('-');
+  var anio = Number(partes[0]);
+  var mes = Number(partes[1]);
+  var dia = Number(partes[2]);
+  var fecha = new Date(anio, mes - 1, dia, 12, 0, 0);
+  if (fecha.getFullYear() !== anio || fecha.getMonth() !== mes - 1 || fecha.getDate() !== dia) return '';
+  if (t > _fechaSeguimiento_('yyyy-MM-dd')) return '';
+  return t;
 }
 
 function _carpetaSeguimientoAlertas_() {
@@ -130,9 +188,22 @@ function _filaDesdeObjeto_(obj) {
   return ENCABEZADOS_SEGUIMIENTO_ALERTAS.map(function(h) { return obj[h] !== undefined && obj[h] !== null ? obj[h] : ''; });
 }
 
+function _personasPendiente_(fila) {
+  var gestor = String(fila && fila.GESTOR_EMAIL || '').trim().toLowerCase();
+  var art = String(fila && fila.ARTICULADOR_EMAIL || '').trim().toLowerCase();
+  if (gestor && art && gestor === art) return [{ GESTOR_EMAIL: gestor, ARTICULADOR_EMAIL: art }];
+  var personas = [];
+  if (gestor) personas.push({ GESTOR_EMAIL: gestor, ARTICULADOR_EMAIL: '' });
+  if (art && art !== gestor) personas.push({ GESTOR_EMAIL: '', ARTICULADOR_EMAIL: art });
+  if (!personas.length) personas.push({ GESTOR_EMAIL: '', ARTICULADOR_EMAIL: '' });
+  return personas;
+}
+
 function registrarPendientesSeguimiento_(filasAlerta, meta) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  try { lock.waitLock(20000); } catch (e) {
+    throw new Error('La hoja de seguimiento está ocupada. Reintenta el envío.');
+  }
   try {
     var hoja = _hojaSeguimientoAlertas_(true);
     var lectura = _leerSeguimientoAlertas_();
@@ -153,8 +224,10 @@ function registrarPendientesSeguimiento_(filasAlerta, meta) {
     cambios.forEach(function(nFila) {
       hoja.getRange(nFila, colEstado).setValue('VENCIDA');
     });
-    var nuevas = (filasAlerta || []).map(function(fila) {
-      return _filaDesdeObjeto_({
+    var nuevas = [];
+    (filasAlerta || []).forEach(function(fila) {
+      _personasPendiente_(fila).forEach(function(persona) {
+        nuevas.push(_filaDesdeObjeto_({
         ID: Utilities.getUuid(),
         TOKEN: meta.token,
         ESTADO: 'PENDIENTE',
@@ -165,9 +238,13 @@ function registrarPendientesSeguimiento_(filasAlerta, meta) {
         REGLA: fila.REGLA || '',
         NIVEL: fila.NIVEL || '',
         PROYECTO: fila.PROYECTO || '',
-        GESTOR_EMAIL: String(fila.GESTOR_EMAIL || '').trim().toLowerCase(),
-        ARTICULADOR_EMAIL: String(fila.ARTICULADOR_EMAIL || '').trim().toLowerCase(),
+        GESTOR_EMAIL: persona.GESTOR_EMAIL,
+        ARTICULADOR_EMAIL: persona.ARTICULADOR_EMAIL,
         JEFE_EMAIL: String(meta.jefeEmail || '').trim().toLowerCase(),
+        REVISOR_NOMBRE: String(meta.revisorNombre || '').trim(),
+        REVISOR_EMAIL: String(meta.revisorEmail || '').trim().toLowerCase(),
+        REVISION_ESTADO: '',
+        FECHA_DOCUMENTO: '',
         REMITENTE_EMAIL: String(meta.remitente || '').trim().toLowerCase(),
         HILO_GMAIL_ID: meta.hiloId || '',
         MENSAJE_GMAIL_ID: meta.mensajeId || '',
@@ -178,6 +255,7 @@ function registrarPendientesSeguimiento_(filasAlerta, meta) {
         AVISO_ACEPTADO: '',
         ARCHIVO_JURIDICO_URL: '',
         ARCHIVO_TECNICO_URL: ''
+      }));
       });
     });
     if (nuevas.length) {
@@ -210,8 +288,9 @@ function despacharCorreoAlertas_(opts) {
   }
   var token = exigidas.length ? Utilities.getUuid() : '';
   var url = _urlSeguimientoAlertas_(token);
-  var htmlBody = _buildResumenHtmlAgrupado(rows, o.filtros, o.etiqueta, url, mapa);
-  var texto = _textoPlanoAlertas_(rows, o.etiqueta, url, mapa);
+  var textos = o.textos || textosInicialesSeguimiento_();
+  var htmlBody = _buildResumenHtmlAgrupado(rows, o.filtros, o.etiqueta, url, mapa, textos);
+  var texto = _textoPlanoAlertas_(rows, o.etiqueta, url, mapa, textos);
   var draftOpts = { htmlBody: htmlBody, attachments: [o.attachment] };
   if (o.ccStr) draftOpts.cc = o.ccStr;
   var draft = GmailApp.createDraft(o.to, o.subject, texto, draftOpts);
@@ -230,7 +309,9 @@ function despacharCorreoAlertas_(opts) {
         hiloId: msg.getThread().getId(),
         mensajeId: msg.getId(),
         remitente: o.remitente,
-        jefeEmail: o.jefeEmail || ''
+        jefeEmail: o.jefeEmail || '',
+        revisorNombre: o.revisorNombre || '',
+        revisorEmail: o.revisorEmail || ''
       });
     } catch (e2) {
       seguimiento = { ok: false, error: e2.message, token: token };
@@ -294,7 +375,8 @@ function obtenerSeguimientoPorToken(token) {
         proyecto: String(fila.PROYECTO || ''),
         observacionVigente: _observacionVigente_(lectura.filas, fila.RT, fila.REGLA),
         permitirNoUso: pol.permitir_no_uso === true,
-        textoNoUso: pol.texto_no_uso || ''
+        textoNoUso: pol.texto_no_uso || '',
+        dirigidoA: (String(fila.GESTOR_EMAIL || '').trim() && !String(fila.ARTICULADOR_EMAIL || '').trim()) ? 'Gestor' : ((String(fila.ARTICULADOR_EMAIL || '').trim() && !String(fila.GESTOR_EMAIL || '').trim()) ? 'Articulador' : '')
       };
     })
   };
@@ -344,13 +426,8 @@ function guardarSeguimientoAlertas(payload) {
   if (!_tokenSeguimientoValido_(cuerpo.token)) return { success: false, error: 'El enlace no es válido.' };
   var email = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
   var esAdmin = _sesionEsAdminSeguimiento_();
-  var lock = LockService.getScriptLock();
-  try { lock.waitLock(20000); } catch (e) {
-    return { success: false, error: 'El sistema está ocupado. Intenta de nuevo en unos segundos.' };
-  }
-  try {
-    var lectura = _leerSeguimientoAlertas_();
-    var visibles = _filasVisiblesDelToken_(lectura.filas, cuerpo.token, email, esAdmin);
+  var lecturaInicial = _leerSeguimientoAlertas_();
+  var visibles = _filasVisiblesDelToken_(lecturaInicial.filas, cuerpo.token, email, esAdmin);
     if (!visibles.length) return { success: false, error: 'Este enlace ya no tiene observaciones pendientes.' };
     var enviadas = {};
     (cuerpo.filas || []).forEach(function(fila) { if (fila && fila.id) enviadas[String(fila.id)] = fila; });
@@ -367,15 +444,22 @@ function guardarSeguimientoAlertas(payload) {
       if (!texto) return { success: false, error: 'Cada RT necesita una observación. Falta ' + (pendiente.RT || 'un RT') + '.' };
       var pol = politicaSeguimientoDeRegla_(pendiente.REGLA, pendiente.NIVEL, mapa) || {};
       var noUso = entrada.noUso === true && pol.permitir_no_uso === true;
-      var juridico = null;
-      var tecnico = null;
+      var revision = entrada.revisionEstado === true;
+      if (revision && noUso) return { success: false, error: 'Revisar observación y no uso no pueden marcarse en el mismo RT.' };
+      var informe = null;
+      var fechaDocumento = '';
       if (noUso) {
         if (entrada.avisoAceptado !== true) return { success: false, error: 'Debes confirmar que leíste el aviso de no uso.' };
         if (!_esCorreoValidoAlertas(pendiente.JEFE_EMAIL)) return { success: false, error: 'Este envío no tiene correo de jefatura. No se puede declarar el no uso.' };
-        juridico = _blobAnexoSeguimiento_(entrada.juridico, _nombreAnexo_(pendiente.RT, pendiente.REGLA, 'juridico'));
-        tecnico = _blobAnexoSeguimiento_(entrada.tecnico, _nombreAnexo_(pendiente.RT, pendiente.REGLA, 'tecnico'));
+        if (!entrada.informe) return { success: false, error: 'Si no se va a usar, adjunta el informe técnico / jurídico.' };
+        informe = _blobAnexoSeguimiento_(entrada.informe, _nombreAnexo_(pendiente.RT, pendiente.REGLA, 'informe'));
       }
-      var previa = _observacionVigente_(lectura.filas, pendiente.RT, pendiente.REGLA);
+      if (revision) {
+        fechaDocumento = _fechaDocumentoSeguimiento_(entrada.fechaDocumento);
+        if (!fechaDocumento) return { success: false, error: 'Si marcas Revisar observación, indica la fecha del documento. No puede ser posterior a hoy. Falta ' + (pendiente.RT || 'un RT') + '.' };
+        if (!_esCorreoValidoAlertas(pendiente.REVISOR_EMAIL)) return { success: false, error: 'Este envío no tiene correo de quien revisa soportes.' };
+      }
+      var previa = _observacionVigente_(lecturaInicial.filas, pendiente.RT, pendiente.REGLA);
       var marca = _fechaSeguimiento_('yyyy-MM-dd HH:mm');
       var vigente = previa ? (previa + '\n' + marca + ' ' + texto) : texto;
       preparados.push({
@@ -384,11 +468,29 @@ function guardarSeguimientoAlertas(payload) {
         previa: previa,
         vigente: vigente,
         noUso: noUso,
-        juridico: juridico,
-        tecnico: tecnico
+        revision: revision,
+        fechaDocumento: fechaDocumento,
+        informe: informe
       });
     }
 
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (e) {
+    return { success: false, error: 'El sistema está ocupado. Intenta de nuevo en unos segundos.' };
+  }
+  try {
+    var lectura = _leerSeguimientoAlertas_();
+    var siguen = _filasVisiblesDelToken_(lectura.filas, cuerpo.token, email, esAdmin);
+    var porId = {};
+    siguen.forEach(function(fila) { porId[String(fila.ID || '')] = fila; });
+    for (var j = 0; j < preparados.length; j++) {
+      var actual = porId[String(preparados[j].pendiente.ID || '')];
+      if (!actual) return { success: false, error: 'Otro envío ya cerró alguna de estas alertas. Vuelve a abrir el enlace.' };
+      preparados[j].pendiente = actual;
+      preparados[j].previa = _observacionVigente_(lectura.filas, actual.RT, actual.REGLA);
+      var marcaLock = _fechaSeguimiento_('yyyy-MM-dd HH:mm');
+      preparados[j].vigente = preparados[j].previa ? (preparados[j].previa + '\n' + marcaLock + ' ' + preparados[j].texto) : preparados[j].texto;
+    }
     var ahora = _fechaSeguimiento_('yyyy-MM-dd HH:mm:ss');
     var hoja = lectura.hoja || _hojaSeguimientoAlertas_(true);
     var colEstado = ENCABEZADOS_SEGUIMIENTO_ALERTAS.indexOf('ESTADO') + 1;
@@ -416,24 +518,36 @@ function guardarSeguimientoAlertas(payload) {
         OBSERVACION_VIGENTE: item.vigente,
         NO_USO: item.noUso ? 'SI' : 'NO',
         AVISO_ACEPTADO: item.noUso ? 'SI' : '',
-        ARCHIVO_JURIDICO_URL: item.juridico ? item.juridico.url : '',
-        ARCHIVO_TECNICO_URL: item.tecnico ? item.tecnico.url : ''
+        ARCHIVO_JURIDICO_URL: item.informe ? item.informe.url : '',
+        ARCHIVO_TECNICO_URL: '',
+        REVISION_ESTADO: item.revision ? 'SI' : 'NO',
+        FECHA_DOCUMENTO: item.fechaDocumento || '',
+        REVISOR_NOMBRE: p.REVISOR_NOMBRE || '',
+        REVISOR_EMAIL: p.REVISOR_EMAIL || ''
       });
     });
     preparados.forEach(function(item) {
       hoja.getRange(item.pendiente._fila, colEstado).setValue('CERRADA');
     });
     hoja.getRange(hoja.getLastRow() + 1, 1, nuevas.length, ENCABEZADOS_SEGUIMIENTO_ALERTAS.length).setValues(nuevas);
+  } catch (e) {
+    return { success: false, error: e.message };
+  } finally {
+    try { lock.releaseLock(); } catch (e2) {}
+  }
 
     var primero = preparados[0].pendiente;
     var anexos = [];
     var anexosNoUso = [];
     var lineas = preparados.map(function(item) {
       var linea = item.pendiente.RT + ' · ' + item.pendiente.REGLA + ' · ' + item.pendiente.NIVEL + '\n' + item.texto;
-      if (item.noUso) {
-        linea += '\nDeclaró que no se va a usar. Adjuntos: concepto jurídico y concepto técnico.';
-        anexos.push(item.juridico.blob, item.tecnico.blob);
-        anexosNoUso.push(item.juridico.blob, item.tecnico.blob);
+      if (item.noUso && item.informe && item.informe.blob) {
+        linea += '\nDeclaró que no se va a usar. Adjunto: informe técnico / jurídico.';
+        anexos.push(item.informe.blob);
+        anexosNoUso.push(item.informe.blob);
+      }
+      if (item.revision) {
+        linea += '\nPidió revisión de estado. Fecha del documento: ' + item.fechaDocumento + '. La evidencia debe estar cargada en los repositorios.';
       }
       return linea;
     });
@@ -456,13 +570,24 @@ function guardarSeguimientoAlertas(payload) {
     } catch (mailError) {
       avisoCorreo = ' La observación quedó guardada, pero el correo de respuesta no salió: ' + mailError.message;
     }
+    var conRevision = preparados.filter(function(item) { return item.revision; });
+    if (conRevision.length) {
+      try {
+        var revisor = String(primero.REVISOR_EMAIL || '');
+        var nombreRevisor = String(primero.REVISOR_NOMBRE || '').trim() || revisor;
+        var lineasRevision = conRevision.map(function(item) {
+          return item.pendiente.RT + ' · ' + item.pendiente.REGLA + '\nObservación: ' + item.texto + '\nFecha del documento: ' + item.fechaDocumento;
+        });
+        var textoRevision = 'Para ' + nombreRevisor + '.\n\nEstos RT se marcaron para revisión de estado. El sistema no cambia el estado predial. Actualiza el estado en la base y corrobora que el documento, con la fecha indicada, esté cargado en los repositorios institucionales.\n\n' + lineasRevision.join('\n\n');
+        var htmlRevision = '<div style="font-family:Segoe UI,Arial,sans-serif"><p>Para <b>' + _escapeHtmlAlertaEmail(nombreRevisor) + '</b>.</p><p>Estos RT se marcaron para revisión de estado. El sistema no cambia el estado predial. Actualiza el estado en la base y corrobora que el documento, con la fecha indicada, esté cargado en los repositorios institucionales.</p><pre style="white-space:pre-wrap">' + _escapeHtmlAlertaEmail(lineasRevision.join('\n\n')) + '</pre></div>';
+        GmailApp.sendEmail(revisor, 'Revisión de estado - Alertas tempranas', textoRevision, { htmlBody: htmlRevision });
+      } catch (revError) {
+        var extraRevision = 'La observación quedó guardada, pero el correo a quien revisa soportes no salió: ' + revError.message;
+        avisoCorreo = avisoCorreo ? (avisoCorreo + ' ' + extraRevision) : (' ' + extraRevision);
+      }
+    }
     try {
       new GestorAuditoria().registrarAccion(email || 'desconocido', 'GUARDAR_SEGUIMIENTO_ALERTAS', 'Token ' + cuerpo.token + ' filas ' + preparados.length);
     } catch (auditError) {}
     return { success: !avisoCorreo, error: avisoCorreo ? avisoCorreo.trim() : '', message: avisoCorreo ? avisoCorreo.trim() : 'Observaciones guardadas y correo respondido.' };
-  } catch (e) {
-    return { success: false, error: e.message };
-  } finally {
-    try { lock.releaseLock(); } catch (e2) {}
-  }
 }

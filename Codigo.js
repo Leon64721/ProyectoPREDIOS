@@ -1931,13 +1931,14 @@ function _buildAlertasEmailAttachmentGrid(alertasRows, fileNameBase) {
   const rows = Array.isArray(alertasRows) ? alertasRows : [];
   const headers = [
     'TIMESTAMP', 'NIVEL', 'RT', 'PROYECTO', 'ARTICULADOR', 'ARTICULADOR_EMAIL',
-    'GESTOR_EMAIL', 'FASE', 'REGLA', 'DIAS RESTANTES', 'MENSAJE',
+    'GESTOR_EMAIL', 'FASE', 'REGLA', 'FECHA_VENCIMIENTO', 'MENSAJE',
     'ESTADO PREDIAL ACTUAL', 'OBSERVACIONES'
   ];
 
   const tableRows = rows.map(function(r) {
     return '<tr>' + headers.map(function(h) {
-      return '<td style="border:1px solid #b7c3d0;padding:6px;vertical-align:top;">' + _escapeHtmlAlertaEmail(r[h]) + '</td>';
+      var valor = h === 'FECHA_VENCIMIENTO' ? _textoFechaAlerta_(r[h]) : r[h];
+      return '<td style="border:1px solid #b7c3d0;padding:6px;vertical-align:top;">' + _escapeHtmlAlertaEmail(valor) + '</td>';
     }).join('') + '</tr>';
   }).join('');
 
@@ -2053,7 +2054,44 @@ function _botonResponderObservaciones_(url) {
   return '<p style="margin:12px 0;"><a href="' + _escapeHtmlAlertaEmail(url) + '" style="display:inline-block;background:#1f3a5f;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:700;">Responder observaciones</a></p>';
 }
 
-function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeguimiento, mapaPolitica) {
+var TEXTO_BASE_CORREO_ALERTAS_ = 'Equipo de seguimiento predial. Este informe relaciona los predios que las reglas de alerta temprana marcaron al contrastar la fecha de inicio y la vida útil configuradas en la base de datos del tablero. Junto a cada RT se muestra el estado predial tal como está registrado, para que el equipo verifique si corresponde a la gestión más reciente. Cuando la alerta lo exige, hay que cargar una observación por cada RT. Si la decisión es que el proceso no se va a usar, se adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya existen y lo que falta es actualizar la base, marque Revisar observación, indique la fecha del documento y deje la evidencia cargada en los repositorios institucionales para que pueda corroborarse.';
+
+function _textoFechaAlerta_(valor) {
+  if (valor instanceof Date && !isNaN(valor.getTime())) {
+    return Utilities.formatDate(valor, Session.getScriptTimeZone() || 'America/Bogota', 'yyyy-MM-dd');
+  }
+  var texto = String(valor == null ? '' : valor).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(texto)) return texto.substring(0, 10);
+  return texto || 'Sin fecha';
+}
+
+function _asuntoAlertas_(rows, hoy) {
+  var nombres = {};
+  (rows || []).forEach(function(row) {
+    var nombre = String(row.REGLA || '').trim();
+    if (nombre) nombres[nombre] = true;
+  });
+  var lista = Object.keys(nombres);
+  var etiqueta = lista.length === 1 ? lista[0] : 'Varias reglas';
+  return 'Alerta temprana - ' + etiqueta + ' [' + hoy + ']';
+}
+
+function _introCorreoAlertas_(filas, textos) {
+  var mapa = textos || {};
+  var nombres = {};
+  (filas || []).forEach(function(row) {
+    var nombre = String(row.REGLA || '').trim();
+    if (nombre) nombres[nombre] = true;
+  });
+  var lista = Object.keys(nombres);
+  if (lista.length === 1) {
+    var propio = String(mapa[lista[0].toUpperCase()] || '').trim();
+    return { general: propio || TEXTO_BASE_CORREO_ALERTAS_, porRegla: false };
+  }
+  return { general: TEXTO_BASE_CORREO_ALERTAS_, porRegla: true };
+}
+
+function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeguimiento, mapaPolitica, textosIniciales) {
   const filas = Array.isArray(alertasRows) ? alertasRows : [];
   const f = filtros || {};
   const mapa = mapaPolitica || (typeof mapaPoliticasSeguimiento_ === 'function' ? mapaPoliticasSeguimiento_() : {});
@@ -2079,6 +2117,7 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
   const orden = ['ROJO', 'NARANJA', 'AMARILLO'].concat(Object.keys(grupos).filter(function(n) {
     return n !== 'ROJO' && n !== 'NARANJA' && n !== 'AMARILLO';
   }));
+  const intro = _introCorreoAlertas_(filas, textosIniciales);
   const bloques = [];
   let hayObligacion = false;
   orden.forEach(function(nivel) {
@@ -2092,7 +2131,9 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
         return '<tr><td style="padding:4px 6px;border-top:1px solid #e5e7eb;">' + _escapeHtmlAlertaEmail(_renglonRtAlerta_(row)) + '</td></tr>';
       }).join('');
       const nota = (pol && pol.nota_correo) ? '<p style="margin:8px 0 0 0;font-weight:700;">' + _escapeHtmlAlertaEmail(pol.nota_correo) + '</p>' : '';
-      return '<div style="margin-top:8px;"><div style="font-weight:700;">' + _escapeHtmlAlertaEmail(regla) + ' · ' + lista.length + '</div><table style="border-collapse:collapse;width:100%;font-size:12px;">' + items + '</table>' + nota + '</div>';
+      const propio = intro.porRegla ? String((textosIniciales || {})[String(regla).trim().toUpperCase()] || '').trim() : '';
+      const textoRegla = propio ? '<p style="margin:8px 0 0 0;white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(propio) + '</p>' : '';
+      return '<div style="margin-top:8px;"><div style="font-weight:700;">' + _escapeHtmlAlertaEmail(regla) + ' · ' + lista.length + '</div>' + textoRegla + '<table style="border-collapse:collapse;width:100%;font-size:12px;">' + items + '</table>' + nota + '</div>';
     }).join('');
     bloques.push('<div style="margin-top:14px;border:1px solid ' + c.border + ';border-radius:10px;background:' + c.bg + ';padding:10px 12px;"><div style="color:' + c.text + ';font-weight:800;">' + _escapeHtmlAlertaEmail(_etiquetaSemaforoAlerta_(nivel)) + '</div>' + reglasHtml + '</div>');
   });
@@ -2109,6 +2150,7 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
     '<h2 style="margin:0;font-size:22px;">Informe de Alertas Tempranas</h2>',
     '<div style="margin-top:6px;font-size:13px;opacity:.92;">Destinatario: <b>' + _escapeHtmlAlertaEmail(etiquetaDestino) + '</b></div>',
     '</div>',
+    '<div style="margin-top:12px;padding:10px 12px;border:1px solid #d9e2ec;background:#fff;border-radius:8px;"><p style="margin:0;white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(intro.general) + '</p></div>',
     enlace,
     '<table style="border-collapse:collapse;width:100%;margin-top:12px;font-size:13px;background:#fff;border:1px solid #d9e2ec;">',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Nivel</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblNivel) + '</td></tr>',
@@ -2126,7 +2168,7 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
   ].join('');
 }
 
-function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaPolitica) {
+function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaPolitica, textosIniciales) {
   const filas = Array.isArray(alertasRows) ? alertasRows : [];
   const mapa = mapaPolitica || {};
   const grupos = {};
@@ -2137,7 +2179,8 @@ function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaP
     if (!grupos[nivel][regla]) grupos[nivel][regla] = [];
     grupos[nivel][regla].push(row);
   });
-  const lineas = ['Informe de Alertas Tempranas', 'Destinatario: ' + (etiquetaDestino || '')];
+  const intro = _introCorreoAlertas_(filas, textosIniciales);
+  const lineas = ['Informe de Alertas Tempranas', 'Destinatario: ' + (etiquetaDestino || ''), '', intro.general];
   let hayObligacion = false;
   Object.keys(grupos).forEach(function(nivel) {
     lineas.push('');
@@ -2147,6 +2190,10 @@ function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaP
       const pol = typeof politicaSeguimientoDeRegla_ === 'function' ? politicaSeguimientoDeRegla_(regla, nivel, mapa) : null;
       if (pol && pol.exigir_observacion) hayObligacion = true;
       lineas.push(regla + ' (' + lista.length + ')');
+      if (intro.porRegla) {
+        var propio = String((textosIniciales || {})[String(regla).trim().toUpperCase()] || '').trim();
+        if (propio) lineas.push(propio);
+      }
       lista.forEach(function(row) {
         lineas.push('- ' + _renglonRtAlerta_(row));
       });
@@ -2212,6 +2259,177 @@ function probarCuerpoAlertas_() {
   return { success: faltan.length === 0 && ordenOk && !frase, caracteres: html.length, faltantes: faltan.length };
 }
 
+
+function _diasHastaVencimiento_(fechaTexto) {
+  var t = _textoFechaAlerta_(fechaTexto);
+  if (t === 'Sin fecha' || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
+  var hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Bogota', 'yyyy-MM-dd');
+  function aUtc(s) {
+    var p = s.split('-');
+    return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  }
+  return Math.round((aUtc(t) - aUtc(hoy)) / 86400000);
+}
+
+function _cuboVencimiento_(fechaTexto) {
+  var dias = _diasHastaVencimiento_(fechaTexto);
+  if (dias === null) return 'sin';
+  if (dias < 0) return 'vencida';
+  if (dias <= 15) return 'd15';
+  if (dias <= 30) return 'd30';
+  return 'despues';
+}
+
+function _historialSeguimientoInforme_() {
+  var lectura = (typeof _leerSeguimientoAlertas_ === 'function') ? _leerSeguimientoAlertas_() : { filas: [] };
+  var filas = [];
+  var conteo = { respondidas: 0, pendientes: 0, noUso: 0, revision: 0 };
+  (lectura.filas || []).forEach(function(fila) {
+    var estado = String(fila.ESTADO || '');
+    if (estado !== 'RESPONDIDA' && estado !== 'PENDIENTE') return;
+    if (estado === 'RESPONDIDA') conteo.respondidas++;
+    else conteo.pendientes++;
+    var noUso = String(fila.NO_USO || '').toUpperCase() === 'SI';
+    var revision = String(fila.REVISION_ESTADO || '').toUpperCase() === 'SI';
+    if (noUso) conteo.noUso++;
+    if (revision) conteo.revision++;
+    var persona = String(fila.GESTOR_EMAIL || '').trim() || String(fila.ARTICULADOR_EMAIL || '').trim();
+    filas.push({
+      rt: String(fila.RT || ''),
+      regla: String(fila.REGLA || ''),
+      persona: persona,
+      estado: estado,
+      noUso: noUso ? 'SI' : 'NO',
+      revision: revision ? 'SI' : 'NO',
+      enlace: String(fila.ARCHIVO_JURIDICO_URL || '').trim()
+    });
+  });
+  return { conteo: conteo, filas: filas };
+}
+
+function _htmlInformeJefatura_(filas, historial) {
+  var grupos = {};
+  (filas || []).forEach(function(row) {
+    var art = String(row.ARTICULADOR || '').trim() || 'Sin articulador';
+    var ges = String(row.GESTOR_EMAIL || '').trim() || 'Sin gestor';
+    var clave = art + '||' + ges;
+    if (!grupos[clave]) grupos[clave] = { art: art, ges: ges, vencida: 0, d15: 0, d30: 0, despues: 0, sin: 0 };
+    grupos[clave][_cuboVencimiento_(row.FECHA_VENCIMIENTO)]++;
+  });
+  var celdas = Object.keys(grupos).sort().map(function(clave) {
+    var g = grupos[clave];
+    return '<tr><td style="border:1px solid #d9e2ec;padding:6px;">' + _escapeHtmlAlertaEmail(g.art) + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + _escapeHtmlAlertaEmail(g.ges) + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.vencida + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.d15 + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.d30 + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.despues + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.sin + '</td></tr>';
+  }).join('');
+  var c = historial.conteo;
+  return [
+    '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">',
+    '<h2 style="margin:0 0 8px;">Informe de jefatura — alertas tempranas</h2>',
+    '<p>Vencimientos por articulador y gestor, contados con la fecha de vencimiento.</p>',
+    '<table style="border-collapse:collapse;font-size:13px;"><tr><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Articulador</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Gestor</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Vencidas</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Hasta 15 días</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">De 16 a 30</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Después</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Sin fecha</th></tr>',
+    celdas,
+    '</table>',
+    '<p>Historial de la hoja de seguimiento. No es la respuesta a este envío. Respondidas: ' + c.respondidas + '. Pendientes: ' + c.pendientes + '. Dijeron que no se va a usar: ' + c.noUso + '. Pidieron revisión de estado: ' + c.revision + '.</p>',
+    '<p>El Excel adjunto trae el detalle, la fecha de vencimiento y el hipervínculo de cada informe técnico / jurídico.</p>',
+    '</div>'
+  ].join('');
+}
+
+function _xlsxInformeJefatura_(filas, historial, hoy) {
+  var libro = SpreadsheetApp.create('Informe_Jefatura_Alertas_' + hoy + '_' + new Date().getTime());
+  try {
+    var detalle = libro.getSheets()[0];
+    detalle.setName('Detalle');
+    var encabezados = ['TIMESTAMP', 'NIVEL', 'RT', 'PROYECTO', 'ARTICULADOR', 'ARTICULADOR_EMAIL', 'GESTOR_EMAIL', 'FASE', 'REGLA', 'FECHA_VENCIMIENTO', 'MENSAJE', 'ESTADO PREDIAL ACTUAL', 'OBSERVACIONES', 'ENLACE INFORME'];
+    var enlaces = {};
+    historial.filas.forEach(function(fila) {
+      if (!fila.enlace) return;
+      enlaces[String(fila.rt).trim().toUpperCase() + '||' + String(fila.regla).trim().toUpperCase()] = fila.enlace;
+    });
+    var cuerpo = (filas || []).map(function(row) {
+      var clave = String(row.RT || '').trim().toUpperCase() + '||' + String(row.REGLA || '').trim().toUpperCase();
+      return [
+        row.TIMESTAMP || '', row.NIVEL || '', row.RT || '', row.PROYECTO || '', row.ARTICULADOR || '',
+        row.ARTICULADOR_EMAIL || '', row.GESTOR_EMAIL || '', row.FASE || '', row.REGLA || '',
+        _textoFechaAlerta_(row.FECHA_VENCIMIENTO), row.MENSAJE || '', row['ESTADO PREDIAL ACTUAL'] || '',
+        row.OBSERVACIONES || '', enlaces[clave] || ''
+      ];
+    });
+    detalle.getRange(1, 1, 1, encabezados.length).setValues([encabezados]).setFontWeight('bold');
+    if (cuerpo.length) {
+      detalle.getRange(2, 1, cuerpo.length, encabezados.length).setValues(cuerpo);
+      var formulas = cuerpo.map(function(fila) {
+        var url = String(fila[13] || '').replace(/"/g, '');
+        return [url ? '=HYPERLINK("' + url + '","Ver informe")' : ''];
+      });
+      detalle.getRange(2, 14, cuerpo.length, 1).setFormulas(formulas);
+    }
+    var totales = libro.insertSheet('Totales');
+    var c = historial.conteo;
+    var bloques = [
+      ['Vencimientos por articulador y gestor'],
+      ['Articulador', 'Gestor', 'Vencidas', 'Hasta 15 días', 'De 16 a 30', 'Después', 'Sin fecha']
+    ];
+    var grupos = {};
+    (filas || []).forEach(function(row) {
+      var art = String(row.ARTICULADOR || '').trim() || 'Sin articulador';
+      var ges = String(row.GESTOR_EMAIL || '').trim() || 'Sin gestor';
+      var clave = art + '||' + ges;
+      if (!grupos[clave]) grupos[clave] = { art: art, ges: ges, vencida: 0, d15: 0, d30: 0, despues: 0, sin: 0 };
+      grupos[clave][_cuboVencimiento_(row.FECHA_VENCIMIENTO)]++;
+    });
+    Object.keys(grupos).sort().forEach(function(clave) {
+      var g = grupos[clave];
+      bloques.push([g.art, g.ges, g.vencida, g.d15, g.d30, g.despues, g.sin]);
+    });
+    bloques.push([]);
+    bloques.push(['Historial de la hoja de seguimiento. No es la respuesta a este envío.']);
+    bloques.push(['Respondidas', c.respondidas, 'Pendientes', c.pendientes, 'No uso', c.noUso, 'Revisión de estado', c.revision]);
+    bloques.push(['RT', 'Regla', 'Persona', 'Estado', 'No uso', 'Revisión de estado', 'Enlace']);
+    var filaEnlace = bloques.length + 1;
+    historial.filas.forEach(function(fila) {
+      bloques.push([fila.rt, fila.regla, fila.persona, fila.estado, fila.noUso, fila.revision, fila.enlace]);
+    });
+    totales.getRange(1, 1, bloques.length, 8).setValues(bloques.map(function(fila) {
+      var copia = fila.slice();
+      while (copia.length < 8) copia.push('');
+      return copia;
+    }));
+    historial.filas.forEach(function(fila, i) {
+      var url = String(fila.enlace || '').replace(/"/g, '');
+      if (!url) return;
+      totales.getRange(filaEnlace + i, 7).setFormula('=HYPERLINK("' + url + '","Ver informe")');
+    });
+    SpreadsheetApp.flush();
+    var urlExport = 'https://www.googleapis.com/drive/v3/files/' + libro.getId() + '/export?mimeType=' + encodeURIComponent('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    var blob = UrlFetchApp.fetch(urlExport, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    var codigo = blob.getResponseCode();
+    if (codigo !== 200) throw new Error('No se pudo exportar el Excel de jefatura (' + codigo + ').');
+    return blob.getBlob().setName('Informe_Jefatura_Alertas_' + hoy + '.xlsx');
+  } finally {
+    try { DriveApp.getFileById(libro.getId()).setTrashed(true); } catch (e) {}
+  }
+}
+
+function _enviarInformeJefatura_(filas, jefeEmail, hoy) {
+  var historial = _historialSeguimientoInforme_();
+  var html = _htmlInformeJefatura_(filas, historial);
+  var adjunto = _xlsxInformeJefatura_(filas, historial, hoy);
+  var texto = 'Informe de jefatura de alertas tempranas. El detalle está en el Excel adjunto.';
+  GmailApp.sendEmail(jefeEmail, _asuntoAlertas_(filas, hoy).replace('Alerta temprana - ', 'Informe de jefatura - '), texto, {
+    htmlBody: html,
+    attachments: [adjunto]
+  });
+}
+
+function _anexarInformeJefatura_(mensaje, filas, jefeEmail, hoy) {
+  if (!_esCorreoValidoAlertas(jefeEmail)) return mensaje + ' El informe de jefatura no se envió.';
+  try {
+    _enviarInformeJefatura_(filas, jefeEmail, hoy);
+    return mensaje + ' El informe de jefatura se envió a ' + jefeEmail + '.';
+  } catch (e) {
+    return mensaje + ' El informe de jefatura no se envió: ' + e.message;
+  }
+}
 
 function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
   try {
@@ -2286,6 +2504,7 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
         FASE: f[idx['FASE']] || '',
         REGLA: f[idx['REGLA']] || '',
         'DIAS RESTANTES': f[idx['DIAS RESTANTES']] || '',
+        FECHA_VENCIMIENTO: idx['FECHA_VENCIMIENTO'] === undefined ? '' : f[idx['FECHA_VENCIMIENTO']],
         MENSAJE: f[idx['MENSAJE']] || '',
         'ESTADO PREDIAL ACTUAL': f[idx['ESTADO PREDIAL ACTUAL']] || '',
         OBSERVACIONES: observacionesRT[rt] || ''
@@ -2300,13 +2519,25 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
     const hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
     const remitenteReporte = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
     const jefeEmail = String(config.jefeEmail || '').trim().toLowerCase();
+    const revisorNombre = String(config.revisorNombre || '').trim();
+    const revisorEmail = String(config.revisorEmail || '').trim().toLowerCase();
     const mapaPolitica = mapaPoliticasSeguimiento_();
+    const textosIniciales = textosInicialesSeguimiento_();
     const exigeJefe = filasObj.some(function(fila) {
       const pol = politicaSeguimientoDeRegla_(fila.REGLA, fila.NIVEL, mapaPolitica);
       return pol && pol.permitir_no_uso;
     });
     if (exigeJefe && !_esCorreoValidoAlertas(jefeEmail)) {
       return { success: false, error: 'Indica el correo de la jefatura inmediata. Hay alertas que permiten declarar que un proceso no se va a usar.' };
+    }
+    const exigeObservacion = filasObj.some(function(fila) {
+      return !!politicaSeguimientoDeRegla_(fila.REGLA, fila.NIVEL, mapaPolitica);
+    });
+    if (exigeObservacion && !revisorNombre) {
+      return { success: false, error: 'Indica el nombre de quien revisa soportes y actualiza estados.' };
+    }
+    if (exigeObservacion && !_esCorreoValidoAlertas(revisorEmail)) {
+      return { success: false, error: 'Indica el correo de quien revisa soportes y actualiza estados.' };
     }
 
     if (modoEnvio === 'GESTOR_Y_ARTICULADOR') {
@@ -2349,13 +2580,16 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
           const envio = despacharCorreoAlertas_({
             to: destinatario,
             ccStr: ccStr,
-            subject: '📊 Alertas Tempranas - ' + etiquetaGestor + ' [' + hoy + ']',
+            subject: _asuntoAlertas_(groupRows, hoy),
             rows: groupRows,
             filtros: filtros,
             etiqueta: etiquetaGestor,
             attachment: attachment,
             remitente: remitenteReporte,
             jefeEmail: jefeEmail,
+            revisorNombre: revisorNombre,
+            revisorEmail: revisorEmail,
+            textos: textosIniciales,
             mapa: mapaPolitica
           });
           if (!envio || !envio.success) {
@@ -2369,9 +2603,10 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
         }
       });
 
+      var mensajeGestor = 'Envíos por gestor completados: ' + enviados.length + '. Omitidos: ' + omitidos.length + '.' + (enviados.some(function(e) { return e.aviso; }) ? ' Revisa el seguimiento: algún correo salió sin dejar filas pendientes.' : '');
       return {
         success: enviados.length > 0,
-        message: 'Envíos por gestor completados: ' + enviados.length + '. Omitidos: ' + omitidos.length + '.' + (enviados.some(function(e) { return e.aviso; }) ? ' Revisa el seguimiento: algún correo salió sin dejar filas pendientes.' : ''),
+        message: enviados.length ? _anexarInformeJefatura_(mensajeGestor, filasObj, jefeEmail, hoy) : mensajeGestor,
         enviados: enviados,
         omitidos: omitidos
       };
@@ -2387,13 +2622,16 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
     const envio = despacharCorreoAlertas_({
       to: emailUnico,
       ccStr: ccStr,
-      subject: '📊 Informe de Alertas Tempranas [' + hoy + ']',
+      subject: _asuntoAlertas_(filasObj, hoy),
       rows: filasObj,
       filtros: filtros,
       etiqueta: emailUnico,
       attachment: attachment,
       remitente: remitenteReporte,
       jefeEmail: jefeEmail,
+      revisorNombre: revisorNombre,
+      revisorEmail: revisorEmail,
+      textos: textosIniciales,
       mapa: mapaPolitica
     });
     if (!envio || !envio.success) return { success: false, error: (envio && envio.error) || 'No se pudo enviar' };
@@ -2401,7 +2639,7 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
 
     return {
       success: true,
-      message: 'Informe enviado exitosamente a ' + emailUnico + '.' + aviso,
+      message: _anexarInformeJefatura_('Informe enviado exitosamente a ' + emailUnico + '.' + aviso, filasObj, jefeEmail, hoy),
       totalAlertas: filasObj.length
     };
   } catch (e) {

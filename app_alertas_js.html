@@ -810,7 +810,18 @@ function ensureModalConfiguracionReporteAlertas() {
               <div class="mt-3" id="grupoJefeAlertas">
                 <label class="form-label fw-bold">Correo de la jefatura inmediata</label>
                 <input type="email" class="form-control" id="reporteAlertasJefe" placeholder="jefatura@dominio.gov.co">
-                <div class="form-text" id="ayudaJefeAlertas">Obligatorio si alguna alerta de este envío permite declarar que no se va a usar.</div>
+                <div class="form-text" id="ayudaJefeAlertas">Obligatorio si alguna alerta de este envío permite declarar que no se va a usar. Si lo escribes, también recibe el informe gerencial.</div>
+              </div>
+              <div class="row g-2 mt-1" id="grupoRevisorAlertas">
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">Nombre de quien revisa soportes</label>
+                  <input type="text" class="form-control" id="reporteAlertasRevisorNombre" placeholder="Nombre y apellido">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">Correo de quien revisa soportes</label>
+                  <input type="email" class="form-control" id="reporteAlertasRevisor" placeholder="revisor@dominio.gov.co">
+                </div>
+                <div class="col-12"><div class="form-text" id="ayudaRevisorAlertas">Obligatorio si este envío incluye alertas que exigen observación. Recibe solo los RT marcados como revisión de estado.</div></div>
               </div>
               <div class="form-check mt-2" id="grupoCheckArticulador" style="display:none;">
                 <input class="form-check-input" type="checkbox" id="reporteAlertasCcArticulador" checked>
@@ -886,9 +897,19 @@ function exportarAlertasExcel() {
         const correoRespaldo = (document.getElementById('reporteAlertasCorreoRespaldo').value || '').trim();
         const cc = (document.getElementById('reporteAlertasCc').value || '').trim();
         const jefe = (document.getElementById('reporteAlertasJefe').value || '').trim();
+        const revisorNombre = (document.getElementById('reporteAlertasRevisorNombre').value || '').trim();
+        const revisor = (document.getElementById('reporteAlertasRevisor').value || '').trim();
         const incluirArt = document.getElementById('reporteAlertasCcArticulador').checked;
         if (window.reporteAlertasExigeJefe && !jefe) {
             showToast('Indica el correo de la jefatura inmediata.', 'warning');
+            return;
+        }
+        if (window.reporteAlertasExigeObservacion && !revisorNombre) {
+            showToast('Indica el nombre de quien revisa soportes.', 'warning');
+            return;
+        }
+        if (window.reporteAlertasExigeObservacion && !revisor) {
+            showToast('Indica el correo de quien revisa soportes.', 'warning');
             return;
         }
 
@@ -904,6 +925,8 @@ function exportarAlertasExcel() {
             ccEmails: cc,
             incluirArticuladorEnCopia: incluirArt,
             jefeEmail: jefe,
+            revisorNombre: revisorNombre,
+            revisorEmail: revisor,
             filtros: filtrosActivos
         };
 
@@ -923,6 +946,7 @@ function exportarAlertasExcel() {
     };
 
     window.reporteAlertasExigeJefe = false;
+    window.reporteAlertasExigeObservacion = false;
     const pares = [];
     const vistos = {};
     alertasFiltradas.forEach(function(a) {
@@ -934,10 +958,15 @@ function exportarAlertasExcel() {
     google.script.run
       .withSuccessHandler(function(res) {
         window.reporteAlertasExigeJefe = !!(res && res.requiere);
+        window.reporteAlertasExigeObservacion = !!(res && res.exigeObservacion);
         const ayuda = document.getElementById('ayudaJefeAlertas');
         if (ayuda) ayuda.textContent = window.reporteAlertasExigeJefe
-          ? 'Obligatorio: en este envío hay alertas que permiten declarar que no se va a usar.'
-          : 'Opcional en este envío. Si nadie puede declarar no uso, puedes dejarlo vacío.';
+          ? 'Obligatorio: en este envío hay alertas que permiten declarar que no se va a usar. Si lo escribes, también recibe el informe gerencial.'
+          : 'Opcional. Si lo escribes, recibe el informe gerencial de este envío.';
+        const ayudaRevisor = document.getElementById('ayudaRevisorAlertas');
+        if (ayudaRevisor) ayudaRevisor.textContent = window.reporteAlertasExigeObservacion
+          ? 'Obligatorio: este envío incluye alertas que exigen observación.'
+          : 'Opcional en este envío. No hay alertas que exijan observación.';
       })
       .requiereCorreoJefeSeguimiento(pares);
 

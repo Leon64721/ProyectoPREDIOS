@@ -176,6 +176,10 @@ function validarConfigReglas_(config, columnasConocidas) {
         if (fecha && columnas.indexOf(fecha) < 0) advertencias.push(etiqueta + ': la fecha "' + fecha + '" no está en Datos.');
       }
     }
+    if (regla.texto_inicial_correo !== undefined && regla.texto_inicial_correo !== null) {
+      if (typeof regla.texto_inicial_correo !== 'string') errores.push(etiqueta + ': el texto inicial del correo debe ser texto.');
+      else if (regla.texto_inicial_correo.length > 2000) errores.push(etiqueta + ': el texto inicial del correo supera 2000 caracteres.');
+    }
     if (regla.seguimiento_correo !== undefined && regla.seguimiento_correo !== null) {
       const seg = regla.seguimiento_correo;
       if (typeof seg !== 'object' || Array.isArray(seg)) {

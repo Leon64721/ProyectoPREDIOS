@@ -297,14 +297,14 @@ class MotorEvaluadorReglas {
           mensajeDinamico = mensajeDinamico.replace("{DIAS}", Math.abs(diasRestantes));
       }
 
-      this._registrarAlerta(rt, filaMatriz, regla, umbralAplicable.nivel, mensajeDinamico, diasRestantes);
+      this._registrarAlerta(rt, filaMatriz, regla, umbralAplicable.nivel, mensajeDinamico, diasRestantes, this._fechaVencimiento_(fechaInicio, conf));
     }
   }
 
   /**
    * Acumula las alertas en la memoria antes de escribirlas
    */
-  _registrarAlerta(rt, filaMatriz, regla, nivel, mensaje, diasRestantes) {
+  _registrarAlerta(rt, filaMatriz, regla, nivel, mensaje, diasRestantes, fechaVencimiento) {
 
     // Lógica de prioridad para el articulador
     let articuladorFinal = "SIN ASIGNAR";
@@ -330,6 +330,7 @@ class MotorEvaluadorReglas {
       NIVEL: nivel,
       MENSAJE: mensaje,
       DIAS_RESTANTES: diasRestantes !== null ? Math.round(diasRestantes) : "N/A",
+      FECHA_VENCIMIENTO: fechaVencimiento || "",
       ESTADO_PREDIAL: filaMatriz["ESTADO PREDIAL AJUSTADO"] || ""
     });
   }
@@ -367,15 +368,18 @@ class MotorEvaluadorReglas {
         hojaAlertas.clear();
       }
 
-      const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "ARTICULADOR_EMAIL", "GESTOR_EMAIL", "FASE", "REGLA", "DIAS RESTANTES", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
+      const headers = ["TIMESTAMP", "NIVEL", "RT", "PROYECTO", "ARTICULADOR", "ARTICULADOR_EMAIL", "GESTOR_EMAIL", "FASE", "REGLA", "DIAS RESTANTES", "FECHA_VENCIMIENTO", "MENSAJE", "ESTADO PREDIAL ACTUAL"];
       hojaAlertas.getRange(1, 1, 1, headers.length).setValues([headers]);
       hojaAlertas.getRange(1, 1, 1, headers.length).setBackground("#c0392b").setFontColor("white").setFontWeight("bold");
 
       if (this.alertasGeneradas.length === 0) {
         const tsVacio = this.hoy.toLocaleString('es-CO');
-        hojaAlertas.getRange(2, 1, 1, headers.length).setValues([[
-          tsVacio, '', '', '', '', '', '', '', '', '', 'No hay alertas activas en el sistema.', ''
-        ]]);
+        const vacio = headers.map(function(h) {
+          if (h === "TIMESTAMP") return tsVacio;
+          if (h === "MENSAJE") return "No hay alertas activas en el sistema.";
+          return "";
+        });
+        hojaAlertas.getRange(2, 1, 1, headers.length).setValues([vacio]);
         return true;
       }
 
@@ -395,6 +399,7 @@ class MotorEvaluadorReglas {
         a.FASE,
         a.REGLA,
         a.DIAS_RESTANTES,
+        a.FECHA_VENCIMIENTO || "",
         a.MENSAJE,
         a.ESTADO_PREDIAL
       ]);
@@ -460,6 +465,36 @@ class MotorEvaluadorReglas {
       }
     }
     return cuenta;
+  }
+
+  _sumarDiasHabiles(fechaInicio, cantidad) {
+    var n = Math.round(Number(cantidad) || 0);
+    var cur = new Date(fechaInicio);
+    cur.setHours(12, 0, 0, 0);
+    var cuenta = 0;
+    var guardia = 0;
+    while (cuenta < n && guardia < 10000) {
+      guardia++;
+      cur.setDate(cur.getDate() + 1);
+      var dia = cur.getDay();
+      var iso = cur.toISOString().split('T')[0];
+      if (dia !== 0 && dia !== 6 && this.festivosColombia.indexOf(iso) < 0) cuenta++;
+    }
+    return cur;
+  }
+
+  _fechaVencimiento_(fechaInicio, conf) {
+    var n = Number(conf && conf.dias_vida_util);
+    if (!(n > 0) || !fechaInicio) return "";
+    var fecha;
+    if (conf.tipo_dias === "HABILES") {
+      fecha = this._sumarDiasHabiles(fechaInicio, n);
+    } else {
+      fecha = new Date(fechaInicio.getTime());
+      fecha.setHours(12, 0, 0, 0);
+      fecha.setDate(fecha.getDate() + Math.round(n));
+    }
+    return Utilities.formatDate(fecha, Session.getScriptTimeZone() || "America/Bogota", "yyyy-MM-dd");
   }
 }
 

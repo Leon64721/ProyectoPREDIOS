@@ -96,7 +96,8 @@ function pintarConstructor() {
 }
 
 var TEXTO_AVALUO_NOTA = 'Debido a que esta es una alerta crítica, es obligatorio cargar una observación por cada RT. El no uso de un avalúo, cuando el procedimiento exige aplicarlo, puede implicar incumplimiento de deberes y consecuencias disciplinarias y fiscales, incluido el detrimento patrimonial.';
-var TEXTO_AVALUO_AVISO = 'Se sugiere revisar con detalle si el avalúo debe aplicarse antes de continuar. Si aun así confirma que no se va a usar, debe adjuntar el concepto jurídico y el concepto técnico que motiven y sustenten esa decisión. Esos anexos quedan en el seguimiento del proyecto y se envía copia a quien remitió la alerta y a la jefatura inmediata.';
+var TEXTO_AVALUO_AVISO = 'Se sugiere revisar con detalle si el avalúo debe aplicarse antes de continuar. Si aun así confirma que no se va a usar, debe adjuntar un solo archivo: el informe técnico / jurídico. Ese anexo queda en el seguimiento del proyecto y se envía copia a quien remitió la alerta y a la jefatura inmediata.';
+var TEXTO_BASE_CORREO_ALERTAS = 'Equipo de seguimiento predial. Este informe relaciona los predios que las reglas de alerta temprana marcaron al contrastar la fecha de inicio y la vida útil configuradas en la base de datos del tablero. Junto a cada RT se muestra el estado predial tal como está registrado, para que el equipo verifique si corresponde a la gestión más reciente. Cuando la alerta lo exige, hay que cargar una observación por cada RT. Si la decisión es que el proceso no se va a usar, se adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya existen y lo que falta es actualizar la base, marque Revisar observación, indique la fecha del documento y deje la evidencia cargada en los repositorios institucionales para que pueda corroborarse.';
 
 function asegurarBloqueSeguimiento() {
   if (document.getElementById('crSeguimiento')) return;
@@ -459,7 +460,11 @@ function pintarYAbrirRetroalimentacion() {
           '<textarea id="retroNota_' + index + '_' + nivel + '" class="form-control form-control-sm mt-1" rows="2" maxlength="600" placeholder="Nota que sale en el correo">' + escapeHtml(item.nota_correo || '') + '</textarea>' +
           '<textarea id="retroAviso_' + index + '_' + nivel + '" class="form-control form-control-sm mt-1 retro-aviso' + avisoOculto + '" rows="2" maxlength="600" placeholder="Aviso si marcan que no se va a usar">' + escapeHtml(item.texto_no_uso || '') + '</textarea></div>';
       }).join('');
-      return '<div class="border rounded p-2 mb-3"><div class="fw-bold">' + escapeHtml(regla.nombre || 'Sin nombre') + '</div>' + filas + '</div>';
+      return '<div class="border rounded p-2 mb-3"><div class="fw-bold">' + escapeHtml(regla.nombre || 'Sin nombre') + '</div>' +
+        '<label class="small mt-2">Texto inicial del correo</label>' +
+        '<textarea id="retroInicial_' + index + '" class="form-control form-control-sm" rows="4" maxlength="2000" placeholder="Si lo dejas vacío, el correo usa el texto base.">' + escapeHtml(regla.texto_inicial_correo || '') + '</textarea>' +
+        '<button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="usarTextoBaseRetro(' + index + ')">Usar texto base</button>' +
+        filas + '</div>';
     }).join('');
   }
   cont.querySelectorAll('.retro-no-uso').forEach(function(chk) {
@@ -470,6 +475,11 @@ function pintarYAbrirRetroalimentacion() {
   });
   document.getElementById('btnGuardarRetroalimentacion').onclick = guardarRetroalimentacionAlertas;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRetroalimentacion')).show();
+}
+
+function usarTextoBaseRetro(index) {
+  var campo = document.getElementById('retroInicial_' + index);
+  if (campo) campo.value = TEXTO_BASE_CORREO_ALERTAS;
 }
 
 function pegarTextoAvaluoRetro(index) {
@@ -519,9 +529,14 @@ function guardarRetroalimentacionAlertas() {
   var errores = [];
   copia.ReglasDeNegocio.forEach(function(regla, index) {
     var seg = seguimientoDesdeRetro(index);
-    errores = errores.concat(validarSoloSeguimiento(seg, regla.nombre || 'Regla ' + (index + 1)));
+    var donde = regla.nombre || ('Regla ' + (index + 1));
+    errores = errores.concat(validarSoloSeguimiento(seg, donde));
+    var inicial = (document.getElementById('retroInicial_' + index).value || '').trim();
+    if (inicial.length > 2000) errores.push(donde + ': el texto inicial del correo supera 2000 caracteres.');
     if (seg) regla.seguimiento_correo = seg;
     else delete regla.seguimiento_correo;
+    if (inicial) regla.texto_inicial_correo = inicial;
+    else delete regla.texto_inicial_correo;
   });
   if (errores.length) {
     caja.innerHTML = errores.map(function(e) { return '<div>' + escapeHtml(e) + '</div>'; }).join('');

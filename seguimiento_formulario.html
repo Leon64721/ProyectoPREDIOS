@@ -16,14 +16,15 @@
     textarea { min-height: 72px; font: inherit; }
     button { margin-top: 16px; background: #1f3a5f; color: #fff; border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .6; cursor: default; }
-    .aviso-no-uso { display: none; margin-top: 8px; padding: 8px; border-radius: 8px; background: #fff8e8; border: 1px solid #f1c40f; }
-    .aviso-no-uso.visible { display: block; }
+    .aviso-no-uso, .caja-revision { display: none; margin-top: 8px; padding: 8px; border-radius: 8px; background: #fff8e8; border: 1px solid #f1c40f; }
+    .aviso-no-uso.visible, .caja-revision.visible { display: block; }
+    input[type="date"] { margin-top: 4px; }
   </style>
 </head>
 <body>
 <main>
   <h1>Responder observaciones</h1>
-  <p>Escribe un comentario por cada RT. Si marcas que no se va a usar, el comentario sigue siendo obligatorio y debes adjuntar el concepto jurídico y el concepto técnico.</p>
+  <p>Escribe un comentario por cada RT. Si marcas que no se va a usar, adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya cumplen y lo que falta es actualizar la base, marca Revisar observación, indica la fecha del documento y deja la evidencia cargada en los repositorios para que se pueda corroborar.</p>
   <div id="estado" class="aviso" hidden></div>
   <div id="lista"></div>
   <button type="button" id="guardar" hidden>Guardar y enviar</button>
@@ -89,16 +90,39 @@ function pintar(filas) {
       ? '<label><input type="checkbox" class="no-uso" data-id="' + escapar(fila.id) + '"> No se va a usar</label>' +
         '<div class="aviso-no-uso" data-id="' + escapar(fila.id) + '"><div>' + escapar(fila.textoNoUso || '') + '</div>' +
         '<label><input type="checkbox" class="aviso-ok" data-id="' + escapar(fila.id) + '"> Leí el aviso</label>' +
-        '<label>Concepto jurídico<input type="file" class="jur" data-id="' + escapar(fila.id) + '" accept=".pdf,.doc,.docx,image/*"></label>' +
-        '<label>Concepto técnico<input type="file" class="tec" data-id="' + escapar(fila.id) + '" accept=".pdf,.doc,.docx,image/*"></label></div>'
+        '<label>Informe técnico / jurídico<input type="file" class="informe" data-id="' + escapar(fila.id) + '" accept=".pdf,.doc,.docx,image/*"></label></div>'
       : '';
-    return '<article class="tarjeta" data-id="' + escapar(fila.id) + '"><strong>RT ' + escapar(fila.rt) + ' · ' + escapar(fila.regla) + ' · ' + escapar(etiqueta(fila.nivel)) + '</strong><div>' + escapar(fila.proyecto || '') + '</div>' + previa +
-      '<label>Agregar observación<textarea class="texto" data-id="' + escapar(fila.id) + '"></textarea></label>' + noUso + '</article>';
+    var revision = '<label><input type="checkbox" class="revision" data-id="' + escapar(fila.id) + '"> Revisar observación</label>' +
+      '<div class="caja-revision" data-id="' + escapar(fila.id) + '"><p>La gestión o el documento ya cumplen el requisito, pero la base de datos no está actualizada. Indica la fecha del documento. La evidencia debe estar cargada en los repositorios institucionales para poder corroborarla.</p>' +
+      '<label>Fecha del documento<input type="date" class="fecha-doc" data-id="' + escapar(fila.id) + '"></label></div>';
+    var para = fila.dirigidoA ? ' · ' + fila.dirigidoA : '';
+    return '<article class="tarjeta" data-id="' + escapar(fila.id) + '"><strong>RT ' + escapar(fila.rt) + ' · ' + escapar(fila.regla) + ' · ' + escapar(etiqueta(fila.nivel)) + escapar(para) + '</strong><div>' + escapar(fila.proyecto || '') + '</div>' + previa +
+      '<label>Agregar observación<textarea class="texto" data-id="' + escapar(fila.id) + '"></textarea></label>' + revision + noUso + '</article>';
   }).join('');
   lista.querySelectorAll('.no-uso').forEach(function(chk) {
     chk.onchange = function() {
-      var caja = lista.querySelector('.aviso-no-uso[data-id="' + chk.getAttribute('data-id') + '"]');
+      var id = chk.getAttribute('data-id');
+      var caja = lista.querySelector('.aviso-no-uso[data-id="' + id + '"]');
       if (caja) caja.classList.toggle('visible', chk.checked);
+      if (chk.checked) {
+        var rev = lista.querySelector('.revision[data-id="' + id + '"]');
+        var cajaRev = lista.querySelector('.caja-revision[data-id="' + id + '"]');
+        if (rev) rev.checked = false;
+        if (cajaRev) cajaRev.classList.remove('visible');
+      }
+    };
+  });
+  lista.querySelectorAll('.revision').forEach(function(chk) {
+    chk.onchange = function() {
+      var id = chk.getAttribute('data-id');
+      var caja = lista.querySelector('.caja-revision[data-id="' + id + '"]');
+      if (caja) caja.classList.toggle('visible', chk.checked);
+      if (chk.checked) {
+        var no = lista.querySelector('.no-uso[data-id="' + id + '"]');
+        var cajaNo = lista.querySelector('.aviso-no-uso[data-id="' + id + '"]');
+        if (no) no.checked = false;
+        if (cajaNo) cajaNo.classList.remove('visible');
+      }
     };
   });
   var boton = document.getElementById('guardar');
@@ -128,19 +152,27 @@ function guardar() {
     var id = tarjeta.getAttribute('data-id');
     var texto = (tarjeta.querySelector('.texto').value || '').trim();
     var noUsoEl = tarjeta.querySelector('.no-uso');
+    var revEl = tarjeta.querySelector('.revision');
     var noUso = !!(noUsoEl && noUsoEl.checked);
+    var revision = !!(revEl && revEl.checked);
     if (!texto) error = error || 'Cada RT necesita una observación.';
-    var base = { id: id, observacionNueva: texto, noUso: noUso, avisoAceptado: false };
+    if (noUso && revision) error = error || 'Revisar observación y no uso no pueden marcarse en el mismo RT.';
+    var fecha = '';
+    if (revision) {
+      fecha = (tarjeta.querySelector('.fecha-doc').value || '').trim();
+      var hoy = new Date();
+      var tope = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+      if (!fecha || fecha > tope) error = error || 'Si marcas Revisar observación, indica la fecha del documento. No puede ser posterior a hoy.';
+    }
+    var base = { id: id, observacionNueva: texto, noUso: noUso, revisionEstado: revision, fechaDocumento: fecha, avisoAceptado: false };
     if (!noUso) return Promise.resolve(base);
     var aviso = tarjeta.querySelector('.aviso-ok');
     base.avisoAceptado = !!(aviso && aviso.checked);
     if (!base.avisoAceptado) error = error || 'Debes confirmar que leíste el aviso de no uso.';
-    var jur = tarjeta.querySelector('.jur');
-    var tec = tarjeta.querySelector('.tec');
-    if (!jur.files[0] || !tec.files[0]) error = error || 'Si no se va a usar, adjunta el concepto jurídico y el concepto técnico.';
-    return Promise.all([leerArchivo(jur), leerArchivo(tec)]).then(function(archivos) {
-      base.juridico = archivos[0];
-      base.tecnico = archivos[1];
+    var informe = tarjeta.querySelector('.informe');
+    if (!informe || !informe.files[0]) error = error || 'Si no se va a usar, adjunta el informe técnico / jurídico.';
+    return leerArchivo(informe).then(function(archivo) {
+      base.informe = archivo;
       return base;
     });
   });

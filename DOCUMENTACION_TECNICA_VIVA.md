@@ -3463,3 +3463,13 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 **Qué se hizo:** `_buildResumenHtmlAgrupado` y `_textoPlanoAlertas_` listan todos los RT, ordenados por días de vigencia, con gestor, articulador y estado predial. Se quitó el corte de 40 y la frase del adjunto. El botón "Responder observaciones" va arriba y abajo. Si `doGet` recibe `sa` válido, después del rol y antes del registro de ingreso al tablero, abre `seguimiento_formulario.html`. Guardar sigue en `guardarSeguimientoAlertas`. `probarCuerpoAlertas_` arma 155 RT ficticios y no llama a Gmail.
 
 **Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. Lint del formulario. Una simulación local con 155 RT no perdió ninguno, respetó el orden y no escribió la frase del adjunto. El HTML de esa prueba pesó 31768 caracteres. A las 19:20 se hizo `clasp push --force` al script `18vY9…` (55 archivos, incluye `seguimiento_formulario`). La Web App publicada no cambia hasta una versión nueva.
+
+**Concurrencia:** la hoja no se reescribe entera. Cada guardado agrega filas y el candado cubre solo esa escritura. A partir del siguiente envío, si el gestor y el articulador son correos distintos, cada uno recibe su propia fila pendiente. El enlace ya abierto sigue con las filas compartidas de ese envío.
+
+## 61. Informe de jefatura y revisión de estado [2026-10-18]
+
+**Agente:** Cursor. Plan: `PLAN_INFORME_JEFE_Y_REVISION.md`, sección 12 y 13. Sin despliegue de la Web App.
+
+**Qué se hizo:** el asunto del correo nombra la regla que va en ese envío. El texto inicial sale de `texto_inicial_correo` de cada regla, editable en Retroalimentación; si está vacío, sale el texto base. "No se va a usar" pide un solo archivo, el informe técnico / jurídico. El formulario tiene Revisar observación, con fecha del documento, y esos RT se envían solo a quien revisa soportes. El evaluador guarda `FECHA_VENCIMIENTO`. El Excel del gestor usa esa fecha. Si el envío trae correo de jefatura, sale además un informe con tablas y un XLSX de dos hojas. La fecha aparece después de la próxima corrida del motor.
+
+**Validación:** `node --check` en `Codigo.js`, `seguimiento_alertas.js`, `evaluador_alertas.js` y `motor_reglas.js`. A las 21:00 se hizo `clasp push` al script `18vY9…` (55 archivos). La Web App publicada no cambia hasta una versión nueva: hay que probarlo en la URL de desarrollo. La fecha de vencimiento queda en la hoja cuando se vuelva a correr el motor.
