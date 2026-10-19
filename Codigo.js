@@ -1931,7 +1931,7 @@ function _buildAlertasEmailAttachmentGrid(alertasRows, fileNameBase) {
   const rows = Array.isArray(alertasRows) ? alertasRows : [];
   const headers = [
     'TIMESTAMP', 'NIVEL', 'RT', 'PROYECTO', 'ARTICULADOR', 'ARTICULADOR_EMAIL',
-    'GESTOR_EMAIL', 'FASE', 'REGLA', 'FECHA_VENCIMIENTO', 'MENSAJE',
+    'GESTOR_EMAIL', 'FASE', 'REGLA', 'DIAS RESTANTES', 'FECHA_VENCIMIENTO', 'MENSAJE',
     'ESTADO PREDIAL ACTUAL', 'OBSERVACIONES'
   ];
 
@@ -2280,56 +2280,262 @@ function _cuboVencimiento_(fechaTexto) {
   return 'despues';
 }
 
-function _historialSeguimientoInforme_() {
+function _historialSeguimientoInforme_(filasEnvio) {
+  var claves = {};
+  (filasEnvio || []).forEach(function(row) {
+    var clave = _claveRtRegla_(row.RT, row.REGLA);
+    if (String(row.RT || '').trim() || String(row.REGLA || '').trim()) claves[clave] = true;
+  });
   var lectura = (typeof _leerSeguimientoAlertas_ === 'function') ? _leerSeguimientoAlertas_() : { filas: [] };
   var filas = [];
-  var conteo = { respondidas: 0, pendientes: 0, noUso: 0, revision: 0 };
+  var respondidas = {};
+  var noUso = {};
+  var revision = {};
   (lectura.filas || []).forEach(function(fila) {
+    var clave = _claveRtRegla_(fila.RT, fila.REGLA);
+    if (!claves[clave]) return;
     var estado = String(fila.ESTADO || '');
     if (estado !== 'RESPONDIDA' && estado !== 'PENDIENTE') return;
-    if (estado === 'RESPONDIDA') conteo.respondidas++;
-    else conteo.pendientes++;
-    var noUso = String(fila.NO_USO || '').toUpperCase() === 'SI';
-    var revision = String(fila.REVISION_ESTADO || '').toUpperCase() === 'SI';
-    if (noUso) conteo.noUso++;
-    if (revision) conteo.revision++;
+    var marcoNoUso = String(fila.NO_USO || '').toUpperCase() === 'SI';
+    var marcoRevision = String(fila.REVISION_ESTADO || '').toUpperCase() === 'SI';
+    if (estado === 'RESPONDIDA') {
+      respondidas[clave] = true;
+      if (marcoNoUso) noUso[clave] = true;
+      if (marcoRevision) revision[clave] = true;
+    }
     var persona = String(fila.GESTOR_EMAIL || '').trim() || String(fila.ARTICULADOR_EMAIL || '').trim();
     filas.push({
       rt: String(fila.RT || ''),
       regla: String(fila.REGLA || ''),
       persona: persona,
       estado: estado,
-      noUso: noUso ? 'SI' : 'NO',
-      revision: revision ? 'SI' : 'NO',
+      noUso: marcoNoUso ? 'SI' : 'NO',
+      revision: marcoRevision ? 'SI' : 'NO',
       enlace: String(fila.ARCHIVO_JURIDICO_URL || '').trim()
     });
   });
-  return { conteo: conteo, filas: filas };
+  var total = Object.keys(claves).length;
+  var nRespondidas = Object.keys(respondidas).length;
+  return {
+    conteo: {
+      total: total,
+      respondidas: nRespondidas,
+      pendientes: total - nRespondidas,
+      noUso: Object.keys(noUso).length,
+      revision: Object.keys(revision).length
+    },
+    filas: filas
+  };
 }
 
-function _htmlInformeJefatura_(filas, historial) {
+function _reglasDeTiempoInforme_() {
+  var mapa = {};
+  var leido = (typeof obtenerReglasJSON === 'function') ? obtenerReglasJSON() : null;
+  if (!leido || !leido.success) return mapa;
+  var parsed;
+  try { parsed = JSON.parse(leido.data || '{}'); } catch (e) { return mapa; }
+  var reglas = parsed && Array.isArray(parsed.ReglasDeNegocio) ? parsed.ReglasDeNegocio : [];
+  reglas.forEach(function(regla) {
+    var nombre = String(regla && regla.nombre || '').trim().toUpperCase();
+    if (!nombre) return;
+    var tiempo = regla.regla_tiempo || {};
+    mapa[nombre] = {
+      columna: String(tiempo.columna_fecha_inicio || '').trim().toUpperCase(),
+      vida: Number(tiempo.dias_vida_util),
+      tipo: String(tiempo.tipo_dias || 'CALENDARIO').toUpperCase()
+    };
+  });
+  return mapa;
+}
+
+function _parseFechaInforme_(valor) {
+  if (valor instanceof Date && !isNaN(valor.getTime())) {
+    var copia = new Date(valor.getTime());
+    copia.setHours(12, 0, 0, 0);
+    return copia;
+  }
+  var s = String(valor || '').trim();
+  if (!s) return null;
+  var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12, 0, 0);
+  var partes = s.split(/[-/]/);
+  if (partes.length >= 3 && partes[0].length <= 2) {
+    var dia = parseInt(partes[0], 10);
+    var mes = parseInt(partes[1], 10) - 1;
+    var anioTxt = String(partes[2]).replace(/\D/g, '');
+    var anio = anioTxt.length === 2 ? 2000 + parseInt(anioTxt, 10) : parseInt(anioTxt, 10);
+    var fecha = new Date(anio, mes, dia, 12, 0, 0);
+    if (fecha.getFullYear() === anio && fecha.getMonth() === mes && fecha.getDate() === dia) return fecha;
+  }
+  return null;
+}
+
+function _sumarDiasCalendarioInforme_(fecha, dias) {
+  var d = new Date(fecha.getTime());
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + Math.round(Number(dias) || 0));
+  return d;
+}
+
+function _fechasInicioPorRt_(rts, columnas) {
+  var mapa = {};
+  var ids = (typeof getDataFilesIds === 'function') ? getDataFilesIds() : [];
+  var hojaNombre = getConfig('SHEETS.DATOS');
+  var colRt = String(getConfig('COLUMNS.RT', 'RT') || 'RT').toUpperCase().trim();
+  ids.forEach(function(id) {
+    try {
+      var ss = SpreadsheetApp.openById(id);
+      var ws = ss.getSheetByName(hojaNombre);
+      if (!ws) return;
+      var values = ws.getDataRange().getValues();
+      if (!values || values.length < 2) return;
+      var headers = values[0].map(function(h) { return String(h || '').toUpperCase().trim(); });
+      var idxRt = headers.indexOf(colRt);
+      if (idxRt < 0) return;
+      var idxCols = {};
+      columnas.forEach(function(c) { idxCols[c] = headers.indexOf(c); });
+      for (var r = 1; r < values.length; r++) {
+        var rt = String(values[r][idxRt] || '').trim().toUpperCase();
+        if (!rt || !rts[rt] || mapa[rt]) continue;
+        var dato = {};
+        columnas.forEach(function(c) {
+          if (idxCols[c] >= 0) dato[c] = values[r][idxCols[c]];
+        });
+        mapa[rt] = dato;
+      }
+    } catch (e) {
+      console.warn('No se pudo leer la fecha de la matriz ' + id + ': ' + e.message);
+    }
+  });
+  return mapa;
+}
+
+function _completarFechasVencimiento_(filas) {
+  var lista = Array.isArray(filas) ? filas : [];
+  var reglas = _reglasDeTiempoInforme_();
+  var rts = {};
+  var columnas = { 'FECHA AVALUO': true };
+  lista.forEach(function(row) {
+    var rt = String(row.RT || '').trim().toUpperCase();
+    if (rt) rts[rt] = true;
+    var conf = reglas[String(row.REGLA || '').trim().toUpperCase()];
+    if (conf && conf.columna) columnas[conf.columna] = true;
+  });
+  var fechas = _fechasInicioPorRt_(rts, Object.keys(columnas));
+  var tz = Session.getScriptTimeZone() || 'America/Bogota';
+  var motorHabil = null;
+  lista.forEach(function(row) {
+    var ya = _textoFechaAlerta_(row.FECHA_VENCIMIENTO);
+    if (ya !== 'Sin fecha') {
+      row.FECHA_VENCIMIENTO = ya;
+      return;
+    }
+    var nombre = String(row.REGLA || '').trim().toUpperCase();
+    var conf = reglas[nombre] || {};
+    var esAvaluo = nombre.indexOf('AVALU') >= 0;
+    var columna = conf.columna || (esAvaluo ? 'FECHA AVALUO' : '');
+    var vida = Number(conf.vida);
+    if (!(vida > 0) && esAvaluo) vida = 365;
+    var tipo = conf.tipo || 'CALENDARIO';
+    if (!columna || !(vida > 0)) return;
+    var datoRt = fechas[String(row.RT || '').trim().toUpperCase()] || {};
+    var crudo = datoRt[columna];
+    if ((crudo === undefined || crudo === '' || crudo === null) && esAvaluo && columna !== 'FECHA AVALUO') {
+      crudo = datoRt['FECHA AVALUO'];
+      if (!(Number(conf.vida) > 0)) vida = 365;
+      tipo = Number(conf.vida) > 0 ? tipo : 'CALENDARIO';
+    }
+    var inicio = _parseFechaInforme_(crudo);
+    if (!inicio) return;
+    var fin;
+    if (tipo === 'HABILES' && typeof MotorEvaluadorReglas === 'function') {
+      if (!motorHabil) motorHabil = new MotorEvaluadorReglas();
+      fin = motorHabil._sumarDiasHabiles(inicio, vida);
+    } else {
+      fin = _sumarDiasCalendarioInforme_(inicio, vida);
+    }
+    row.FECHA_VENCIMIENTO = Utilities.formatDate(fin, tz, 'yyyy-MM-dd');
+  });
+}
+
+function _cuboFilaInforme_(row) {
+  var porFecha = _cuboVencimiento_(row && row.FECHA_VENCIMIENTO);
+  if (porFecha !== 'sin') return porFecha;
+  var dias = _diasVigenciaTexto_(row && row['DIAS RESTANTES']);
+  if (!dias || dias.texto === 'sin dato') return 'sin';
+  if (dias.orden < 0) return 'vencida';
+  if (dias.orden <= 15) return 'd15';
+  if (dias.orden <= 30) return 'd30';
+  return 'despues';
+}
+
+function _conteoVencimientos_(filas) {
+  var c = { vencida: 0, d15: 0, d30: 0, despues: 0, sin: 0 };
+  (filas || []).forEach(function(row) { c[_cuboFilaInforme_(row)]++; });
+  return c;
+}
+
+function _tortaVencimientos_(filas) {
+  var c = _conteoVencimientos_(filas);
+  var etiquetas = [
+    ['Vencidas', c.vencida],
+    ['Hasta 15 días', c.d15],
+    ['De 16 a 30 días', c.d30],
+    ['Después de 30 días', c.despues]
+  ];
+  if (c.sin) etiquetas.push(['Sin fecha', c.sin]);
+  var tabla = Charts.newDataTable()
+    .addColumn(Charts.ColumnType.STRING, 'Estado')
+    .addColumn(Charts.ColumnType.NUMBER, 'Alertas');
+  var alguna = false;
+  etiquetas.forEach(function(par) {
+    if (par[1] > 0) {
+      tabla.addRow(par);
+      alguna = true;
+    }
+  });
+  if (!alguna) return null;
+  return Charts.newPieChart()
+    .setDataTable(tabla.build())
+    .setTitle('Vencimientos de este envío')
+    .setDimensions(520, 320)
+    .build()
+    .getAs('image/png')
+    .setName('vencimientos.png');
+}
+
+function _htmlInformeJefatura_(filas, historial, conTorta) {
   var grupos = {};
+  var reglas = {};
+  var niveles = {};
   (filas || []).forEach(function(row) {
     var art = String(row.ARTICULADOR || '').trim() || 'Sin articulador';
     var ges = String(row.GESTOR_EMAIL || '').trim() || 'Sin gestor';
     var clave = art + '||' + ges;
     if (!grupos[clave]) grupos[clave] = { art: art, ges: ges, vencida: 0, d15: 0, d30: 0, despues: 0, sin: 0 };
-    grupos[clave][_cuboVencimiento_(row.FECHA_VENCIMIENTO)]++;
+    grupos[clave][_cuboFilaInforme_(row)]++;
+    var regla = String(row.REGLA || '').trim();
+    var nivel = _etiquetaSemaforoAlerta_(row.NIVEL);
+    if (regla) reglas[regla] = true;
+    if (nivel) niveles[nivel] = true;
   });
   var celdas = Object.keys(grupos).sort().map(function(clave) {
     var g = grupos[clave];
     return '<tr><td style="border:1px solid #d9e2ec;padding:6px;">' + _escapeHtmlAlertaEmail(g.art) + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + _escapeHtmlAlertaEmail(g.ges) + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.vencida + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.d15 + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.d30 + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.despues + '</td><td style="border:1px solid #d9e2ec;padding:6px;">' + g.sin + '</td></tr>';
   }).join('');
   var c = historial.conteo;
+  var torta = conTorta ? '<p><img src="cid:tortaVencimientos" alt="Vencimientos de este envío"></p>' : '';
   return [
     '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">',
     '<h2 style="margin:0 0 8px;">Informe de jefatura — alertas tempranas</h2>',
-    '<p>Vencimientos por articulador y gestor, contados con la fecha de vencimiento.</p>',
+    '<p>Este informe trae solo las alertas de este envío: ' + (filas || []).length + '. Regla: ' + _escapeHtmlAlertaEmail(Object.keys(reglas).join(', ') || 'Varias') + '. Nivel: ' + _escapeHtmlAlertaEmail(Object.keys(niveles).join(', ') || 'Varios') + '.</p>',
+    '<p>La fecha de vencimiento sale de la fecha de inicio de la regla en la matriz más su vida útil. En avalúo, si la regla no trae otra columna, es FECHA AVALUO más 365 días. Los días del tablero van junto a esa fecha en el Excel.</p>',
+    torta,
     '<table style="border-collapse:collapse;font-size:13px;"><tr><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Articulador</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Gestor</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Vencidas</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Hasta 15 días</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">De 16 a 30</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Después</th><th style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;">Sin fecha</th></tr>',
     celdas,
     '</table>',
-    '<p>Historial de la hoja de seguimiento. No es la respuesta a este envío. Respondidas: ' + c.respondidas + '. Pendientes: ' + c.pendientes + '. Dijeron que no se va a usar: ' + c.noUso + '. Pidieron revisión de estado: ' + c.revision + '.</p>',
-    '<p>El Excel adjunto trae el detalle, la fecha de vencimiento y el hipervínculo de cada informe técnico / jurídico.</p>',
+    '<p>Respuesta de las alertas de este envío, no del tablero completo. Respondidas: ' + c.respondidas + '. Pendientes: ' + c.pendientes + '. Dijeron que no se va a usar: ' + c.noUso + '. Pidieron revisión de estado: ' + c.revision + '.</p>',
+    '<p>El Excel trae cada RT con los días del tablero, la fecha de vencimiento y el hipervínculo del informe técnico / jurídico.</p>',
     '</div>'
   ].join('');
 }
@@ -2339,7 +2545,7 @@ function _xlsxInformeJefatura_(filas, historial, hoy) {
   try {
     var detalle = libro.getSheets()[0];
     detalle.setName('Detalle');
-    var encabezados = ['TIMESTAMP', 'NIVEL', 'RT', 'PROYECTO', 'ARTICULADOR', 'ARTICULADOR_EMAIL', 'GESTOR_EMAIL', 'FASE', 'REGLA', 'FECHA_VENCIMIENTO', 'MENSAJE', 'ESTADO PREDIAL ACTUAL', 'OBSERVACIONES', 'ENLACE INFORME'];
+    var encabezados = ['TIMESTAMP', 'NIVEL', 'RT', 'PROYECTO', 'ARTICULADOR', 'ARTICULADOR_EMAIL', 'GESTOR_EMAIL', 'FASE', 'REGLA', 'DIAS RESTANTES', 'FECHA_VENCIMIENTO', 'MENSAJE', 'ESTADO PREDIAL ACTUAL', 'OBSERVACIONES', 'ENLACE INFORME'];
     var enlaces = {};
     historial.filas.forEach(function(fila) {
       if (!fila.enlace) return;
@@ -2350,18 +2556,20 @@ function _xlsxInformeJefatura_(filas, historial, hoy) {
       return [
         row.TIMESTAMP || '', row.NIVEL || '', row.RT || '', row.PROYECTO || '', row.ARTICULADOR || '',
         row.ARTICULADOR_EMAIL || '', row.GESTOR_EMAIL || '', row.FASE || '', row.REGLA || '',
+        row['DIAS RESTANTES'] === undefined || row['DIAS RESTANTES'] === null ? '' : row['DIAS RESTANTES'],
         _textoFechaAlerta_(row.FECHA_VENCIMIENTO), row.MENSAJE || '', row['ESTADO PREDIAL ACTUAL'] || '',
         row.OBSERVACIONES || '', enlaces[clave] || ''
       ];
     });
+    var colEnlace = encabezados.indexOf('ENLACE INFORME');
     detalle.getRange(1, 1, 1, encabezados.length).setValues([encabezados]).setFontWeight('bold');
     if (cuerpo.length) {
       detalle.getRange(2, 1, cuerpo.length, encabezados.length).setValues(cuerpo);
       var formulas = cuerpo.map(function(fila) {
-        var url = String(fila[13] || '').replace(/"/g, '');
+        var url = String(fila[colEnlace] || '').replace(/"/g, '');
         return [url ? '=HYPERLINK("' + url + '","Ver informe")' : ''];
       });
-      detalle.getRange(2, 14, cuerpo.length, 1).setFormulas(formulas);
+      detalle.getRange(2, colEnlace + 1, cuerpo.length, 1).setFormulas(formulas);
     }
     var totales = libro.insertSheet('Totales');
     var c = historial.conteo;
@@ -2375,15 +2583,16 @@ function _xlsxInformeJefatura_(filas, historial, hoy) {
       var ges = String(row.GESTOR_EMAIL || '').trim() || 'Sin gestor';
       var clave = art + '||' + ges;
       if (!grupos[clave]) grupos[clave] = { art: art, ges: ges, vencida: 0, d15: 0, d30: 0, despues: 0, sin: 0 };
-      grupos[clave][_cuboVencimiento_(row.FECHA_VENCIMIENTO)]++;
+      grupos[clave][_cuboFilaInforme_(row)]++;
     });
     Object.keys(grupos).sort().forEach(function(clave) {
       var g = grupos[clave];
       bloques.push([g.art, g.ges, g.vencida, g.d15, g.d30, g.despues, g.sin]);
     });
     bloques.push([]);
-    bloques.push(['Historial de la hoja de seguimiento. No es la respuesta a este envío.']);
-    bloques.push(['Respondidas', c.respondidas, 'Pendientes', c.pendientes, 'No uso', c.noUso, 'Revisión de estado', c.revision]);
+    bloques.push(['Respuesta de las alertas de este envío. No cuenta el tablero completo.']);
+    bloques.push(['Alertas del envío', c.total, 'Respondidas', c.respondidas, 'Pendientes', c.pendientes, 'No uso', c.noUso]);
+    bloques.push(['Revisión de estado', c.revision]);
     bloques.push(['RT', 'Regla', 'Persona', 'Estado', 'No uso', 'Revisión de estado', 'Enlace']);
     var filaEnlace = bloques.length + 1;
     historial.filas.forEach(function(fila) {
@@ -2399,6 +2608,23 @@ function _xlsxInformeJefatura_(filas, historial, hoy) {
       if (!url) return;
       totales.getRange(filaEnlace + i, 7).setFormula('=HYPERLINK("' + url + '","Ver informe")');
     });
+    var conteoTorta = _conteoVencimientos_(filas);
+    var datosTorta = [['Estado', 'Cantidad']];
+    [
+      ['Vencidas', conteoTorta.vencida],
+      ['Hasta 15 días', conteoTorta.d15],
+      ['De 16 a 30 días', conteoTorta.d30],
+      ['Después de 30 días', conteoTorta.despues],
+      ['Sin fecha', conteoTorta.sin]
+    ].forEach(function(par) { if (par[1] > 0) datosTorta.push(par); });
+    if (datosTorta.length < 2) datosTorta.push(['Sin datos', 0]);
+    totales.getRange(1, 10, datosTorta.length, 2).setValues(datosTorta);
+    totales.insertChart(totales.newChart()
+      .setChartType(Charts.ChartType.PIE)
+      .addRange(totales.getRange(1, 10, datosTorta.length, 2))
+      .setPosition(1, 12, 0, 0)
+      .setOption('title', 'Vencimientos de este envío')
+      .build());
     SpreadsheetApp.flush();
     var urlExport = 'https://www.googleapis.com/drive/v3/files/' + libro.getId() + '/export?mimeType=' + encodeURIComponent('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     var blob = UrlFetchApp.fetch(urlExport, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
@@ -2411,14 +2637,15 @@ function _xlsxInformeJefatura_(filas, historial, hoy) {
 }
 
 function _enviarInformeJefatura_(filas, jefeEmail, hoy) {
-  var historial = _historialSeguimientoInforme_();
-  var html = _htmlInformeJefatura_(filas, historial);
+  var historial = _historialSeguimientoInforme_(filas);
+  var torta = null;
+  try { torta = _tortaVencimientos_(filas); } catch (e) { torta = null; }
+  var html = _htmlInformeJefatura_(filas, historial, !!torta);
   var adjunto = _xlsxInformeJefatura_(filas, historial, hoy);
-  var texto = 'Informe de jefatura de alertas tempranas. El detalle está en el Excel adjunto.';
-  GmailApp.sendEmail(jefeEmail, _asuntoAlertas_(filas, hoy).replace('Alerta temprana - ', 'Informe de jefatura - '), texto, {
-    htmlBody: html,
-    attachments: [adjunto]
-  });
+  var texto = 'Informe de jefatura de las alertas de este envío. El detalle está en el Excel adjunto.';
+  var opts = { htmlBody: html, attachments: [adjunto] };
+  if (torta) opts.inlineImages = { tortaVencimientos: torta };
+  GmailApp.sendEmail(jefeEmail, _asuntoAlertas_(filas, hoy).replace('Alerta temprana - ', 'Informe de jefatura - '), texto, opts);
 }
 
 function _anexarInformeJefatura_(mensaje, filas, jefeEmail, hoy) {
@@ -2510,6 +2737,8 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
         OBSERVACIONES: observacionesRT[rt] || ''
       };
     });
+    try { _completarFechasVencimiento_(filasObj); }
+    catch (fechaError) { console.warn('No se pudo calcular la fecha de vencimiento: ' + fechaError.message); }
 
     const modoEnvio = String(config.modoEnvio || 'EMAIL_UNICO').toUpperCase();
     const ccExtras = _normalizarListaCorreos(config.ccEmails || '').filter(_esCorreoValidoAlertas);

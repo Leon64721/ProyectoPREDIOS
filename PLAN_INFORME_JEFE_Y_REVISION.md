@@ -158,3 +158,12 @@ Al armar el correo:
 - Si el envío trae varias reglas, el párrafo de la sección 12 sale una vez arriba. Debajo, cada regla que tenga su propio texto lo muestra antes de sus RT. La nota por color (`nota_correo`) sigue donde ya está.
 
 El campo admite hasta 2.000 caracteres. La pantalla y `guardarRetroalimentacionAlertas` lo validan. Un botón **Usar texto base** copia el párrafo de la sección 12 en el campo para poder editarlo. Archivo: `app_reglas_editor_js.html`. El cuerpo del correo, en `Codigo.js`, lee ese campo al enviar.
+
+## 14. Corrección del informe de jefatura
+
+Fabian vio el primer informe: todo quedó en Sin fecha y las pendientes eran 82, el total de alertas y no las de ese correo. Esta sección ajusta el informe. No borra lo anterior.
+
+- La fecha se calcula al enviar, con la fecha de inicio de la regla en la matriz más `dias_vida_util`. En una regla de avalúo sin otra columna, es `FECHA AVALUO` más 365 días.
+- El Excel trae `DIAS RESTANTES` y `FECHA_VENCIMIENTO`.
+- Respondidas, pendientes, no uso y revisión cuentan solo los RT de ese envío.
+- El correo y el Excel llevan una torta de esos vencimientos.
