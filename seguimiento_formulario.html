@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Responder observaciones</title>
+  <style>
+    body { margin: 0; background: #f4f7fb; color: #1f2937; font-family: Segoe UI, Arial, sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 20px 16px 40px; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    .aviso { margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px solid #d9e2ec; }
+    .aviso.error { border-color: #c0392b; color: #9b1c1c; }
+    .tarjeta { background: #fff; border: 1px solid #d9e2ec; border-radius: 10px; padding: 12px; margin-top: 12px; }
+    label { display: block; margin-top: 8px; font-size: 13px; }
+    textarea, input[type="file"] { width: 100%; box-sizing: border-box; margin-top: 4px; }
+    textarea { min-height: 72px; font: inherit; }
+    button { margin-top: 16px; background: #1f3a5f; color: #fff; border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: default; }
+    .aviso-no-uso { display: none; margin-top: 8px; padding: 8px; border-radius: 8px; background: #fff8e8; border: 1px solid #f1c40f; }
+    .aviso-no-uso.visible { display: block; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Responder observaciones</h1>
+  <p>Escribe un comentario por cada RT. Si marcas que no se va a usar, el comentario sigue siendo obligatorio y debes adjuntar el concepto jurídico y el concepto técnico.</p>
+  <div id="estado" class="aviso" hidden></div>
+  <div id="lista"></div>
+  <button type="button" id="guardar" hidden>Guardar y enviar</button>
+</main>
+<script>
+var TOKEN = <?!= tokenJs ?>;
+
+function escapar(valor) {
+  return String(valor == null ? '' : valor)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function etiqueta(nivel) {
+  var n = String(nivel || '').toUpperCase();
+  if (n === 'ROJO') return 'Crítica';
+  if (n === 'NARANJA') return 'Riesgo';
+  if (n === 'AMARILLO') return 'Preventiva';
+  return n || 'Sin nivel';
+}
+
+function mostrar(texto, esError) {
+  var caja = document.getElementById('estado');
+  caja.hidden = !texto;
+  caja.className = 'aviso' + (esError ? ' error' : '');
+  caja.textContent = texto || '';
+}
+
+function cargar() {
+  document.getElementById('lista').innerHTML = '<div class="aviso">Cargando observaciones...</div>';
+  document.getElementById('guardar').hidden = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) {
+        document.getElementById('lista').innerHTML = '';
+        mostrar((res && res.error) || 'No se pudo abrir el seguimiento.', true);
+        return;
+      }
+      pintar(res.filas || []);
+    })
+    .withFailureHandler(function(err) {
+      document.getElementById('lista').innerHTML = '';
+      mostrar((err && err.message) || 'No se pudo abrir el seguimiento.', true);
+    })
+    .obtenerSeguimientoPorToken(TOKEN);
+}
+
+function pintar(filas) {
+  var lista = document.getElementById('lista');
+  if (!filas.length) {
+    lista.innerHTML = '';
+    mostrar('Este enlace ya no tiene observaciones pendientes.', false);
+    return;
+  }
+  mostrar('', false);
+  lista.innerHTML = filas.map(function(fila) {
+    var previa = fila.observacionVigente
+      ? '<label>Observación anterior</label><div class="aviso">' + escapar(fila.observacionVigente) + '</div>'
+      : '';
+    var noUso = fila.permitirNoUso
+      ? '<label><input type="checkbox" class="no-uso" data-id="' + escapar(fila.id) + '"> No se va a usar</label>' +
+        '<div class="aviso-no-uso" data-id="' + escapar(fila.id) + '"><div>' + escapar(fila.textoNoUso || '') + '</div>' +
+        '<label><input type="checkbox" class="aviso-ok" data-id="' + escapar(fila.id) + '"> Leí el aviso</label>' +
+        '<label>Concepto jurídico<input type="file" class="jur" data-id="' + escapar(fila.id) + '" accept=".pdf,.doc,.docx,image/*"></label>' +
+        '<label>Concepto técnico<input type="file" class="tec" data-id="' + escapar(fila.id) + '" accept=".pdf,.doc,.docx,image/*"></label></div>'
+      : '';
+    return '<article class="tarjeta" data-id="' + escapar(fila.id) + '"><strong>RT ' + escapar(fila.rt) + ' · ' + escapar(fila.regla) + ' · ' + escapar(etiqueta(fila.nivel)) + '</strong><div>' + escapar(fila.proyecto || '') + '</div>' + previa +
+      '<label>Agregar observación<textarea class="texto" data-id="' + escapar(fila.id) + '"></textarea></label>' + noUso + '</article>';
+  }).join('');
+  lista.querySelectorAll('.no-uso').forEach(function(chk) {
+    chk.onchange = function() {
+      var caja = lista.querySelector('.aviso-no-uso[data-id="' + chk.getAttribute('data-id') + '"]');
+      if (caja) caja.classList.toggle('visible', chk.checked);
+    };
+  });
+  var boton = document.getElementById('guardar');
+  boton.hidden = false;
+  boton.disabled = false;
+  boton.onclick = guardar;
+}
+
+function leerArchivo(input) {
+  return new Promise(function(resolve, reject) {
+    var file = input && input.files && input.files[0];
+    if (!file) { resolve(null); return; }
+    if (file.size > 5 * 1024 * 1024) { reject(new Error('Cada anexo debe pesar 5 MB o menos.')); return; }
+    var reader = new FileReader();
+    reader.onload = function() {
+      resolve({ nombre: file.name, mime: file.type || '', base64: String(reader.result || '') });
+    };
+    reader.onerror = function() { reject(new Error('No se pudo leer un archivo.')); };
+    reader.readAsDataURL(file);
+  });
+}
+
+function guardar() {
+  var tarjetas = Array.prototype.slice.call(document.querySelectorAll('.tarjeta'));
+  var error = '';
+  var trabajos = tarjetas.map(function(tarjeta) {
+    var id = tarjeta.getAttribute('data-id');
+    var texto = (tarjeta.querySelector('.texto').value || '').trim();
+    var noUsoEl = tarjeta.querySelector('.no-uso');
+    var noUso = !!(noUsoEl && noUsoEl.checked);
+    if (!texto) error = error || 'Cada RT necesita una observación.';
+    var base = { id: id, observacionNueva: texto, noUso: noUso, avisoAceptado: false };
+    if (!noUso) return Promise.resolve(base);
+    var aviso = tarjeta.querySelector('.aviso-ok');
+    base.avisoAceptado = !!(aviso && aviso.checked);
+    if (!base.avisoAceptado) error = error || 'Debes confirmar que leíste el aviso de no uso.';
+    var jur = tarjeta.querySelector('.jur');
+    var tec = tarjeta.querySelector('.tec');
+    if (!jur.files[0] || !tec.files[0]) error = error || 'Si no se va a usar, adjunta el concepto jurídico y el concepto técnico.';
+    return Promise.all([leerArchivo(jur), leerArchivo(tec)]).then(function(archivos) {
+      base.juridico = archivos[0];
+      base.tecnico = archivos[1];
+      return base;
+    });
+  });
+  if (error) { mostrar(error, true); return; }
+  var boton = document.getElementById('guardar');
+  boton.disabled = true;
+  mostrar('Guardando y enviando la respuesta...', false);
+  Promise.all(trabajos).then(function(filas) {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        boton.disabled = false;
+        var msg = (res && (res.message || res.error)) || 'No se pudo guardar';
+        var guardado = !!(res && (res.success || msg.indexOf('quedó guardada') >= 0));
+        mostrar(msg, !(res && res.success));
+        if (guardado) cargar();
+      })
+      .withFailureHandler(function(err) {
+        boton.disabled = false;
+        mostrar((err && err.message) || 'No se pudo guardar', true);
+      })
+      .guardarSeguimientoAlertas({ token: TOKEN, filas: filas });
+  }).catch(function(e) {
+    boton.disabled = false;
+    mostrar(e.message || 'No se pudieron leer los archivos', true);
+  });
+}
+
+cargar();
+</script>
+</body>
+</html>

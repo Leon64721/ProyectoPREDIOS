@@ -178,6 +178,21 @@ function doGet(e) {
       `);
     }
 
+    var tokenCrudo = (e && e.parameter && e.parameter.sa) ? String(e.parameter.sa) : '';
+    if (tokenCrudo) {
+      if (!/^[A-Za-z0-9-]{20,64}$/.test(tokenCrudo)) {
+        return HtmlService.createHtmlOutput(
+          '<div style="font-family:sans-serif;text-align:center;margin-top:48px;"><h2>Enlace no válido</h2><p>Este enlace de observaciones no se puede abrir.</p></div>'
+        ).setTitle('Enlace no válido');
+      }
+      var formulario = HtmlService.createTemplateFromFile('seguimiento_formulario');
+      formulario.tokenJs = JSON.stringify(tokenCrudo);
+      return formulario.evaluate()
+        .setTitle('Responder observaciones')
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+        .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    }
+
     // 5️⃣ REGISTRAR INGRESO
     try {
       const auditoria = new GestorAuditoria();
@@ -1991,6 +2006,53 @@ function _etiquetaSemaforoAlerta_(nivel) {
   return n || 'Sin nivel';
 }
 
+function _diasVigenciaTexto_(valor) {
+  var crudo = String(valor == null ? '' : valor).trim().replace(',', '.');
+  if (!crudo || !/^-?\d+(\.\d+)?$/.test(crudo)) return { orden: 1e15, texto: 'sin dato' };
+  var dias = Math.trunc(Number(crudo));
+  if (dias < 0) return { orden: dias, texto: 'vencido hace ' + Math.abs(dias) + ' días' };
+  return { orden: dias, texto: dias + ' días de vigencia' };
+}
+
+function _datoOSinDato_(valor) {
+  var texto = String(valor == null ? '' : valor).trim();
+  return texto || 'sin dato';
+}
+
+function _textoArticuladorAlerta_(row) {
+  var nombre = String(row.ARTICULADOR || '').trim();
+  var correo = String(row.ARTICULADOR_EMAIL || '').trim();
+  if (nombre && correo && nombre.toLowerCase() !== correo.toLowerCase()) return nombre + ' (' + correo + ')';
+  return nombre || correo || 'sin dato';
+}
+
+function _renglonRtAlerta_(row) {
+  return 'RT ' + _datoOSinDato_(row.RT) +
+    ' · ' + _datoOSinDato_(row.PROYECTO) +
+    ' · ' + _diasVigenciaTexto_(row['DIAS RESTANTES']).texto +
+    ' · Gestor: ' + _datoOSinDato_(row.GESTOR_EMAIL) +
+    ' · Articulador: ' + _textoArticuladorAlerta_(row) +
+    ' · Estado predial: ' + _datoOSinDato_(row['ESTADO PREDIAL ACTUAL']);
+}
+
+function _ordenarRtsPorVigencia_(lista) {
+  return (lista || []).slice().sort(function(a, b) {
+    var da = _diasVigenciaTexto_(a['DIAS RESTANTES']).orden;
+    var db = _diasVigenciaTexto_(b['DIAS RESTANTES']).orden;
+    if (da !== db) return da - db;
+    var ra = String(a.RT || '');
+    var rb = String(b.RT || '');
+    if (ra < rb) return -1;
+    if (ra > rb) return 1;
+    return 0;
+  });
+}
+
+function _botonResponderObservaciones_(url) {
+  if (!url) return '';
+  return '<p style="margin:12px 0;"><a href="' + _escapeHtmlAlertaEmail(url) + '" style="display:inline-block;background:#1f3a5f;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:700;">Responder observaciones</a></p>';
+}
+
 function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeguimiento, mapaPolitica) {
   const filas = Array.isArray(alertasRows) ? alertasRows : [];
   const f = filtros || {};
@@ -2023,17 +2085,14 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
     if (!grupos[nivel]) return;
     const c = colorTipo(nivel);
     const reglasHtml = Object.keys(grupos[nivel]).map(function(regla) {
-      const lista = grupos[nivel][regla];
+      const lista = _ordenarRtsPorVigencia_(grupos[nivel][regla]);
       const pol = typeof politicaSeguimientoDeRegla_ === 'function' ? politicaSeguimientoDeRegla_(regla, nivel, mapa) : null;
       if (pol && pol.exigir_observacion) hayObligacion = true;
-      const visibles = lista.slice(0, MAX_RT_CUERPO_ALERTAS || 40);
-      const resto = lista.length - visibles.length;
-      const items = visibles.map(function(row) {
-        return '<li style="margin:2px 0;">RT ' + _escapeHtmlAlertaEmail(row.RT) + ' · ' + _escapeHtmlAlertaEmail(row.PROYECTO || '') + '</li>';
+      const items = lista.map(function(row) {
+        return '<tr><td style="padding:4px 6px;border-top:1px solid #e5e7eb;">' + _escapeHtmlAlertaEmail(_renglonRtAlerta_(row)) + '</td></tr>';
       }).join('');
       const nota = (pol && pol.nota_correo) ? '<p style="margin:8px 0 0 0;font-weight:700;">' + _escapeHtmlAlertaEmail(pol.nota_correo) + '</p>' : '';
-      const mas = resto > 0 ? '<p style="margin:6px 0 0 0;">Los demás están en el archivo adjunto (' + resto + ').</p>' : '';
-      return '<div style="margin-top:8px;"><div style="font-weight:700;">' + _escapeHtmlAlertaEmail(regla) + ' · ' + lista.length + '</div><ul style="margin:4px 0 0 18px;padding:0;">' + items + '</ul>' + mas + nota + '</div>';
+      return '<div style="margin-top:8px;"><div style="font-weight:700;">' + _escapeHtmlAlertaEmail(regla) + ' · ' + lista.length + '</div><table style="border-collapse:collapse;width:100%;font-size:12px;">' + items + '</table>' + nota + '</div>';
     }).join('');
     bloques.push('<div style="margin-top:14px;border:1px solid ' + c.border + ';border-radius:10px;background:' + c.bg + ';padding:10px 12px;"><div style="color:' + c.text + ';font-weight:800;">' + _escapeHtmlAlertaEmail(_etiquetaSemaforoAlerta_(nivel)) + '</div>' + reglasHtml + '</div>');
   });
@@ -2042,7 +2101,7 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
   const lblRegla = (!f.regla || f.regla === 'ALL') ? 'Todas' : f.regla;
   const lblProyecto = (!f.proyecto || f.proyecto === 'ALL') ? 'Todos' : f.proyecto;
   const lblArt = (!f.articulador || f.articulador === 'ALL') ? 'Todos' : f.articulador;
-  const enlace = (hayObligacion && urlSeguimiento) ? '<p style="margin-top:14px;"><a href="' + _escapeHtmlAlertaEmail(urlSeguimiento) + '" style="display:inline-block;background:#1f3a5f;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:700;">Cargar observaciones</a></p>' : '';
+  const enlace = (hayObligacion && urlSeguimiento) ? _botonResponderObservaciones_(urlSeguimiento) : '';
 
   return [
     '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;max-width:920px;margin:0 auto;">',
@@ -2050,6 +2109,7 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
     '<h2 style="margin:0;font-size:22px;">Informe de Alertas Tempranas</h2>',
     '<div style="margin-top:6px;font-size:13px;opacity:.92;">Destinatario: <b>' + _escapeHtmlAlertaEmail(etiquetaDestino) + '</b></div>',
     '</div>',
+    enlace,
     '<table style="border-collapse:collapse;width:100%;margin-top:12px;font-size:13px;background:#fff;border:1px solid #d9e2ec;">',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Nivel</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblNivel) + '</td></tr>',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Regla</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblRegla) + '</td></tr>',
@@ -2083,20 +2143,73 @@ function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaP
     lineas.push('');
     lineas.push(_etiquetaSemaforoAlerta_(nivel));
     Object.keys(grupos[nivel]).forEach(function(regla) {
-      const lista = grupos[nivel][regla];
+      const lista = _ordenarRtsPorVigencia_(grupos[nivel][regla]);
       const pol = typeof politicaSeguimientoDeRegla_ === 'function' ? politicaSeguimientoDeRegla_(regla, nivel, mapa) : null;
       if (pol && pol.exigir_observacion) hayObligacion = true;
       lineas.push(regla + ' (' + lista.length + ')');
-      lista.slice(0, MAX_RT_CUERPO_ALERTAS || 40).forEach(function(row) {
-        lineas.push('- RT ' + (row.RT || '') + ' · ' + (row.PROYECTO || ''));
+      lista.forEach(function(row) {
+        lineas.push('- ' + _renglonRtAlerta_(row));
       });
-      if (lista.length > (MAX_RT_CUERPO_ALERTAS || 40)) lineas.push('Los demás están en el archivo adjunto.');
       if (pol && pol.nota_correo) lineas.push(pol.nota_correo);
     });
   });
-  if (hayObligacion && urlSeguimiento) lineas.push('', 'Cargar observaciones: ' + urlSeguimiento);
+  if (hayObligacion && urlSeguimiento) {
+    lineas.splice(2, 0, '', 'Responder observaciones: ' + urlSeguimiento);
+    lineas.push('', 'Responder observaciones: ' + urlSeguimiento);
+  }
   lineas.push('', 'Se adjunta el archivo con el detalle.');
   return lineas.join('\n');
+}
+
+function probarCuerpoAlertas_() {
+  var denegado = _exigirAdminMotorReglas_('PROBAR_CUERPO_ALERTAS');
+  if (denegado) {
+    console.log(denegado.error || 'Requiere rol Administrador.');
+    return denegado;
+  }
+  var base = {
+    NIVEL: 'ROJO',
+    REGLA: 'Regla prueba',
+    PROYECTO: 'Proyecto prueba',
+    GESTOR_EMAIL: 'gestor@idu.gov.co',
+    ARTICULADOR: 'Ana Ruiz',
+    ARTICULADOR_EMAIL: 'ana.ruiz@idu.gov.co',
+    'ESTADO PREDIAL ACTUAL': 'En gestión'
+  };
+  function fila(rt, dias) {
+    var copia = {};
+    Object.keys(base).forEach(function(k) { copia[k] = base[k]; });
+    copia.RT = rt;
+    copia['DIAS RESTANTES'] = dias;
+    return copia;
+  }
+  var filas = [
+    fila('B', 5),
+    fila('A', ''),
+    fila('C', -3),
+    fila('D', 0),
+    fila('E', 5)
+  ];
+  var i;
+  for (i = 1; i <= 150; i++) filas.push(fila('F' + i, 10 + i));
+  var html = _buildResumenHtmlAgrupado(filas, {}, 'prueba', '', {});
+  var texto = _textoPlanoAlertas_(filas, 'prueba', '', {});
+  var faltan = [];
+  filas.forEach(function(f) {
+    if (html.indexOf('RT ' + f.RT + ' ·') < 0 || texto.indexOf('RT ' + f.RT + ' ·') < 0) faltan.push(f.RT);
+  });
+  var marcas = ['RT C ·', 'RT D ·', 'RT B ·', 'RT E ·', 'RT F1 ·', 'RT A ·'].map(function(m) {
+    return texto.indexOf(m);
+  });
+  var ordenOk = marcas.every(function(pos, idx) {
+    return pos >= 0 && (idx === 0 || pos > marcas[idx - 1]);
+  });
+  var frase = html.indexOf('Los demás están') >= 0 || texto.indexOf('Los demás están') >= 0;
+  console.log('RT faltantes: ' + (faltan.length ? faltan.join(', ') : 'ninguno'));
+  console.log('Orden: ' + (ordenOk ? 'correcto' : 'falló'));
+  console.log('Caracteres HTML: ' + html.length);
+  console.log('Frase de adjunto: ' + (frase ? 'apareció' : 'no aparece'));
+  return { success: faltan.length === 0 && ordenOk && !frase, caracteres: html.length, faltantes: faltan.length };
 }
 
 

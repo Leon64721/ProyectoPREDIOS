@@ -3455,3 +3455,11 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 **Validación:** lint de `Index.html`, `app_alertas_js.html` y `app_reglas_editor_js.html`. A las 15:28 se hizo `clasp push --force` al script `18vY9…` (54 archivos). Un `clasp pull` posterior coincide, archivo por archivo, con el repositorio. El botón Retroalimentación está en el `Index.html` remoto. La Web App publicada no cambia hasta una versión nueva: hay que probarlo en la URL de desarrollo, como Administrador.
 
 **Prueba de envío 15:43:** el aviso rojo sale en `GmailApp.createDraft`. El manifiesto ya tiene `gmail.modify`, pero la cuenta no lo ha aceptado. Ejecutar `procesarReporteAlertas` desde el editor no pide el permiso: sin correo destino vuelve antes de Gmail. El aviso de `COLUMNS.OBS` es la columna de observaciones del Excel y no corta el envío. La función `autorizarGmailSeguimiento` crea un borrador al propio usuario y lo borra, para que el editor muestre la autorización.
+
+## 60. Cuerpo completo y formulario de respuesta [2026-10-18]
+
+**Agente:** Cursor. Sin despliegue de la Web App.
+
+**Qué se hizo:** `_buildResumenHtmlAgrupado` y `_textoPlanoAlertas_` listan todos los RT, ordenados por días de vigencia, con gestor, articulador y estado predial. Se quitó el corte de 40 y la frase del adjunto. El botón "Responder observaciones" va arriba y abajo. Si `doGet` recibe `sa` válido, después del rol y antes del registro de ingreso al tablero, abre `seguimiento_formulario.html`. Guardar sigue en `guardarSeguimientoAlertas`. `probarCuerpoAlertas_` arma 155 RT ficticios y no llama a Gmail.
+
+**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. Lint del formulario. Una simulación local con 155 RT no perdió ninguno, respetó el orden y no escribió la frase del adjunto. El HTML de esa prueba pesó 31768 caracteres. A las 19:20 se hizo `clasp push --force` al script `18vY9…` (55 archivos, incluye `seguimiento_formulario`). La Web App publicada no cambia hasta una versión nueva.
