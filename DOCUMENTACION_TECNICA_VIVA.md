@@ -3558,3 +3558,11 @@ El despliegue `AKfycbyGXZ0Dwnu2I_QoyXjVbW6DVST4BKlk0ZNVzjvDIH8iNJHQzd0PrbpfxzXgo
 **Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. Lunes 2026-10-26 más 3 hábiles da 2026-10-29, y más 7 da 2026-11-04.
 
 **Auditoría de la ejecución:** Claude Code, sesión claude.ai, solo lectura sobre el diff. Veredicto: **APROBAR**. No pidió correcciones de código. Los archivos que el plan deja intactos no entraron al diff.
+
+## 71. Carga verificada — tres sitios con la escala de tres y siete días [2026-10-26]
+
+**Agente:** Cursor. Commit `f768978` en local y en `origin/fix/post-audit-rbac`. El mismo código quedó en el script `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi` con `clasp push`. El manifiesto se interpretó igual; el empuje usó `--force` porque el archivo difería solo en formato y, sin eso, clasp omite toda la subida.
+
+**Validación:** 55 archivos `.js`, `.html` y `.json` bajados del script coinciden en hash con el proyecto local. El script ya tiene la frase de los tres días hábiles, `INFORME_ARTICULADOR_EN` y «siete días hábiles».
+
+**Auditoría:** Claude Code, sesión claude.ai, solo lectura, con `clasp pull` en una carpeta temporal fuera del repo. Veredicto: **APROBAR**. Local, GitHub y ese script coinciden. No abrió los otros scripts.
