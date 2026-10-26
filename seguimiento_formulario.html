@@ -10,11 +10,16 @@
     h1 { margin: 0 0 8px; font-size: 22px; }
     .aviso { margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px solid #d9e2ec; }
     .aviso.error { border-color: #c0392b; color: #9b1c1c; }
-    .tarjeta { background: #fff; border: 1px solid #d9e2ec; border-radius: 10px; padding: 12px; margin-top: 12px; }
+    .banda { background: #1f3a5f; color: #fff; padding: 18px 16px; }
+    .banda h1 { margin: 0; color: #fff; font-size: 22px; }
+    .tarjeta { background: #fff; border: 1px solid #d9e2ec; border-left-width: 4px; border-radius: 10px; padding: 12px; margin-top: 12px; }
+    .tarjeta.n-ROJO { border-left-color: #c0392b; }
+    .tarjeta.n-NARANJA { border-left-color: #e67e22; }
+    .tarjeta.n-AMARILLO { border-left-color: #f1c40f; }
     label { display: block; margin-top: 8px; font-size: 13px; }
     textarea, input[type="file"] { width: 100%; box-sizing: border-box; margin-top: 4px; }
     textarea { min-height: 72px; font: inherit; }
-    button { margin-top: 16px; background: #1f3a5f; color: #fff; border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 700; cursor: pointer; }
+    button { width: 100%; margin-top: 16px; background: #1f3a5f; color: #fff; border: 0; border-radius: 8px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .6; cursor: default; }
     .aviso-no-uso, .caja-revision { display: none; margin-top: 8px; padding: 8px; border-radius: 8px; background: #fff8e8; border: 1px solid #f1c40f; }
     .aviso-no-uso.visible, .caja-revision.visible { display: block; }
@@ -22,10 +27,10 @@
   </style>
 </head>
 <body>
+<div class="banda"><h1>Responder observaciones</h1></div>
 <main>
-  <h1>Responder observaciones</h1>
-  <p>Escribe un comentario por cada RT. Si marcas que no se va a usar, adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya cumplen y lo que falta es actualizar la base, marca Revisar observación, indica la fecha del documento y deja la evidencia cargada en los repositorios para que se pueda corroborar.</p>
   <p>La puede registrar el gestor o el articulador. Con una respuesta basta.</p>
+  <p>Escribe un comentario por cada RT. Si marcas que no se va a usar, adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya cumplen y lo que falta es actualizar la base, marca Revisar observación, indica la fecha del documento y deja la evidencia cargada en los repositorios para que se pueda corroborar.</p>
   <div id="estado" class="aviso" hidden></div>
   <div id="lista"></div>
   <button type="button" id="guardar" hidden>Guardar y enviar</button>
@@ -47,6 +52,12 @@ function etiqueta(nivel) {
   if (n === 'NARANJA') return 'Riesgo';
   if (n === 'AMARILLO') return 'Preventiva';
   return n || 'Sin nivel';
+}
+
+function claseNivel(nivel) {
+  var n = String(nivel || '').toUpperCase();
+  if (n === 'ROJO' || n === 'NARANJA' || n === 'AMARILLO') return ' n-' + n;
+  return '';
 }
 
 function mostrar(texto, esError) {
@@ -98,7 +109,7 @@ function pintar(filas) {
       '<div class="caja-revision" data-id="' + escapar(fila.id) + '"><p>La gestión o el documento ya cumplen el requisito, pero la base de datos no está actualizada. Indica la fecha del documento. La evidencia debe estar cargada en los repositorios institucionales para poder corroborarla.</p>' +
       '<label>Fecha del documento<input type="date" class="fecha-doc" data-id="' + escapar(fila.id) + '"></label></div>';
     var para = fila.dirigidoA ? ' · ' + fila.dirigidoA : '';
-    return '<article class="tarjeta" data-id="' + escapar(fila.id) + '"><strong>RT ' + escapar(fila.rt) + ' · ' + escapar(fila.regla) + ' · ' + escapar(etiqueta(fila.nivel)) + escapar(para) + '</strong><div>' + escapar(fila.proyecto || '') + '</div>' +
+    return '<article class="tarjeta' + claseNivel(fila.nivel) + '" data-id="' + escapar(fila.id) + '"><strong>RT ' + escapar(fila.rt) + ' · ' + escapar(fila.regla) + ' · ' + escapar(etiqueta(fila.nivel)) + escapar(para) + '</strong><div>' + escapar(fila.proyecto || '') + '</div>' +
       '<label>Observación<textarea class="texto" data-id="' + escapar(fila.id) + '">' + escapar(textoPrevio) + '</textarea></label>' + notaPrevia + revision + noUso + '</article>';
   }).join('');
   lista.querySelectorAll('.no-uso').forEach(function(chk) {

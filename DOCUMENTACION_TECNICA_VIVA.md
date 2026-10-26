@@ -3530,3 +3530,17 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 Quedó creada la versión inmutable 5, descripción `Observaciones: una respuesta y enlace para quien recibe el correo`, como foto del código subido. Ese id no acepta fijarla.
 
 El despliegue `AKfycbyGXZ0Dwnu2I_QoyXjVbW6DVST4BKlk0ZNVzjvDIH8iNJHQzd0PrbpfxzXgo24VU_tV` sigue en la versión 4, descripción `REVISION`. No se modificó.
+
+## 67. Plan — informe a cinco días hábiles y cuerpo de las respuestas [2026-10-26]
+
+**Agente:** Cursor. Plan aprobado: `PLAN_INFORME_SIN_RESPUESTA_Y_CUERPO.md`. Incluye el informe a cinco días hábiles, que se enciende al enviar las alertas, los cuerpos de respuesta y de base, el aviso amarillo, la obligación de responder y la lectura del botón. Claude Code lo auditó en dos pasadas contra el código y cerró en **APROBAR**. Cursor también. La ejecución está en la sección 68.
+
+## 68. Ejecución — informe a cinco días y cuerpos de correo [2026-10-26]
+
+**Agente:** Cursor. Plan: `PLAN_INFORME_SIN_RESPUESTA_Y_CUERPO.md`.
+
+**Funciones:** `Codigo.js` deja el botón Responder observaciones antes del detalle, con la frase de pulsarlo, la obligación y el aviso amarillo. `seguimiento_alertas.js` guarda `ASUNTO` e `INFORME_PENDIENTES_EN`, arma el cuerpo de la respuesta y el de quien actualiza la base, y crea el trigger de las 7:00 al enviar si no existe. `seguimiento_formulario.html` ordena la lectura y conserva los campos.
+
+**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. El script del formulario quedó válido. Lunes 2026-10-26 más cinco hábiles da 2026-11-02; viernes 2026-10-30 da 2026-11-06; con festivo el 2026-10-28 da 2026-11-03.
+
+**Auditoría de la ejecución:** Claude Code, sesión claude.ai, solo lectura sobre el diff. Veredicto: **APROBAR**. No pidió correcciones. Los archivos que el plan deja intactos no entraron al diff.

@@ -9,7 +9,8 @@ var ENCABEZADOS_SEGUIMIENTO_ALERTAS = [
   'PROYECTO', 'GESTOR_EMAIL', 'ARTICULADOR_EMAIL', 'JEFE_EMAIL', 'REMITENTE_EMAIL',
   'HILO_GMAIL_ID', 'MENSAJE_GMAIL_ID', 'OBSERVACION_PREVIA', 'OBSERVACION_NUEVA',
   'OBSERVACION_VIGENTE', 'NO_USO', 'AVISO_ACEPTADO', 'ARCHIVO_JURIDICO_URL', 'ARCHIVO_TECNICO_URL',
-  'REVISION_ESTADO', 'FECHA_DOCUMENTO', 'REVISOR_NOMBRE', 'REVISOR_EMAIL', 'RESPONDIDO_POR'
+  'REVISION_ESTADO', 'FECHA_DOCUMENTO', 'REVISOR_NOMBRE', 'REVISOR_EMAIL', 'RESPONDIDO_POR',
+  'ASUNTO', 'INFORME_PENDIENTES_EN'
 ];
 
 var MAX_BYTES_ANEXO_SEGUIMIENTO = 5 * 1024 * 1024;
@@ -243,6 +244,8 @@ function registrarPendientesSeguimiento_(filasAlerta, meta) {
         REVISOR_NOMBRE: String(meta.revisorNombre || '').trim(),
         REVISOR_EMAIL: String(meta.revisorEmail || '').trim().toLowerCase(),
         RESPONDIDO_POR: '',
+        ASUNTO: String(meta.asunto || ''),
+        INFORME_PENDIENTES_EN: '',
         REVISION_ESTADO: '',
         FECHA_DOCUMENTO: '',
         REMITENTE_EMAIL: String(meta.remitente || '').trim().toLowerCase(),
@@ -314,10 +317,14 @@ function despacharCorreoAlertas_(opts) {
         remitente: o.remitente,
         jefeEmail: o.jefeEmail || '',
         revisorNombre: o.revisorNombre || '',
-        revisorEmail: o.revisorEmail || ''
+        revisorEmail: o.revisorEmail || '',
+        asunto: o.subject || ''
       });
     } catch (e2) {
       seguimiento = { ok: false, error: e2.message, token: token };
+    }
+    try { _asegurarTriggerInformeSinRespuesta_(); } catch (triggerError) {
+      console.log('No se pudo dejar el aviso de faltantes: ' + triggerError.message);
     }
   }
   return { success: true, seguimiento: seguimiento };
@@ -525,7 +532,9 @@ function guardarSeguimientoAlertas(payload) {
         FECHA_DOCUMENTO: item.fechaDocumento || '',
         REVISOR_NOMBRE: p.REVISOR_NOMBRE || '',
         REVISOR_EMAIL: p.REVISOR_EMAIL || '',
-        RESPONDIDO_POR: email
+        RESPONDIDO_POR: email,
+        ASUNTO: p.ASUNTO || '',
+        INFORME_PENDIENTES_EN: ''
       });
     });
     preparados.forEach(function(item) {
@@ -541,8 +550,16 @@ function guardarSeguimientoAlertas(payload) {
     var primero = preparados[0].pendiente;
     var anexos = [];
     var anexosNoUso = [];
-    var lineas = preparados.map(function(item) {
-      var linea = item.pendiente.RT + ' · ' + item.pendiente.REGLA + ' · ' + item.pendiente.NIVEL + '\n' + item.texto;
+    var quien = _quienRespondioSeguimiento_(email, primero);
+    var intro = _introRespuestaSeguimiento_(primero);
+    var bloques = preparados.map(function(item) {
+      var frase = _fraseCondicionRegla_(item.pendiente.REGLA);
+      var linea = 'RT ' + item.pendiente.RT +
+        '\nProyecto: ' + (item.pendiente.PROYECTO || '') +
+        '\nRegla: ' + item.pendiente.REGLA +
+        '\nNivel: ' + item.pendiente.NIVEL +
+        '\nCondición de la regla: ' + frase +
+        '\nObservación: ' + item.texto;
       if (item.noUso && item.informe && item.informe.blob) {
         linea += '\nDeclaró que no se va a usar. Adjunto: informe técnico / jurídico.';
         anexos.push(item.informe.blob);
@@ -553,9 +570,15 @@ function guardarSeguimientoAlertas(payload) {
       }
       return linea;
     });
-    var quien = email || 'usuario sin correo de sesión';
-    var texto = 'Observaciones cargadas por ' + quien + '.\n\n' + lineas.join('\n\n');
-    var html = '<div style="font-family:Segoe UI,Arial,sans-serif"><p><b>Observaciones cargadas por ' + _escapeHtmlAlertaEmail(quien) + '.</b></p><pre style="white-space:pre-wrap">' + _escapeHtmlAlertaEmail(lineas.join('\n\n')) + '</pre></div>';
+    var cierre = 'La observación queda registrada en el seguimiento y responde al correo citado.';
+    var texto = intro + '\n\nRespondió ' + quien + '.\n\n' + bloques.join('\n\n') + '\n\n' + cierre;
+    var html = '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">' +
+      '<p>' + _escapeHtmlAlertaEmail(intro) + '</p>' +
+      '<p>Respondió <b>' + _escapeHtmlAlertaEmail(quien) + '</b>.</p>' +
+      bloques.map(function(bloque) {
+        return '<p style="white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(bloque) + '</p>';
+      }).join('') +
+      '<p>' + _escapeHtmlAlertaEmail(cierre) + '</p></div>';
     var replyOpts = { htmlBody: html };
     if (_esCorreoValidoAlertas(primero.REMITENTE_EMAIL)) replyOpts.cc = String(primero.REMITENTE_EMAIL);
     if (anexos.length) replyOpts.attachments = anexos;
@@ -576,13 +599,9 @@ function guardarSeguimientoAlertas(payload) {
     if (conRevision.length) {
       try {
         var revisor = String(primero.REVISOR_EMAIL || '');
-        var nombreRevisor = String(primero.REVISOR_NOMBRE || '').trim() || revisor;
-        var lineasRevision = conRevision.map(function(item) {
-          return item.pendiente.RT + ' · ' + item.pendiente.REGLA + '\nObservación: ' + item.texto + '\nFecha del documento: ' + item.fechaDocumento;
-        });
-        var textoRevision = 'Para ' + nombreRevisor + '.\n\nEstos RT se marcaron para revisión de estado. El sistema no cambia el estado predial. Actualiza el estado en la base y corrobora que el documento, con la fecha indicada, esté cargado en los repositorios institucionales.\n\n' + lineasRevision.join('\n\n');
-        var htmlRevision = '<div style="font-family:Segoe UI,Arial,sans-serif"><p>Para <b>' + _escapeHtmlAlertaEmail(nombreRevisor) + '</b>.</p><p>Estos RT se marcaron para revisión de estado. El sistema no cambia el estado predial. Actualiza el estado en la base y corrobora que el documento, con la fecha indicada, esté cargado en los repositorios institucionales.</p><pre style="white-space:pre-wrap">' + _escapeHtmlAlertaEmail(lineasRevision.join('\n\n')) + '</pre></div>';
-        GmailApp.sendEmail(revisor, 'Revisión de estado - Alertas tempranas', textoRevision, { htmlBody: htmlRevision });
+        var textoRevision = _textoRevisionBase_(quien, primero, conRevision);
+        var htmlRevision = '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;"><p style="white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(textoRevision) + '</p></div>';
+        GmailApp.sendEmail(revisor, 'Validar estado en la base - alertas tempranas', textoRevision, { htmlBody: htmlRevision });
       } catch (revError) {
         var extraRevision = 'La observación quedó guardada, pero el correo a quien revisa soportes no salió: ' + revError.message;
         avisoCorreo = avisoCorreo ? (avisoCorreo + ' ' + extraRevision) : (' ' + extraRevision);
@@ -592,4 +611,266 @@ function guardarSeguimientoAlertas(payload) {
       new GestorAuditoria().registrarAccion(email || 'desconocido', 'GUARDAR_SEGUIMIENTO_ALERTAS', 'Token ' + cuerpo.token + ' filas ' + preparados.length);
     } catch (auditError) {}
     return { success: !avisoCorreo, error: avisoCorreo ? avisoCorreo.trim() : '', message: avisoCorreo ? avisoCorreo.trim() : 'Observaciones guardadas y correo respondido.' };
+}
+
+function _sumarDiasHabiles_(fechaTexto, cantidad, festivos) {
+  var m = String(fechaTexto || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '';
+  var mapa = festivos || {};
+  var cursor = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  var cuenta = 0;
+  var guard = 0;
+  var n = Number(cantidad) || 0;
+  while (cuenta < n && guard < 366) {
+    guard++;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    var iso = cursor.toISOString().substring(0, 10);
+    var dia = cursor.getUTCDay();
+    if (dia === 0 || dia === 6) continue;
+    if (mapa[iso]) continue;
+    cuenta++;
+  }
+  if (cuenta < n) return '';
+  return cursor.toISOString().substring(0, 10);
+}
+
+function _festivosSeguimiento_(anio) {
+  var mapa = {};
+  try {
+    var cal = CalendarApp.getCalendarById('es.co#holiday@group.v.calendar.google.com');
+    if (!cal) return { mapa: mapa, calendario: false };
+    var inicio = new Date(anio - 1, 0, 1);
+    var fin = new Date(anio + 1, 11, 31, 23, 59);
+    cal.getEvents(inicio, fin).forEach(function(evento) {
+      mapa[Utilities.formatDate(evento.getStartTime(), 'America/Bogota', 'yyyy-MM-dd')] = true;
+    });
+    return { mapa: mapa, calendario: Object.keys(mapa).length > 0 };
+  } catch (e) {
+    return { mapa: {}, calendario: false };
+  }
+}
+
+function _asegurarTriggerInformeSinRespuesta_() {
+  var ya = ScriptApp.getProjectTriggers().some(function(t) {
+    return t.getHandlerFunction() === 'triggerInformeSinRespuestaAlertas';
+  });
+  if (ya) return;
+  ScriptApp.newTrigger('triggerInformeSinRespuestaAlertas').timeBased().everyDays(1).atHour(7).create();
+}
+
+function eliminarTriggerInformeSinRespuestaAlertas() {
+  var denegado = _exigirAdminMotorReglas_('ELIMINAR_TRIGGER_INFORME_SIN_RESPUESTA');
+  if (denegado) return denegado;
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() !== 'triggerInformeSinRespuestaAlertas') return;
+    ScriptApp.deleteTrigger(t);
+    n++;
+  });
+  return { success: true, eliminados: n };
+}
+
+function _quienRespondioSeguimiento_(email, pendiente) {
+  var e = String(email || '').trim().toLowerCase();
+  var g = String(pendiente && pendiente.GESTOR_EMAIL || '').trim().toLowerCase();
+  var a = String(pendiente && pendiente.ARTICULADOR_EMAIL || '').trim().toLowerCase();
+  if (e && e === g && e !== a) return 'el gestor';
+  if (e && e === a && e !== g) return 'el articulador';
+  return e || 'quien respondió';
+}
+
+function _introRespuestaSeguimiento_(pendiente) {
+  var fecha = String(pendiente && pendiente.CREADO_EN || '').substring(0, 10);
+  var asunto = String(pendiente && pendiente.ASUNTO || '').trim();
+  if (asunto) {
+    return 'En virtud del correo enviado el ' + fecha + ' con asunto «' + asunto + '», se envían las observaciones pertinentes al seguimiento de esas alertas tempranas.';
+  }
+  return 'En virtud del correo enviado el ' + fecha + ', se envían las observaciones pertinentes al seguimiento de esas alertas tempranas.';
+}
+
+function _valorCondicionRegla_(criterio) {
+  if (!criterio) return '';
+  var valor = criterio.valores_estado;
+  if (valor == null || valor === '') valor = criterio.valores;
+  if (valor == null || valor === '') valor = criterio.valor;
+  if (Array.isArray(valor)) {
+    return valor.map(function(item) { return String(item); }).filter(function(item) { return item; }).join(', ');
+  }
+  return String(valor == null ? '' : valor);
+}
+
+function _fraseUnCriterio_(criterio) {
+  if (!criterio || typeof criterio !== 'object' || criterio.criterios) return '';
+  var op = typeof _aliasOperadorRegla_ === 'function'
+    ? _aliasOperadorRegla_(criterio)
+    : String(criterio.operador_estado || criterio.operador || '');
+  var col = typeof _aliasColumnaRegla_ === 'function' ? _aliasColumnaRegla_(criterio) : '';
+  var valor = _valorCondicionRegla_(criterio);
+  var destino = String(criterio.columna_destino || '').trim();
+  if (op === 'EQUALS') return valor;
+  if (op === 'NOT_EQUAL') return 'un estado distinto de ' + valor;
+  if (op === 'IN') return 'alguno de estos estados: ' + valor;
+  if (op === 'NOT_IN') return 'un estado distinto de: ' + valor;
+  if (op === 'IS_NULL') return col + ' sin dato';
+  if (op === 'IS_NOT_NULL') return col + ' con dato';
+  if (op === 'LESS_THAN') return col + ' menor que ' + valor;
+  if (op === 'DATE_BEFORE_COLUMN') return col + ' anterior a ' + destino;
+  if (op === 'PERCENTAGE_BETWEEN_COLUMNS') return 'el porcentaje entre ' + col + ' y ' + destino + ' dentro del rango configurado';
+  if (op === 'DAYS_PASSED_LESS_THAN') return col + ' con antigüedad dentro del límite configurado';
+  return '';
+}
+
+function _fraseCondicionRegla_(nombreRegla) {
+  var nombre = String(nombreRegla || '').trim();
+  var fallback = 'la condición configurada en la regla ' + nombre;
+  var leido;
+  try { leido = obtenerReglasJSON(); } catch (e) { return fallback; }
+  if (!leido || !leido.success) return fallback;
+  var parsed;
+  try { parsed = JSON.parse(leido.data || '{}'); } catch (e2) { return fallback; }
+  var reglas = parsed && Array.isArray(parsed.ReglasDeNegocio) ? parsed.ReglasDeNegocio : [];
+  var regla = null;
+  for (var i = 0; i < reglas.length; i++) {
+    if (String(reglas[i] && reglas[i].nombre || '').trim().toUpperCase() === nombre.toUpperCase()) {
+      regla = reglas[i];
+      break;
+    }
+  }
+  if (!regla || !regla.condiciones) return fallback;
+  var condiciones = regla.condiciones;
+  var criterios = condiciones.criterios ? condiciones.criterios : [condiciones];
+  var partes = [];
+  var union = String(condiciones.operador_logico || 'AND').toUpperCase() === 'OR' ? ' o ' : ' y ';
+  for (var j = 0; j < criterios.length; j++) {
+    if (criterios[j] && criterios[j].criterios) return fallback;
+    var frase = _fraseUnCriterio_(criterios[j]);
+    if (!frase) return fallback;
+    partes.push(frase);
+  }
+  return partes.length ? partes.join(union) : fallback;
+}
+
+function _textoRevisionBase_(quien, pendiente, filas) {
+  var frases = {};
+  filas.forEach(function(item) { frases[_fraseCondicionRegla_(item.pendiente.REGLA)] = true; });
+  var lista = Object.keys(frases);
+  var condicion = lista.length === 1
+    ? lista[0]
+    : 'la condición de cada regla, indicada abajo';
+  var encabezado = 'En virtud del seguimiento y la validación de las alertas tempranas, se requiere validar el estado actual de estos RT en la base. El sistema no cambia el estado predial.\n\n' +
+    quien.charAt(0).toUpperCase() + quien.substring(1) + ' informa que ya cuentan con ' + condicion + '.\n\n' +
+    _introRespuestaSeguimiento_(pendiente);
+  var detalle = filas.map(function(item) {
+    return 'RT ' + item.pendiente.RT +
+      '\nProyecto: ' + (item.pendiente.PROYECTO || '') +
+      '\nRegla: ' + item.pendiente.REGLA +
+      '\nNivel: ' + item.pendiente.NIVEL +
+      '\nObservación: ' + item.texto +
+      '\nFecha del documento: ' + (item.fechaDocumento || '') +
+      '\nCondición de la regla: ' + _fraseCondicionRegla_(item.pendiente.REGLA);
+  });
+  return encabezado + '\n\n' + detalle.join('\n\n');
+}
+
+function _enviarInformeSinRespuesta_(filas, calendarioOk) {
+  var primero = filas[0] || {};
+  var remitente = String(primero.REMITENTE_EMAIL || '').trim().toLowerCase();
+  var jefe = String(primero.JEFE_EMAIL || '').trim().toLowerCase();
+  var para = '';
+  var copia = '';
+  if (_esCorreoValidoAlertas(remitente)) {
+    para = remitente;
+    if (_esCorreoValidoAlertas(jefe) && jefe !== remitente) copia = jefe;
+  } else if (_esCorreoValidoAlertas(jefe)) {
+    para = jefe;
+  }
+  if (!para) return { enviado: false, motivo: 'Sin remitente ni jefe' };
+  var fecha = String(primero.CREADO_EN || '').substring(0, 10);
+  var asuntoOriginal = String(primero.ASUNTO || '').trim();
+  var cita = asuntoOriginal
+    ? 'Correo original del ' + fecha + ', asunto «' + asuntoOriginal + '».'
+    : 'Correo original del ' + fecha + '.';
+  var lineas = filas.map(function(fila) {
+    return 'RT ' + (fila.RT || '') +
+      ' · ' + (fila.PROYECTO || '') +
+      ' · ' + (fila.REGLA || '') +
+      ' · ' + (fila.NIVEL || '') +
+      ' · Gestor: ' + (fila.GESTOR_EMAIL || '') +
+      ' · Articulador: ' + (fila.ARTICULADOR_EMAIL || '');
+  });
+  var texto = 'Pasaron cinco días hábiles sin respuesta a las observaciones que estas alertas exigen.\n\n' +
+    cita + '\n\n' + lineas.join('\n');
+  if (!calendarioOk) texto += '\n\nEl calendario de festivos no estuvo disponible. Se contaron lunes a viernes.';
+  var html = '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;"><p>Pasaron cinco días hábiles sin respuesta a las observaciones que estas alertas exigen.</p><p>' +
+    _escapeHtmlAlertaEmail(cita) + '</p><p style="white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(lineas.join('\n')) + '</p>' +
+    (calendarioOk ? '' : '<p>El calendario de festivos no estuvo disponible. Se contaron lunes a viernes.</p>') +
+    '</div>';
+  var opts = { htmlBody: html };
+  if (copia) opts.cc = copia;
+  GmailApp.sendEmail(para, 'Sin respuesta - alertas tempranas [' + fecha + ']', texto, opts);
+  return { enviado: true };
+}
+
+function triggerInformeSinRespuestaAlertas() {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+  } catch (e) {
+    console.log('Informe sin respuesta: la hoja está ocupada.');
+    return;
+  }
+  try {
+    var lectura = _leerSeguimientoAlertas_();
+    var grupos = {};
+    (lectura.filas || []).forEach(function(fila) {
+      if (String(fila.ESTADO || '') !== 'PENDIENTE') return;
+      if (String(fila.INFORME_PENDIENTES_EN || '').trim()) return;
+      var token = String(fila.TOKEN || '');
+      if (!token) return;
+      if (!grupos[token]) grupos[token] = [];
+      grupos[token].push(fila);
+    });
+    var festivos = _festivosSeguimiento_(Number(_fechaSeguimiento_('yyyy')));
+    var hoy = _fechaSeguimiento_('yyyy-MM-dd');
+    var enviados = 0;
+    var omitidos = 0;
+    var colInforme = ENCABEZADOS_SEGUIMIENTO_ALERTAS.indexOf('INFORME_PENDIENTES_EN') + 1;
+    Object.keys(grupos).forEach(function(token) {
+      var filas = grupos[token];
+      var quinto = _sumarDiasHabiles_(filas[0].CREADO_EN, 5, festivos.mapa);
+      if (!quinto || hoy < quinto) return;
+      var resultado;
+      try {
+        resultado = _enviarInformeSinRespuesta_(filas, festivos.calendario);
+      } catch (envioError) {
+        omitidos++;
+        console.log('Informe sin respuesta omitido ' + token + ': ' + envioError.message);
+        return;
+      }
+      if (!resultado.enviado) {
+        omitidos++;
+        console.log('Informe sin respuesta omitido ' + token + ': ' + resultado.motivo);
+        return;
+      }
+      filas.forEach(function(fila) {
+        lectura.hoja.getRange(fila._fila, colInforme).setValue(hoy);
+      });
+      enviados++;
+    });
+    console.log('Informe sin respuesta. Enviados: ' + enviados + '. Omitidos: ' + omitidos + '.');
+  } catch (err) {
+    console.error(err);
+    try {
+      var destino = Session.getEffectiveUser().getEmail();
+      if (destino) {
+        MailApp.sendEmail({
+          to: destino,
+          subject: '[Seguimiento alertas] Fallo en informe sin respuesta',
+          htmlBody: '<p>El informe de observaciones sin respuesta falló: ' + String(err.message || err).replace(/</g, '') + '</p>'
+        });
+      }
+    } catch (mailErr) {}
+  } finally {
+    try { lock.releaseLock(); } catch (e2) {}
+  }
 }

@@ -2056,7 +2056,19 @@ function _ordenarRtsPorVigencia_(lista) {
 
 function _botonResponderObservaciones_(url) {
   if (!url) return '';
-  return '<p style="margin:12px 0;"><a href="' + _escapeHtmlAlertaEmail(url) + '" style="display:inline-block;background:#1f3a5f;color:#fff;padding:8px 12px;border-radius:8px;text-decoration:none;font-weight:700;">Responder observaciones</a></p>';
+  var href = _escapeHtmlAlertaEmail(url);
+  return '<table role="presentation" cellpadding="0" cellspacing="0" style="margin:16px 0;"><tr><td style="background:#1f3a5f;border-radius:8px;">' +
+    '<a href="' + href + '" style="display:inline-block;background:#1f3a5f;color:#ffffff;padding:14px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px;font-family:Segoe UI,Arial,sans-serif;">Responder observaciones</a>' +
+    '</td></tr></table>';
+}
+
+function _contextoBotonObservaciones_() {
+  return '<p style="margin:12px 0 0 0;">Para cargar las observaciones hay que pulsar el botón Responder observaciones.</p>' +
+    '<p style="margin:8px 0 0 0;">La respuesta es obligatoria en las alertas que la exigen. Este correo se envía a la persona que tiene la asignación.</p>';
+}
+
+function _avisoAmarilloGestor_() {
+  return '<div style="margin-top:12px;padding:10px 12px;background:#fff8e1;border:1px solid #e6b800;border-radius:8px;color:#5c4813;">Si usted no es el gestor del RT, notifique a su articulador para la actualización de los grupos de trabajo.</div>';
 }
 
 var TEXTO_BASE_CORREO_ALERTAS_ = 'Equipo de seguimiento predial. Este informe relaciona los predios que las reglas de alerta temprana marcaron al contrastar la fecha de inicio y la vida útil configuradas en la base de datos del tablero. Junto a cada RT se muestra el estado predial tal como está registrado, para que el equipo verifique si corresponde a la gestión más reciente. Cuando la alerta lo exige, hay que cargar una observación por cada RT. Si la decisión es que el proceso no se va a usar, se adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya existen y lo que falta es actualizar la base, marque Revisar observación, indique la fecha del documento y deje la evidencia cargada en los repositorios institucionales para que pueda corroborarse.';
@@ -2147,7 +2159,9 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
   const lblRegla = (!f.regla || f.regla === 'ALL') ? 'Todas' : f.regla;
   const lblProyecto = (!f.proyecto || f.proyecto === 'ALL') ? 'Todos' : f.proyecto;
   const lblArt = (!f.articulador || f.articulador === 'ALL') ? 'Todos' : f.articulador;
-  const enlace = (hayObligacion && urlSeguimiento) ? _botonResponderObservaciones_(urlSeguimiento) : '';
+  const hayEnlace = hayObligacion && urlSeguimiento;
+  const apertura = hayEnlace ? (_contextoBotonObservaciones_() + _botonResponderObservaciones_(urlSeguimiento) + _avisoAmarilloGestor_()) : '';
+  const cierre = hayEnlace ? _botonResponderObservaciones_(urlSeguimiento) : '';
 
   return [
     '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;max-width:920px;margin:0 auto;">',
@@ -2155,8 +2169,8 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
     '<h2 style="margin:0;font-size:22px;">Informe de Alertas Tempranas</h2>',
     '<div style="margin-top:6px;font-size:13px;opacity:.92;">Destinatario: <b>' + _escapeHtmlAlertaEmail(etiquetaDestino) + '</b></div>',
     '</div>',
+    apertura,
     '<div style="margin-top:12px;padding:10px 12px;border:1px solid #d9e2ec;background:#fff;border-radius:8px;"><p style="margin:0;white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(intro.general) + '</p></div>',
-    enlace,
     '<table style="border-collapse:collapse;width:100%;margin-top:12px;font-size:13px;background:#fff;border:1px solid #d9e2ec;">',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Nivel</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblNivel) + '</td></tr>',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Regla</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblRegla) + '</td></tr>',
@@ -2167,7 +2181,7 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeg
     '<b>Total alertas:</b> ' + total + ' &nbsp;|&nbsp; <b style="color:#9b1c1c;">Crítica:</b> ' + count.ROJO + ' &nbsp;|&nbsp; <b style="color:#b45309;">Riesgo:</b> ' + count.NARANJA + ' &nbsp;|&nbsp; <b style="color:#8a6d00;">Preventiva:</b> ' + count.AMARILLO,
     '</div>',
     bloques.join(''),
-    enlace,
+    cierre,
     '<p style="margin-top:14px;color:#52606d;">Se adjunta archivo tabular con cuadrícula y columna OBSERVACIONES.</p>',
     '</div>'
   ].join('');
@@ -2206,7 +2220,13 @@ function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaP
     });
   });
   if (hayObligacion && urlSeguimiento) {
-    lineas.splice(2, 0, '', 'Responder observaciones: ' + urlSeguimiento);
+    lineas.splice(2, 0,
+      '',
+      'Para cargar las observaciones hay que pulsar el botón Responder observaciones.',
+      'La respuesta es obligatoria en las alertas que la exigen. Este correo se envía a la persona que tiene la asignación.',
+      'Si usted no es el gestor del RT, notifique a su articulador para la actualización de los grupos de trabajo.',
+      'Responder observaciones: ' + urlSeguimiento
+    );
     lineas.push('', 'Responder observaciones: ' + urlSeguimiento);
   }
   lineas.push('', 'Se adjunta el archivo con el detalle.');
