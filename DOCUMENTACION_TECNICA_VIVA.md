@@ -3517,6 +3517,6 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 - `_filasVisiblesDelToken_`: con correo de sesión muestra las pendientes de ese token. Sin correo no lista ni guarda.
 - `RESPONDIDO_POR` queda al final de `SEGUIMIENTO_ALERTAS`. La fila respondida guarda el correo de quien diligenció. La pendiente lo deja vacío.
 
-**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. La carga en Apps Script se confirma después del `clasp push`, leyendo el proyecto remoto. `/exec` sigue en la versión publicada hasta que Fabian publique una versión nueva con acceso al dominio.
+**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. `clasp push --force` al script `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi` subió 55 archivos. La lectura posterior del proyecto remoto devolvió cero diferencias y confirmó en el HEAD remoto: “Informe de jefe inmediato”, “Entra con tu cuenta del IDU”, `RESPONDIDO_POR`, el cambio de `/dev` a `/exec` y el texto de una sola observación. El manifiesto remoto coincide con `appsscript.json`. `/exec` sigue en la versión publicada hasta que Fabian publique una versión nueva con acceso al dominio.
 
 **Auditoría de la ejecución:** Claude Code, sesión claude.ai, solo lectura sobre el diff. Veredicto: **APROBAR**. No pidió correcciones.
