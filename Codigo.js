@@ -2064,7 +2064,8 @@ function _botonResponderObservaciones_(url) {
 
 function _contextoBotonObservaciones_() {
   return '<p style="margin:12px 0 0 0;">Para cargar las observaciones hay que pulsar el botón Responder observaciones.</p>' +
-    '<p style="margin:8px 0 0 0;">La respuesta es obligatoria en las alertas que la exigen. Este correo se envía a la persona que tiene la asignación.</p>';
+    '<p style="margin:8px 0 0 0;">La respuesta es obligatoria en las alertas que la exigen. Este correo se envía a la persona que tiene la asignación.</p>' +
+    '<p style="margin:8px 0 0 0;">Se requiere la respuesta dentro de los próximos tres días hábiles. Si no se cuenta con ella, se remitirá un informe al articulador. Si al séptimo día hábil sigue sin respuesta, se informará a quien remitió la alerta y al jefe inmediato.</p>';
 }
 
 function _avisoAmarilloGestor_() {
@@ -2224,6 +2225,7 @@ function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaP
       '',
       'Para cargar las observaciones hay que pulsar el botón Responder observaciones.',
       'La respuesta es obligatoria en las alertas que la exigen. Este correo se envía a la persona que tiene la asignación.',
+      'Se requiere la respuesta dentro de los próximos tres días hábiles. Si no se cuenta con ella, se remitirá un informe al articulador. Si al séptimo día hábil sigue sin respuesta, se informará a quien remitió la alerta y al jefe inmediato.',
       'Si usted no es el gestor del RT, notifique a su articulador para la actualización de los grupos de trabajo.',
       'Responder observaciones: ' + urlSeguimiento
     );

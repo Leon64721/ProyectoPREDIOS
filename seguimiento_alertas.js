@@ -10,7 +10,7 @@ var ENCABEZADOS_SEGUIMIENTO_ALERTAS = [
   'HILO_GMAIL_ID', 'MENSAJE_GMAIL_ID', 'OBSERVACION_PREVIA', 'OBSERVACION_NUEVA',
   'OBSERVACION_VIGENTE', 'NO_USO', 'AVISO_ACEPTADO', 'ARCHIVO_JURIDICO_URL', 'ARCHIVO_TECNICO_URL',
   'REVISION_ESTADO', 'FECHA_DOCUMENTO', 'REVISOR_NOMBRE', 'REVISOR_EMAIL', 'RESPONDIDO_POR',
-  'ASUNTO', 'INFORME_PENDIENTES_EN'
+  'ASUNTO', 'INFORME_PENDIENTES_EN', 'INFORME_ARTICULADOR_EN'
 ];
 
 var MAX_BYTES_ANEXO_SEGUIMIENTO = 5 * 1024 * 1024;
@@ -246,6 +246,7 @@ function registrarPendientesSeguimiento_(filasAlerta, meta) {
         RESPONDIDO_POR: '',
         ASUNTO: String(meta.asunto || ''),
         INFORME_PENDIENTES_EN: '',
+        INFORME_ARTICULADOR_EN: '',
         REVISION_ESTADO: '',
         FECHA_DOCUMENTO: '',
         REMITENTE_EMAIL: String(meta.remitente || '').trim().toLowerCase(),
@@ -534,7 +535,8 @@ function guardarSeguimientoAlertas(payload) {
         REVISOR_EMAIL: p.REVISOR_EMAIL || '',
         RESPONDIDO_POR: email,
         ASUNTO: p.ASUNTO || '',
-        INFORME_PENDIENTES_EN: ''
+        INFORME_PENDIENTES_EN: '',
+        INFORME_ARTICULADOR_EN: ''
       });
     });
     preparados.forEach(function(item) {
@@ -772,6 +774,53 @@ function _textoRevisionBase_(quien, pendiente, filas) {
   return encabezado + '\n\n' + detalle.join('\n\n');
 }
 
+function _textoGestorInforme_(fila) {
+  var gestor = String(fila && fila.GESTOR_EMAIL || '').trim();
+  return gestor || 'sin gestor asignado';
+}
+
+function _lineaRtSinRespuesta_(fila) {
+  return 'RT ' + (fila.RT || '') +
+    ' · ' + (fila.PROYECTO || '') +
+    ' · ' + (fila.REGLA || '') +
+    ' · ' + (fila.NIVEL || '') +
+    ' · Gestor: ' + _textoGestorInforme_(fila);
+}
+
+function _fechaMasAntigua_(filas) {
+  var menor = '';
+  (filas || []).forEach(function(fila) {
+    var fecha = String(fila.CREADO_EN || '').substring(0, 10);
+    if (fecha && (!menor || fecha < menor)) menor = fecha;
+  });
+  return menor;
+}
+
+function _htmlInformeLineas_(parrafos, lineas, calendarioOk) {
+  var html = '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">';
+  parrafos.forEach(function(parrafo) {
+    html += '<p>' + _escapeHtmlAlertaEmail(parrafo) + '</p>';
+  });
+  html += '<p style="white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(lineas.join('\n')) + '</p>';
+  if (!calendarioOk) html += '<p>El calendario de festivos no estuvo disponible. Se contaron lunes a viernes.</p>';
+  return html + '</div>';
+}
+
+function _enviarInformeArticulador_(filas, calendarioOk) {
+  var para = String((filas[0] || {}).ARTICULADOR_EMAIL || '').trim().toLowerCase();
+  if (!_esCorreoValidoAlertas(para)) return { enviado: false, motivo: 'Sin articulador' };
+  var fecha = _fechaMasAntigua_(filas);
+  var lineas = filas.map(_lineaRtSinRespuesta_);
+  var pedido = 'Se requiere que gestione con su equipo de trabajo la respuesta de los RT a su cargo que siguen sin observación.';
+  var cierre = 'Si al séptimo día hábil sigue sin respuesta, se informará a quien remitió la alerta y al jefe inmediato.';
+  var texto = pedido + '\n\n' + lineas.join('\n') + '\n\n' + cierre;
+  if (!calendarioOk) texto += '\n\nEl calendario de festivos no estuvo disponible. Se contaron lunes a viernes.';
+  GmailApp.sendEmail(para, 'Gestionar respuesta - alertas tempranas [' + fecha + ']', texto, {
+    htmlBody: _htmlInformeLineas_([pedido, cierre], lineas, calendarioOk)
+  });
+  return { enviado: true };
+}
+
 function _enviarInformeSinRespuesta_(filas, calendarioOk) {
   var primero = filas[0] || {};
   var remitente = String(primero.REMITENTE_EMAIL || '').trim().toLowerCase();
@@ -790,25 +839,20 @@ function _enviarInformeSinRespuesta_(filas, calendarioOk) {
   var cita = asuntoOriginal
     ? 'Correo original del ' + fecha + ', asunto «' + asuntoOriginal + '».'
     : 'Correo original del ' + fecha + '.';
-  var lineas = filas.map(function(fila) {
-    return 'RT ' + (fila.RT || '') +
-      ' · ' + (fila.PROYECTO || '') +
-      ' · ' + (fila.REGLA || '') +
-      ' · ' + (fila.NIVEL || '') +
-      ' · Gestor: ' + (fila.GESTOR_EMAIL || '') +
-      ' · Articulador: ' + (fila.ARTICULADOR_EMAIL || '');
-  });
-  var texto = 'Pasaron cinco días hábiles sin respuesta a las observaciones que estas alertas exigen.\n\n' +
-    cita + '\n\n' + lineas.join('\n');
+  var lineas = filas.map(_lineaRtSinRespuesta_);
+  var pedido = 'Pasaron siete días hábiles sin respuesta a las observaciones que estas alertas exigen.';
+  var texto = pedido + '\n\n' + cita + '\n\n' + lineas.join('\n');
   if (!calendarioOk) texto += '\n\nEl calendario de festivos no estuvo disponible. Se contaron lunes a viernes.';
-  var html = '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;"><p>Pasaron cinco días hábiles sin respuesta a las observaciones que estas alertas exigen.</p><p>' +
-    _escapeHtmlAlertaEmail(cita) + '</p><p style="white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(lineas.join('\n')) + '</p>' +
-    (calendarioOk ? '' : '<p>El calendario de festivos no estuvo disponible. Se contaron lunes a viernes.</p>') +
-    '</div>';
-  var opts = { htmlBody: html };
+  var opts = { htmlBody: _htmlInformeLineas_([pedido, cita], lineas, calendarioOk) };
   if (copia) opts.cc = copia;
   GmailApp.sendEmail(para, 'Sin respuesta - alertas tempranas [' + fecha + ']', texto, opts);
   return { enviado: true };
+}
+
+function _marcarInforme_(hoja, filas, columna, hoy) {
+  filas.forEach(function(fila) {
+    hoja.getRange(fila._fila, columna).setValue(hoy);
+  });
 }
 
 function triggerInformeSinRespuestaAlertas() {
@@ -821,24 +865,55 @@ function triggerInformeSinRespuestaAlertas() {
   }
   try {
     var lectura = _leerSeguimientoAlertas_();
-    var grupos = {};
-    (lectura.filas || []).forEach(function(fila) {
-      if (String(fila.ESTADO || '') !== 'PENDIENTE') return;
-      if (String(fila.INFORME_PENDIENTES_EN || '').trim()) return;
-      var token = String(fila.TOKEN || '');
-      if (!token) return;
-      if (!grupos[token]) grupos[token] = [];
-      grupos[token].push(fila);
-    });
     var festivos = _festivosSeguimiento_(Number(_fechaSeguimiento_('yyyy')));
     var hoy = _fechaSeguimiento_('yyyy-MM-dd');
     var enviados = 0;
     var omitidos = 0;
-    var colInforme = ENCABEZADOS_SEGUIMIENTO_ALERTAS.indexOf('INFORME_PENDIENTES_EN') + 1;
-    Object.keys(grupos).forEach(function(token) {
-      var filas = grupos[token];
-      var quinto = _sumarDiasHabiles_(filas[0].CREADO_EN, 5, festivos.mapa);
-      if (!quinto || hoy < quinto) return;
+    var porArticulador = {};
+    var porToken = {};
+    (lectura.filas || []).forEach(function(fila) {
+      if (String(fila.ESTADO || '') !== 'PENDIENTE') return;
+      var tercer = _sumarDiasHabiles_(fila.CREADO_EN, 3, festivos.mapa);
+      var septimo = _sumarDiasHabiles_(fila.CREADO_EN, 7, festivos.mapa);
+      if (!String(fila.INFORME_ARTICULADOR_EN || '').trim() && tercer && hoy >= tercer) {
+        var art = String(fila.ARTICULADOR_EMAIL || '').trim().toLowerCase();
+        if (!_esCorreoValidoAlertas(art)) {
+          omitidos++;
+          console.log('Informe al articulador omitido RT ' + (fila.RT || '') + ': Sin articulador');
+        } else {
+          if (!porArticulador[art]) porArticulador[art] = [];
+          porArticulador[art].push(fila);
+        }
+      }
+      if (!String(fila.INFORME_PENDIENTES_EN || '').trim() && septimo && hoy >= septimo) {
+        var token = String(fila.TOKEN || '');
+        if (!token) return;
+        if (!porToken[token]) porToken[token] = [];
+        porToken[token].push(fila);
+      }
+    });
+    var colArticulador = ENCABEZADOS_SEGUIMIENTO_ALERTAS.indexOf('INFORME_ARTICULADOR_EN') + 1;
+    var colRemitente = ENCABEZADOS_SEGUIMIENTO_ALERTAS.indexOf('INFORME_PENDIENTES_EN') + 1;
+    Object.keys(porArticulador).forEach(function(art) {
+      var filas = porArticulador[art];
+      var resultado;
+      try {
+        resultado = _enviarInformeArticulador_(filas, festivos.calendario);
+      } catch (envioError) {
+        omitidos++;
+        console.log('Informe al articulador omitido ' + art + ': ' + envioError.message);
+        return;
+      }
+      if (!resultado.enviado) {
+        omitidos++;
+        console.log('Informe al articulador omitido ' + art + ': ' + resultado.motivo);
+        return;
+      }
+      _marcarInforme_(lectura.hoja, filas, colArticulador, hoy);
+      enviados++;
+    });
+    Object.keys(porToken).forEach(function(token) {
+      var filas = porToken[token];
       var resultado;
       try {
         resultado = _enviarInformeSinRespuesta_(filas, festivos.calendario);
@@ -852,9 +927,7 @@ function triggerInformeSinRespuestaAlertas() {
         console.log('Informe sin respuesta omitido ' + token + ': ' + resultado.motivo);
         return;
       }
-      filas.forEach(function(fila) {
-        lectura.hoja.getRange(fila._fila, colInforme).setValue(hoy);
-      });
+      _marcarInforme_(lectura.hoja, filas, colRemitente, hoy);
       enviados++;
     });
     console.log('Informe sin respuesta. Enviados: ' + enviados + '. Omitidos: ' + omitidos + '.');

@@ -3544,3 +3544,17 @@ El despliegue `AKfycbyGXZ0Dwnu2I_QoyXjVbW6DVST4BKlk0ZNVzjvDIH8iNJHQzd0PrbpfxzXgo
 **Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. El script del formulario quedó válido. Lunes 2026-10-26 más cinco hábiles da 2026-11-02; viernes 2026-10-30 da 2026-11-06; con festivo el 2026-10-28 da 2026-11-03.
 
 **Auditoría de la ejecución:** Claude Code, sesión claude.ai, solo lectura sobre el diff. Veredicto: **APROBAR**. No pidió correcciones. Los archivos que el plan deja intactos no entraron al diff.
+
+## 69. Plan — respuesta a tres días y aviso al séptimo [2026-10-26]
+
+**Agente:** Cursor. Plan aprobado: `PLAN_ESCALA_TRES_Y_SIETE_DIAS.md`. Sustituye el aviso de cinco días por el articulador al tercer día hábil y, al séptimo, por quien remitió la alerta con copia al jefe inmediato. El correo de alertas dirá ese plazo. Claude Code lo leyó archivo por archivo y respondió **APROBAR**. Cursor también. La ejecución está en la sección 70.
+
+## 70. Ejecución — tres días al articulador y siete a quien remitió [2026-10-26]
+
+**Agente:** Cursor. Plan: `PLAN_ESCALA_TRES_Y_SIETE_DIAS.md`.
+
+**Funciones:** `Codigo.js` agrega en el correo de alertas la frase de los tres días hábiles y del séptimo. `seguimiento_alertas.js` agrega `INFORME_ARTICULADOR_EN`. A los tres días hábiles el articulador recibe los RT a su cargo y el gestor de cada uno. A los siete, quien remitió la alerta recibe lo que sigue pendiente, con copia al jefe inmediato. El aviso de cinco días deja de enviarse.
+
+**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. Lunes 2026-10-26 más 3 hábiles da 2026-10-29, y más 7 da 2026-11-04.
+
+**Auditoría de la ejecución:** Claude Code, sesión claude.ai, solo lectura sobre el diff. Veredicto: **APROBAR**. No pidió correcciones de código. Los archivos que el plan deja intactos no entraron al diff.
