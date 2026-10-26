@@ -25,6 +25,7 @@
 <main>
   <h1>Responder observaciones</h1>
   <p>Escribe un comentario por cada RT. Si marcas que no se va a usar, adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya cumplen y lo que falta es actualizar la base, marca Revisar observación, indica la fecha del documento y deja la evidencia cargada en los repositorios para que se pueda corroborar.</p>
+  <p>La puede registrar el gestor o el articulador. Con una respuesta basta.</p>
   <div id="estado" class="aviso" hidden></div>
   <div id="lista"></div>
   <button type="button" id="guardar" hidden>Guardar y enviar</button>
@@ -83,8 +84,9 @@ function pintar(filas) {
   }
   mostrar('', false);
   lista.innerHTML = filas.map(function(fila) {
-    var previa = fila.observacionVigente
-      ? '<label>Observación anterior</label><div class="aviso">' + escapar(fila.observacionVigente) + '</div>'
+    var textoPrevio = fila.observacionVigente ? String(fila.observacionVigente) : '';
+    var notaPrevia = textoPrevio
+      ? '<div class="aviso">Viene la observación anterior. Puedes dejarla o modificarla.</div>'
       : '';
     var noUso = fila.permitirNoUso
       ? '<label><input type="checkbox" class="no-uso" data-id="' + escapar(fila.id) + '"> No se va a usar</label>' +
@@ -96,8 +98,8 @@ function pintar(filas) {
       '<div class="caja-revision" data-id="' + escapar(fila.id) + '"><p>La gestión o el documento ya cumplen el requisito, pero la base de datos no está actualizada. Indica la fecha del documento. La evidencia debe estar cargada en los repositorios institucionales para poder corroborarla.</p>' +
       '<label>Fecha del documento<input type="date" class="fecha-doc" data-id="' + escapar(fila.id) + '"></label></div>';
     var para = fila.dirigidoA ? ' · ' + fila.dirigidoA : '';
-    return '<article class="tarjeta" data-id="' + escapar(fila.id) + '"><strong>RT ' + escapar(fila.rt) + ' · ' + escapar(fila.regla) + ' · ' + escapar(etiqueta(fila.nivel)) + escapar(para) + '</strong><div>' + escapar(fila.proyecto || '') + '</div>' + previa +
-      '<label>Agregar observación<textarea class="texto" data-id="' + escapar(fila.id) + '"></textarea></label>' + revision + noUso + '</article>';
+    return '<article class="tarjeta" data-id="' + escapar(fila.id) + '"><strong>RT ' + escapar(fila.rt) + ' · ' + escapar(fila.regla) + ' · ' + escapar(etiqueta(fila.nivel)) + escapar(para) + '</strong><div>' + escapar(fila.proyecto || '') + '</div>' +
+      '<label>Observación<textarea class="texto" data-id="' + escapar(fila.id) + '">' + escapar(textoPrevio) + '</textarea></label>' + notaPrevia + revision + noUso + '</article>';
   }).join('');
   lista.querySelectorAll('.no-uso').forEach(function(chk) {
     chk.onchange = function() {

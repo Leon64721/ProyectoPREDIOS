@@ -808,9 +808,9 @@ function ensureModalConfiguracionReporteAlertas() {
                 <input type="text" class="form-control" id="reporteAlertasCc" placeholder="correo1@dominio.gov.co, correo2@dominio.gov.co">
               </div>
               <div class="mt-3" id="grupoJefeAlertas">
-                <label class="form-label fw-bold">Correo de la jefatura inmediata</label>
-                <input type="email" class="form-control" id="reporteAlertasJefe" placeholder="jefatura@dominio.gov.co">
-                <div class="form-text" id="ayudaJefeAlertas">Obligatorio si alguna alerta de este envío permite declarar que no se va a usar. Si lo escribes, también recibe el informe gerencial.</div>
+                <label class="form-label fw-bold">Correo del jefe inmediato</label>
+                <input type="email" class="form-control" id="reporteAlertasJefe" placeholder="jefe@dominio.gov.co">
+                <div class="form-text" id="ayudaJefeAlertas">Obligatorio si alguna alerta de este envío permite declarar que no se va a usar. Si lo escribes, también recibe el informe de jefe inmediato.</div>
               </div>
               <div class="row g-2 mt-1" id="grupoRevisorAlertas">
                 <div class="col-md-6">
@@ -901,7 +901,7 @@ function exportarAlertasExcel() {
         const revisor = (document.getElementById('reporteAlertasRevisor').value || '').trim();
         const incluirArt = document.getElementById('reporteAlertasCcArticulador').checked;
         if (window.reporteAlertasExigeJefe && !jefe) {
-            showToast('Indica el correo de la jefatura inmediata.', 'warning');
+            showToast('Indica el correo del jefe inmediato.', 'warning');
             return;
         }
         if (window.reporteAlertasExigeObservacion && !revisorNombre) {
@@ -961,8 +961,8 @@ function exportarAlertasExcel() {
         window.reporteAlertasExigeObservacion = !!(res && res.exigeObservacion);
         const ayuda = document.getElementById('ayudaJefeAlertas');
         if (ayuda) ayuda.textContent = window.reporteAlertasExigeJefe
-          ? 'Obligatorio: en este envío hay alertas que permiten declarar que no se va a usar. Si lo escribes, también recibe el informe gerencial.'
-          : 'Opcional. Si lo escribes, recibe el informe gerencial de este envío.';
+          ? 'Obligatorio: en este envío hay alertas que permiten declarar que no se va a usar. Si lo escribes, también recibe el informe de jefe inmediato.'
+          : 'Opcional. Si lo escribes, recibe el informe de jefe inmediato de este envío.';
         const ayudaRevisor = document.getElementById('ayudaRevisorAlertas');
         if (ayudaRevisor) ayudaRevisor.textContent = window.reporteAlertasExigeObservacion
           ? 'Obligatorio: este envío incluye alertas que exigen observación.'

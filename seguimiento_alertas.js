@@ -191,12 +191,7 @@ function _filaDesdeObjeto_(obj) {
 function _personasPendiente_(fila) {
   var gestor = String(fila && fila.GESTOR_EMAIL || '').trim().toLowerCase();
   var art = String(fila && fila.ARTICULADOR_EMAIL || '').trim().toLowerCase();
-  if (gestor && art && gestor === art) return [{ GESTOR_EMAIL: gestor, ARTICULADOR_EMAIL: art }];
-  var personas = [];
-  if (gestor) personas.push({ GESTOR_EMAIL: gestor, ARTICULADOR_EMAIL: '' });
-  if (art && art !== gestor) personas.push({ GESTOR_EMAIL: '', ARTICULADOR_EMAIL: art });
-  if (!personas.length) personas.push({ GESTOR_EMAIL: '', ARTICULADOR_EMAIL: '' });
-  return personas;
+  return [{ GESTOR_EMAIL: gestor, ARTICULADOR_EMAIL: art }];
 }
 
 function registrarPendientesSeguimiento_(filasAlerta, meta) {
@@ -225,7 +220,11 @@ function registrarPendientesSeguimiento_(filasAlerta, meta) {
       hoja.getRange(nFila, colEstado).setValue('VENCIDA');
     });
     var nuevas = [];
+    var vistas = {};
     (filasAlerta || []).forEach(function(fila) {
+      var claveFila = _claveRtRegla_(fila.RT, fila.REGLA);
+      if (vistas[claveFila]) return;
+      vistas[claveFila] = true;
       _personasPendiente_(fila).forEach(function(persona) {
         nuevas.push(_filaDesdeObjeto_({
         ID: Utilities.getUuid(),
@@ -284,7 +283,7 @@ function despacharCorreoAlertas_(opts) {
     return p && p.permitir_no_uso;
   });
   if (hayNoUso && !_esCorreoValidoAlertas(o.jefeEmail)) {
-    return { success: false, error: 'Indica el correo de la jefatura inmediata. Hay alertas que permiten declarar que un proceso no se va a usar.' };
+    return { success: false, error: 'Indica el correo del jefe inmediato. Hay alertas que permiten declarar que un proceso no se va a usar.' };
   }
   var token = exigidas.length ? Utilities.getUuid() : '';
   var url = _urlSeguimientoAlertas_(token);
@@ -450,7 +449,7 @@ function guardarSeguimientoAlertas(payload) {
       var fechaDocumento = '';
       if (noUso) {
         if (entrada.avisoAceptado !== true) return { success: false, error: 'Debes confirmar que leíste el aviso de no uso.' };
-        if (!_esCorreoValidoAlertas(pendiente.JEFE_EMAIL)) return { success: false, error: 'Este envío no tiene correo de jefatura. No se puede declarar el no uso.' };
+        if (!_esCorreoValidoAlertas(pendiente.JEFE_EMAIL)) return { success: false, error: 'Este envío no tiene correo de jefe inmediato. No se puede declarar el no uso.' };
         if (!entrada.informe) return { success: false, error: 'Si no se va a usar, adjunta el informe técnico / jurídico.' };
         informe = _blobAnexoSeguimiento_(entrada.informe, _nombreAnexo_(pendiente.RT, pendiente.REGLA, 'informe'));
       }
@@ -460,8 +459,7 @@ function guardarSeguimientoAlertas(payload) {
         if (!_esCorreoValidoAlertas(pendiente.REVISOR_EMAIL)) return { success: false, error: 'Este envío no tiene correo de quien revisa soportes.' };
       }
       var previa = _observacionVigente_(lecturaInicial.filas, pendiente.RT, pendiente.REGLA);
-      var marca = _fechaSeguimiento_('yyyy-MM-dd HH:mm');
-      var vigente = previa ? (previa + '\n' + marca + ' ' + texto) : texto;
+      var vigente = texto;
       preparados.push({
         pendiente: pendiente,
         texto: texto,
@@ -488,8 +486,7 @@ function guardarSeguimientoAlertas(payload) {
       if (!actual) return { success: false, error: 'Otro envío ya cerró alguna de estas alertas. Vuelve a abrir el enlace.' };
       preparados[j].pendiente = actual;
       preparados[j].previa = _observacionVigente_(lectura.filas, actual.RT, actual.REGLA);
-      var marcaLock = _fechaSeguimiento_('yyyy-MM-dd HH:mm');
-      preparados[j].vigente = preparados[j].previa ? (preparados[j].previa + '\n' + marcaLock + ' ' + preparados[j].texto) : preparados[j].texto;
+      preparados[j].vigente = preparados[j].texto;
     }
     var ahora = _fechaSeguimiento_('yyyy-MM-dd HH:mm:ss');
     var hoja = lectura.hoja || _hojaSeguimientoAlertas_(true);

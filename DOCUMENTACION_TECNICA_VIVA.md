@@ -3475,3 +3475,28 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 **Validación:** `node --check` en `Codigo.js`, `seguimiento_alertas.js`, `evaluador_alertas.js` y `motor_reglas.js`. A las 21:00 se hizo `clasp push` al script `18vY9…` (55 archivos). La Web App publicada no cambia hasta una versión nueva: hay que probarlo en la URL de desarrollo. La fecha de vencimiento queda en la hoja cuando se vuelva a correr el motor.
 
 **Corrección del informe de jefatura:** el primer correo dejó todas las filas en Sin fecha y contó 82 pendientes, el total de la hoja y no las alertas del envío. Al armar el reporte se calcula la fecha con la columna de inicio de la regla y su vida útil. En avalúo, si la regla no trae otra columna, es `FECHA AVALUO` más 365 días. El Excel vuelve a traer `DIAS RESTANTES` junto a `FECHA_VENCIMIENTO`. Las respondidas y pendientes son solo las alertas de ese envío. El correo y el Excel incluyen una torta de esos vencimientos.
+
+## 62. Plan — una observación, texto reutilizable e informe al jefe inmediato [2026-10-26]
+
+**Agente:** Cursor. Solo plan. Sin cambios de código del tablero y sin `clasp push`.
+
+**Qué se hizo:** se escribió `PLAN_UNA_OBSERVACION_Y_JEFE.md`. Tres ajustes pedidos por Fabian: una sola observación por alerta (la llena el gestor o el articulador), el texto anterior dentro del editor, y el informe pasa a decir jefe inmediato, sin columna de vencidos, con rangos 0 a 30, 31 a 60, 61 a 90 y mayor de 90, agrupado por articulador y proyecto.
+
+**Auditoría:** Claude Code, con la sesión de claude.ai y sin la clave de API. Revisó el plan y los archivos que se van a modificar. Primera vuelta APROBAR CON CAMBIOS: la ayuda del modal dice "informe gerencial", no "jefatura", y el plan no la nombraba. Cursor la agregó (líneas 813 y 964-965 de `app_alertas_js.html`). Segunda vuelta: **APROBAR**. No se ejecuta hasta que Fabian lo pida.
+
+## 63. Ejecución — una observación, texto en el editor e informe al jefe inmediato [2026-10-26]
+
+**Agente:** Cursor. Plan: `PLAN_UNA_OBSERVACION_Y_JEFE.md`, secciones 3 a 5 y 12. Sin `clasp push` y sin despliegue.
+
+**Funciones:**
+- `seguimiento_alertas.js`: `_personasPendiente_` deja una fila con los dos correos. `registrarPendientesSeguimiento_` no repite el mismo RT y regla en el envío. `guardarSeguimientoAlertas` guarda el texto del cuadro como `OBSERVACION_VIGENTE`, sin concatenar la previa. Los dos errores dicen jefe inmediato.
+- `seguimiento_formulario.html`: el cuadro nace con la observación anterior. La página dice que basta la respuesta del gestor o del articulador.
+- `Codigo.js`: `_cuboFilaInforme_` usa `DIAS RESTANTES` y, si no es número, la fecha. Devuelve `d30`, `d60`, `d90`, `mas90`, `sin` o `null`. El día negativo no suma. El cuadro y la hoja Totales agrupan por articulador y proyecto. El título es "Vigencia por articulador y proyecto". El correo y el archivo dicen jefe inmediato.
+- `app_alertas_js.html`: etiqueta, placeholder, toast y las tres ayudas (línea fija y las dos del callback) dicen jefe inmediato.
+- `app_reglas_editor_js.html`: `TEXTO_AVALUO_AVISO` dice jefe inmediato. No se reescribieron reglas ya guardadas.
+
+**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. Lint de `seguimiento_formulario.html`, `app_alertas_js.html` y `app_reglas_editor_js.html`: 3/3. Prueba local de rangos: −1 no entra, 0 y 30 en 0 a 30, 31 y 60 en 31 a 60, 61 y 90 en 61 a 90, 91 y 120 en mayor de 90, texto vacío en sin fecha. Un `<` dentro de la observación queda escapado y el salto de línea se conserva.
+
+**Fuera de este cambio:** motor, `JEFE_EMAIL`, `_historialSeguimientoInforme_`, `app_seguimiento_alertas_js.html`, Para, CC y el Excel del gestor. La Web App publicada no cambia hasta una versión nueva.
+
+**Auditoría de la ejecución:** Claude Code, sesión claude.ai, solo lectura sobre el diff. Veredicto: **APROBAR**. No pidió correcciones.
