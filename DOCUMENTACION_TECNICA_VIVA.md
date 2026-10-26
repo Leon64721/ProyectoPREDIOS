@@ -3517,6 +3517,16 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 - `_filasVisiblesDelToken_`: con correo de sesión muestra las pendientes de ese token. Sin correo no lista ni guarda.
 - `RESPONDIDO_POR` queda al final de `SEGUIMIENTO_ALERTAS`. La fila respondida guarda el correo de quien diligenció. La pendiente lo deja vacío.
 
-**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. `clasp push --force` al script `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi` subió 55 archivos. La lectura posterior del proyecto remoto devolvió cero diferencias y confirmó en el HEAD remoto: “Informe de jefe inmediato”, “Entra con tu cuenta del IDU”, `RESPONDIDO_POR`, el cambio de `/dev` a `/exec` y el texto de una sola observación. El manifiesto remoto coincide con `appsscript.json`. `/exec` sigue en la versión publicada hasta que Fabian publique una versión nueva con acceso al dominio.
+**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. `clasp push --force` al script `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi` subió 55 archivos. La lectura posterior del proyecto remoto devolvió cero diferencias y confirmó en el HEAD remoto: “Informe de jefe inmediato”, “Entra con tu cuenta del IDU”, `RESPONDIDO_POR`, el cambio de `/dev` a `/exec` y el texto de una sola observación. El manifiesto remoto coincide con `appsscript.json`. El enlace público queda descrito en la sección 66.
 
 **Auditoría de la ejecución:** Claude Code, sesión claude.ai, solo lectura sobre el diff. Veredicto: **APROBAR**. No pidió correcciones.
+
+## 66. Despliegue web del enlace de observaciones [2026-10-26]
+
+**Agente:** Cursor. Fabian pidió publicar la versión nueva del mismo despliegue, con acceso al dominio.
+
+**Resultado:** el despliegue `AKfycbyfD70GGwc4DlnFW48B0xvUX8LFaGKWPxnSGjW08wQ` es de solo lectura. La API respondió `Read-only deployments may not be modified`. No tiene número de versión: sirve el código más reciente del proyecto. Acceso `DOMAIN`, ejecución `USER_DEPLOYING`. URL: `https://script.google.com/a/macros/idu.gov.co/s/AKfycbyfD70GGwc4DlnFW48B0xvUX8LFaGKWPxnSGjW08wQ/exec`. Al abrirla, Google pide una cuenta `@idu.gov.co`.
+
+Quedó creada la versión inmutable 5, descripción `Observaciones: una respuesta y enlace para quien recibe el correo`, como foto del código subido. Ese id no acepta fijarla.
+
+El despliegue `AKfycbyGXZ0Dwnu2I_QoyXjVbW6DVST4BKlk0ZNVzjvDIH8iNJHQzd0PrbpfxzXgo24VU_tV` sigue en la versión 4, descripción `REVISION`. No se modificó.
