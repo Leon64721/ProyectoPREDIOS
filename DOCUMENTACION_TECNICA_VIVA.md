@@ -3499,4 +3499,24 @@ Cada acción quedó además registrada en la hoja `Logs` de `DATA_FILES.LOGS` v�
 
 **Fuera de este cambio:** motor, `JEFE_EMAIL`, `_historialSeguimientoInforme_`, `app_seguimiento_alertas_js.html`, Para, CC y el Excel del gestor. La Web App publicada no cambia hasta una versión nueva.
 
+## 64. Plan — subir el ajuste y abrir el enlace de observaciones [2026-10-26]
+
+**Agente:** Cursor. Solo plan. Sin `clasp push`.
+
+**Qué se vio:** el correo del 2026-10-26 salió con el informe viejo (jefatura, gestor, vencidas, 15 y 30 días) y con dos tarjetas del mismo RT. Ese código ya no está en el repositorio (`fd0a626`). El `git push` no actualiza Apps Script. El botón abre la URL `/dev` de `URLS_SISTEMA.md`, y esa dirección solo la abre quien edita el proyecto.
+
+**Plan:** `PLAN_SUBIDA_Y_ACCESO_OBSERVACIONES.md`. Claude Code lo auditó leyendo los archivos y respondió **APROBAR**.
+
+## 65. Ejecución — enlace de observaciones para quien recibe el correo [2026-10-26]
+
+**Agente:** Cursor. Plan: `PLAN_SUBIDA_Y_ACCESO_OBSERVACIONES.md`. Fabian pidió ejecutarlo y subirlo al repositorio y al script `18vY9…`.
+
+**Funciones:**
+- `Codigo.js` `doGet`: si `sa` es válido, abre el formulario antes de pedir rol en Permisos. Sin correo de sesión muestra que debe entrar con la cuenta del IDU y no abre el tablero.
+- `seguimiento_alertas.js` `_urlSeguimientoAlertas_`: si `getUrl()` termina en `/dev`, el botón usa `/exec`.
+- `_filasVisiblesDelToken_`: con correo de sesión muestra las pendientes de ese token. Sin correo no lista ni guarda.
+- `RESPONDIDO_POR` queda al final de `SEGUIMIENTO_ALERTAS`. La fila respondida guarda el correo de quien diligenció. La pendiente lo deja vacío.
+
+**Validación:** `node --check` en `Codigo.js` y `seguimiento_alertas.js`. La carga en Apps Script se confirma después del `clasp push`, leyendo el proyecto remoto. `/exec` sigue en la versión publicada hasta que Fabian publique una versión nueva con acceso al dominio.
+
 **Auditoría de la ejecución:** Claude Code, sesión claude.ai, solo lectura sobre el diff. Veredicto: **APROBAR**. No pidió correcciones.

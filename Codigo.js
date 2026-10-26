@@ -156,6 +156,26 @@ function doGet(e) {
     const userEmail = Session.getActiveUser().getEmail() || '';
     console.log(`👤 Usuario: ${userEmail}`);
 
+    var tokenCrudo = (e && e.parameter && e.parameter.sa) ? String(e.parameter.sa) : '';
+    if (tokenCrudo) {
+      if (!/^[A-Za-z0-9-]{20,64}$/.test(tokenCrudo)) {
+        return HtmlService.createHtmlOutput(
+          '<div style="font-family:sans-serif;text-align:center;margin-top:48px;"><h2>Enlace no válido</h2><p>Este enlace de observaciones no se puede abrir.</p></div>'
+        ).setTitle('Enlace no válido');
+      }
+      if (!userEmail) {
+        return HtmlService.createHtmlOutput(
+          '<div style="font-family:sans-serif;text-align:center;margin-top:48px;"><h2>Entra con tu cuenta del IDU</h2><p>Para registrar la observación tienes que abrir el enlace con tu correo institucional.</p></div>'
+        ).setTitle('Entra con tu cuenta del IDU');
+      }
+      var formulario = HtmlService.createTemplateFromFile('seguimiento_formulario');
+      formulario.tokenJs = JSON.stringify(tokenCrudo);
+      return formulario.evaluate()
+        .setTitle('Responder observaciones')
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+        .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    }
+
     // 3️⃣ OBTENER ROL (CON MANEJO DE ERRORES)
     let role = null;
     try {
@@ -176,21 +196,6 @@ function doGet(e) {
           <p>Contacta al administrador.</p>
         </div>
       `);
-    }
-
-    var tokenCrudo = (e && e.parameter && e.parameter.sa) ? String(e.parameter.sa) : '';
-    if (tokenCrudo) {
-      if (!/^[A-Za-z0-9-]{20,64}$/.test(tokenCrudo)) {
-        return HtmlService.createHtmlOutput(
-          '<div style="font-family:sans-serif;text-align:center;margin-top:48px;"><h2>Enlace no válido</h2><p>Este enlace de observaciones no se puede abrir.</p></div>'
-        ).setTitle('Enlace no válido');
-      }
-      var formulario = HtmlService.createTemplateFromFile('seguimiento_formulario');
-      formulario.tokenJs = JSON.stringify(tokenCrudo);
-      return formulario.evaluate()
-        .setTitle('Responder observaciones')
-        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-        .addMetaTag('viewport', 'width=device-width, initial-scale=1');
     }
 
     // 5️⃣ REGISTRAR INGRESO

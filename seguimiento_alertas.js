@@ -9,7 +9,7 @@ var ENCABEZADOS_SEGUIMIENTO_ALERTAS = [
   'PROYECTO', 'GESTOR_EMAIL', 'ARTICULADOR_EMAIL', 'JEFE_EMAIL', 'REMITENTE_EMAIL',
   'HILO_GMAIL_ID', 'MENSAJE_GMAIL_ID', 'OBSERVACION_PREVIA', 'OBSERVACION_NUEVA',
   'OBSERVACION_VIGENTE', 'NO_USO', 'AVISO_ACEPTADO', 'ARCHIVO_JURIDICO_URL', 'ARCHIVO_TECNICO_URL',
-  'REVISION_ESTADO', 'FECHA_DOCUMENTO', 'REVISOR_NOMBRE', 'REVISOR_EMAIL'
+  'REVISION_ESTADO', 'FECHA_DOCUMENTO', 'REVISOR_NOMBRE', 'REVISOR_EMAIL', 'RESPONDIDO_POR'
 ];
 
 var MAX_BYTES_ANEXO_SEGUIMIENTO = 5 * 1024 * 1024;
@@ -242,6 +242,7 @@ function registrarPendientesSeguimiento_(filasAlerta, meta) {
         JEFE_EMAIL: String(meta.jefeEmail || '').trim().toLowerCase(),
         REVISOR_NOMBRE: String(meta.revisorNombre || '').trim(),
         REVISOR_EMAIL: String(meta.revisorEmail || '').trim().toLowerCase(),
+        RESPONDIDO_POR: '',
         REVISION_ESTADO: '',
         FECHA_DOCUMENTO: '',
         REMITENTE_EMAIL: String(meta.remitente || '').trim().toLowerCase(),
@@ -270,6 +271,9 @@ function _urlSeguimientoAlertas_(token) {
   var base = '';
   try { base = ScriptApp.getService().getUrl() || ''; } catch (e) { base = ''; }
   if (!base || !token) return '';
+  if (base.length >= 4 && base.substring(base.length - 4) === '/dev') {
+    base = base.substring(0, base.length - 4) + '/exec';
+  }
   return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'sa=' + encodeURIComponent(token);
 }
 
@@ -338,19 +342,18 @@ function _tokenSeguimientoValido_(token) {
 }
 
 function _filasVisiblesDelToken_(filas, token, email, esAdmin) {
+  if (!email) return [];
   return (filas || []).filter(function(fila) {
     if (String(fila.TOKEN || '') !== String(token)) return false;
     if (String(fila.ESTADO || '') !== 'PENDIENTE') return false;
-    if (esAdmin) return true;
-    var gestor = String(fila.GESTOR_EMAIL || '').trim().toLowerCase();
-    var art = String(fila.ARTICULADOR_EMAIL || '').trim().toLowerCase();
-    return email && (email === gestor || email === art);
+    return true;
   });
 }
 
 function obtenerSeguimientoPorToken(token) {
   if (!_tokenSeguimientoValido_(token)) return { success: false, error: 'El enlace no es válido.' };
   var email = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+  if (!email) return { success: false, error: 'Entra con tu cuenta del IDU para registrar la observación.' };
   var esAdmin = _sesionEsAdminSeguimiento_();
   var lectura = _leerSeguimientoAlertas_();
   var delToken = (lectura.filas || []).filter(function(fila) { return String(fila.TOKEN || '') === String(token); });
@@ -424,6 +427,7 @@ function guardarSeguimientoAlertas(payload) {
   var cuerpo = payload || {};
   if (!_tokenSeguimientoValido_(cuerpo.token)) return { success: false, error: 'El enlace no es válido.' };
   var email = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+  if (!email) return { success: false, error: 'Entra con tu cuenta del IDU para registrar la observación.' };
   var esAdmin = _sesionEsAdminSeguimiento_();
   var lecturaInicial = _leerSeguimientoAlertas_();
   var visibles = _filasVisiblesDelToken_(lecturaInicial.filas, cuerpo.token, email, esAdmin);
@@ -520,7 +524,8 @@ function guardarSeguimientoAlertas(payload) {
         REVISION_ESTADO: item.revision ? 'SI' : 'NO',
         FECHA_DOCUMENTO: item.fechaDocumento || '',
         REVISOR_NOMBRE: p.REVISOR_NOMBRE || '',
-        REVISOR_EMAIL: p.REVISOR_EMAIL || ''
+        REVISOR_EMAIL: p.REVISOR_EMAIL || '',
+        RESPONDIDO_POR: email
       });
     });
     preparados.forEach(function(item) {
