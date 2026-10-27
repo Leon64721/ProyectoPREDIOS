@@ -3578,3 +3578,13 @@ El despliegue `AKfycbyGXZ0Dwnu2I_QoyXjVbW6DVST4BKlk0ZNVzjvDIH8iNJHQzd0PrbpfxzXgo
 **Validación:** `node --check` en `Codigo.js`.
 
 **Auditoría:** Claude Code leyó el plan y pidió no limitar el término a las alertas críticas, porque la observación se exige por nivel. La ejecución usa «las alertas que exigen observación». Sobre el diff respondió **APROBAR**.
+
+## 73. Cierre de sesión — alertas de tres y siete días e informe al jefe [2026-10-26]
+
+**Agente:** Cursor. Acta: `PROTOCOLO_CIERRE_SESION_2026-10-26_CURSOR.md`. Reglas aplicadas: sección 16.2 de esta bitácora, `PROTOCOLO_VERSIONAMIENTO_2026.md` y la regeneración de entregables de `CLAUDE.md`.
+
+**Estado:** COMPLETADO 2026-10-26. Rama `fix/post-audit-rbac`. Último commit de código `a680ee8`. Local y `origin/fix/post-audit-rbac` coinciden. El script `18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi` se volvió a bajar al cierre: 55 archivos. En el `Codigo.js` remoto la frase de tres días está en las líneas 2068 y 2228, y el informe consolidado en la 2597. En `seguimiento_alertas.js` el encabezado `INFORME_ARTICULADOR_EN` está en la línea 13, el asunto «Gestionar respuesta» en la 818 y «Pasaron siete días hábiles» en la 843. No aparecen «cinco días hábiles» ni «FECHA AVALUO más 365».
+
+**Commits de la jornada en esta rama:** `fd0a626`, `fab839a`, `5443d2c`, `471fa7a`, `0040f08`, `f768978`, `f791cf4`, `a680ee8`.
+
+**Pendiente al cierre:** esta rama no está fusionada en `main`. Los correos ya enviados conservan el texto con el que salieron. El párrafo de oferta notificada solo se usa si la regla de avalúo no tiene texto inicial en Retroalimentación. No se agregó un segundo correo automático cuando todas las observaciones estén listas.
