@@ -1,0 +1,14 @@
+---
+description: Convivencia de Cursor con Claude Code y GitHub Copilot en este repo.
+alwaysApply: true
+---
+
+# Alternar IAs en el mismo repo
+
+Cursor entra al mismo modelo que Claude Code (`CLAUDE.md`) y GitHub Copilot (`DOCUMENTACION_TECNICA_VIVA.md` sección 16, `CONTRIBUTING.md`, `INICIO_SESION.md`).
+
+- Una sesión activa por checkout. Si `git status` muestra cambios que no son de esta sesión, no tocarlos ni revertirlos.
+- Leer `TODOS.md` antes de proponer trabajo nuevo. Bitácora única: `DOCUMENTACION_TECNICA_VIVA.md`. Solo complementar; no borrar entradas de otro agente. Firmar las entradas nuevas como Cursor.
+- `clasp push` solo si el usuario lo pide, y solo al script `18vY9…`. No empujar en paralelo con otra IA.
+- Commits solo cuando el usuario lo pida. Formato: `tipo(módulo): descripción [TICKET]`.
+- Graphify: la regla `.cursor/rules/graphify.mdc` es el equivalente Cursor del skill que Claude y Copilot ya tienen. Consultar el grafo antes de explorar código.

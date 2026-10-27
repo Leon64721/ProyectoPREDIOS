@@ -1,0 +1,566 @@
+<script>
+let metadatosEditorReglas = null;
+let reglaEnEdicion = null;
+let indiceReglaEnEdicion = null;
+
+function cargarMetadatosEditorReglas(callback) {
+  if (metadatosEditorReglas) { callback(metadatosEditorReglas); return; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) {
+        showToast((res && res.error) || 'No se pudieron cargar las columnas de la matriz.', 'danger');
+        return;
+      }
+      metadatosEditorReglas = res;
+      const dl = document.getElementById('dlColumnasDatos');
+      if (dl) dl.innerHTML = (res.columnas || []).map(function(c) { return '<option value="' + escapeHtml(c) + '">'; }).join('');
+      callback(res);
+    })
+    .withFailureHandler(onError)
+    .obtenerMetadatosEditorReglas();
+}
+
+function generarIdRegla() {
+  const reglas = (motorReglasData && motorReglasData.ReglasDeNegocio) || [];
+  let max = 0;
+  reglas.forEach(function(r) {
+    const m = String(r.id_regla || '').match(/^R-(\d+)$/);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return 'R-' + String(max + 1).padStart(3, '0');
+}
+
+function normalizarCriterioParaEditor(c) {
+  const src = c || {};
+  return {
+    columna: String(src.columna_estado || src.columna_A || src.columna || '').trim().toUpperCase(),
+    operador: String(src.operador_estado || src.operador || 'EQUALS'),
+    valor: src.valor !== undefined && src.valor !== null ? src.valor : (src.valores_estado && !Array.isArray(src.valores_estado) ? src.valores_estado : ''),
+    valores: Array.isArray(src.valores) ? src.valores : (Array.isArray(src.valores_estado) ? src.valores_estado : []),
+    columna_destino: String(src.columna_destino || '').trim().toUpperCase(),
+    min_pct: src.min_pct,
+    max_pct: src.max_pct,
+    anidado: Array.isArray(src.criterios)
+  };
+}
+
+function abrirConstructorRegla(index) {
+  if (!motorReglasData) { showToast('Carga primero el motor', 'warning'); return; }
+  cargarMetadatosEditorReglas(function() {
+    indiceReglaEnEdicion = index;
+    if (index === null) {
+      reglaEnEdicion = { id_regla: generarIdRegla(), nombre: '', descripcion: '', fase: '', activa: true, condiciones: { operador_logico: 'AND', criterios: [{}] } };
+    } else {
+      reglaEnEdicion = JSON.parse(JSON.stringify(motorReglasData.ReglasDeNegocio[index]));
+      if (reglaEnEdicion.condiciones && !Array.isArray(reglaEnEdicion.condiciones.criterios)) {
+        reglaEnEdicion.condiciones = { operador_logico: 'AND', criterios: [reglaEnEdicion.condiciones] };
+      }
+    }
+    pintarConstructor();
+    const fases = document.getElementById('dlFasesReglas');
+    const unicas = {};
+    (motorReglasData.ReglasDeNegocio || []).forEach(function(r) { if (r.fase) unicas[r.fase] = true; });
+    fases.innerHTML = Object.keys(unicas).map(function(f) { return '<option value="' + escapeHtml(f) + '">'; }).join('');
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalConstructorRegla')).show();
+    previsualizarReglaJSON();
+  });
+}
+
+function pintarConstructor() {
+  const r = reglaEnEdicion;
+  document.getElementById('crId').value = r.id_regla || '';
+  document.getElementById('crNombre').value = r.nombre || '';
+  document.getElementById('crFase').value = r.fase || '';
+  document.getElementById('crDesc').value = r.descripcion || '';
+  document.getElementById('crActiva').checked = r.activa !== false;
+  document.getElementById('crOperadorLogico').value = (r.condiciones && r.condiciones.operador_logico) || 'AND';
+  renderBloqueCondiciones('crCondiciones', r.condiciones || { criterios: [{}] });
+  const ex = document.getElementById('crExcepciones');
+  ex.innerHTML = '';
+  const bloques = Array.isArray(r.excepciones) ? r.excepciones : (r.excepciones ? [r.excepciones] : []);
+  bloques.forEach(function(b, i) { agregarBloqueExcepcion(b, i); });
+  const porTiempo = !r.alerta_bloqueo || !!r.regla_tiempo;
+  document.getElementById('crTipoTiempo').checked = porTiempo;
+  document.getElementById('crTipoBloqueo').checked = !porTiempo;
+  const rt = r.regla_tiempo || {};
+  document.getElementById('crFecha').value = rt.columna_fecha_inicio || '';
+  document.getElementById('crTipoDias').value = rt.tipo_dias || 'HABILES';
+  document.getElementById('crVida').value = rt.dias_vida_util || 30;
+  pintarUmbrales(rt.umbrales || []);
+  const bl = r.alerta_bloqueo || {};
+  document.getElementById('crBloqueoNivel').value = bl.nivel || 'ROJO';
+  document.getElementById('crBloqueoMensaje').value = bl.mensaje || '';
+  document.getElementById('crCruce').classList.toggle('d-none', !r.evaluacion_cruzada);
+  pintarSeguimientoCorreo(r.seguimiento_correo || {});
+  onCambioTipoAlerta(true);
+}
+
+var TEXTO_AVALUO_NOTA = 'Debido a que esta es una alerta crítica, es obligatorio cargar una observación por cada RT. El no uso de un avalúo, cuando el procedimiento exige aplicarlo, puede implicar incumplimiento de deberes y consecuencias disciplinarias y fiscales, incluido el detrimento patrimonial.';
+var TEXTO_AVALUO_AVISO = 'Se sugiere revisar con detalle si el avalúo debe aplicarse antes de continuar. Si aun así confirma que no se va a usar, debe adjuntar un solo archivo: el informe técnico / jurídico. Ese anexo queda en el seguimiento del proyecto y se envía copia a quien remitió la alerta y al jefe inmediato.';
+var TEXTO_BASE_CORREO_ALERTAS = 'Equipo de seguimiento predial. Este informe relaciona los predios que las reglas de alerta temprana marcaron al contrastar la fecha de inicio y la vida útil configuradas en la base de datos del tablero. Junto a cada RT se muestra el estado predial tal como está registrado, para que el equipo verifique si corresponde a la gestión más reciente. Cuando la alerta lo exige, hay que cargar una observación por cada RT. Si la decisión es que el proceso no se va a usar, se adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya existen y lo que falta es actualizar la base, marque Revisar observación, indique la fecha del documento y deje la evidencia cargada en los repositorios institucionales para que pueda corroborarse.';
+
+function asegurarBloqueSeguimiento() {
+  if (document.getElementById('crSeguimiento')) return;
+  var ancla = document.getElementById('crCruce');
+  if (!ancla) return;
+  var box = document.createElement('div');
+  box.id = 'crSeguimiento';
+  box.className = 'border rounded p-2 mb-3';
+  var etiquetas = { ROJO: 'Crítica', NARANJA: 'Riesgo', AMARILLO: 'Preventiva' };
+  box.innerHTML = '<div class="d-flex justify-content-between align-items-center"><strong>Seguimiento del correo</strong><button type="button" class="btn btn-sm btn-outline-secondary" id="crPegarAvaluo">Pegar texto de avalúo en Crítica</button></div>' +
+    ['ROJO', 'NARANJA', 'AMARILLO'].map(function(nivel) {
+      return '<div class="border rounded p-2 mt-2"><div class="fw-bold small">' + etiquetas[nivel] + '</div>' +
+        '<label class="small me-3"><input type="checkbox" id="crSegExigir_' + nivel + '"> Exigir observación</label>' +
+        '<label class="small"><input type="checkbox" id="crSegNoUso_' + nivel + '"> Permitir declarar que no se va a usar</label>' +
+        '<textarea id="crSegNota_' + nivel + '" class="form-control form-control-sm mt-1" rows="2" maxlength="600" placeholder="Nota que sale en el correo"></textarea>' +
+        '<textarea id="crSegAviso_' + nivel + '" class="form-control form-control-sm mt-1" rows="2" maxlength="600" placeholder="Aviso si marcan que no se va a usar"></textarea></div>';
+    }).join('');
+  ancla.parentNode.insertBefore(box, ancla);
+  document.getElementById('crPegarAvaluo').onclick = function() {
+    document.getElementById('crSegExigir_ROJO').checked = true;
+    document.getElementById('crSegNoUso_ROJO').checked = true;
+    document.getElementById('crSegNota_ROJO').value = TEXTO_AVALUO_NOTA;
+    document.getElementById('crSegAviso_ROJO').value = TEXTO_AVALUO_AVISO;
+    previsualizarReglaJSON();
+  };
+}
+
+function pintarSeguimientoCorreo(seg) {
+  asegurarBloqueSeguimiento();
+  var datos = seg || {};
+  ['ROJO', 'NARANJA', 'AMARILLO'].forEach(function(nivel) {
+    var item = datos[nivel] || {};
+    document.getElementById('crSegExigir_' + nivel).checked = item.exigir_observacion === true;
+    document.getElementById('crSegNoUso_' + nivel).checked = item.permitir_no_uso === true;
+    document.getElementById('crSegNota_' + nivel).value = item.nota_correo || '';
+    document.getElementById('crSegAviso_' + nivel).value = item.texto_no_uso || '';
+  });
+}
+
+function leerSeguimientoCorreo() {
+  asegurarBloqueSeguimiento();
+  var out = {};
+  var activo = false;
+  ['ROJO', 'NARANJA', 'AMARILLO'].forEach(function(nivel) {
+    var exigir = document.getElementById('crSegExigir_' + nivel).checked;
+    var noUso = document.getElementById('crSegNoUso_' + nivel).checked;
+    var nota = document.getElementById('crSegNota_' + nivel).value.trim();
+    var aviso = document.getElementById('crSegAviso_' + nivel).value.trim();
+    if (exigir || noUso || nota || aviso) activo = true;
+    out[nivel] = { exigir_observacion: exigir, permitir_no_uso: noUso, nota_correo: nota, texto_no_uso: aviso };
+  });
+  return activo ? out : null;
+}
+
+function pintarUmbrales(umbrales) {
+  const cont = document.getElementById('crUmbrales');
+  cont.innerHTML = ['ROJO', 'NARANJA', 'AMARILLO'].map(function(nivel) {
+    const u = (umbrales || []).find(function(x) { return String(x.nivel || '').toUpperCase() === nivel; }) || {};
+    const usado = !!u.nivel;
+    return '<div class="row g-2 align-items-center mt-1"><div class="col-md-2"><label class="small"><input type="checkbox" class="cr-umbral-usar" data-nivel="' + nivel + '"' + (usado ? ' checked' : '') + '> ' + nivel + '</label></div><div class="col-md-3"><input type="number" class="form-control form-control-sm cr-umbral-dias" data-nivel="' + nivel + '" value="' + (u.dias_restantes !== undefined ? u.dias_restantes : '') + '" placeholder="días restantes"></div><div class="col-md-7"><input class="form-control form-control-sm cr-umbral-msg" data-nivel="' + nivel + '" value="' + escapeHtml(u.mensaje || '') + '" placeholder="mensaje"></div></div>';
+  }).join('');
+}
+
+function opcionesOperador() {
+  const ops = (metadatosEditorReglas && metadatosEditorReglas.operadores) || {};
+  return Object.keys(ops).map(function(k) { return '<option value="' + k + '">' + escapeHtml(ops[k].etiqueta || k) + '</option>'; }).join('');
+}
+
+function renderBloqueCondiciones(contenedorId, bloque) {
+  const cont = document.getElementById(contenedorId);
+  cont.innerHTML = '';
+  const criterios = (bloque && bloque.criterios) || [];
+  (criterios.length ? criterios : [{}]).forEach(function(c) { agregarCriterio(contenedorId, c); });
+}
+
+function agregarCriterio(contenedorId, criterio) {
+  const c = normalizarCriterioParaEditor(criterio || {});
+  if (c.anidado) {
+    showToast('Esta regla tiene criterios anidados. Ábrela en Modo JSON.', 'warning');
+  }
+  const fila = document.createElement('div');
+  fila.className = 'row g-2 align-items-end mt-1 cr-fila';
+  fila.innerHTML = '<div class="col-md-3"><input class="form-control form-control-sm cr-col" list="dlColumnasDatos" value="' + escapeHtml(c.columna) + '"></div>' +
+    '<div class="col-md-3"><select class="form-select form-select-sm cr-op" onchange="onCambioOperadorCriterio(this)">' + opcionesOperador() + '</select></div>' +
+    '<div class="col-md-5 cr-params"></div>' +
+    '<div class="col-md-1"><button type="button" class="btn btn-sm btn-outline-danger" onclick="quitarCriterio(this)">×</button></div>';
+  document.getElementById(contenedorId).appendChild(fila);
+  fila.querySelector('.cr-op').value = c.operador;
+  onCambioOperadorCriterio(fila.querySelector('.cr-op'), c);
+}
+
+function onCambioOperadorCriterio(select, criterio) {
+  const fila = select.closest('.cr-fila');
+  const op = select.value;
+  const meta = metadatosEditorReglas && metadatosEditorReglas.operadores && metadatosEditorReglas.operadores[op];
+  const params = (meta && meta.parametros) || [];
+  const c = criterio || {};
+  let html = '';
+  if (!meta) html += '<span class="text-danger small">Operador desconocido</span>';
+  params.forEach(function(p) {
+    if (p === 'valor') html += '<input class="form-control form-control-sm cr-valor" value="' + escapeHtml(c.valor !== undefined ? c.valor : '') + '">';
+    if (p === 'valores') html += '<textarea class="form-control form-control-sm cr-valores" rows="2" placeholder="uno por línea">' + escapeHtml((c.valores || []).join('\n')) + '</textarea>';
+    if (p === 'columna_destino') html += '<input class="form-control form-control-sm cr-destino" list="dlColumnasDatos" value="' + escapeHtml(c.columna_destino || '') + '" placeholder="otra columna">';
+    if (p === 'min_pct') html += '<input type="number" class="form-control form-control-sm cr-min" value="' + (c.min_pct !== undefined ? c.min_pct : '') + '" placeholder="mín %">';
+    if (p === 'max_pct') html += '<input type="number" class="form-control form-control-sm cr-max" value="' + (c.max_pct !== undefined ? c.max_pct : '') + '" placeholder="máx %">';
+  });
+  fila.querySelector('.cr-params').innerHTML = html;
+}
+
+function quitarCriterio(boton) { boton.closest('.cr-fila').remove(); previsualizarReglaJSON(); }
+
+function agregarBloqueExcepcion(bloque) {
+  const wrap = document.createElement('div');
+  wrap.className = 'border rounded p-2 mt-2 cr-ex';
+  const id = 'ex' + Date.now() + Math.floor(Math.random() * 1000);
+  wrap.innerHTML = '<div class="d-flex justify-content-between"><select class="form-select form-select-sm w-auto cr-ex-op"><option value="AND">AND</option><option value="OR">OR</option></select><button type="button" class="btn btn-sm btn-outline-danger" onclick="quitarBloqueExcepcion(this)">Quitar bloque</button></div><div id="' + id + '"></div><button type="button" class="btn btn-sm btn-link" onclick="agregarCriterio(\'' + id + '\')">Añadir criterio</button>';
+  document.getElementById('crExcepciones').appendChild(wrap);
+  wrap.querySelector('.cr-ex-op').value = (bloque && bloque.operador_logico) || 'AND';
+  renderBloqueCondiciones(id, bloque || { criterios: [{}] });
+}
+
+function quitarBloqueExcepcion(boton) { boton.closest('.cr-ex').remove(); previsualizarReglaJSON(); }
+
+function leerFilaCriterio(fila) {
+  const op = fila.querySelector('.cr-op').value;
+  const out = { columna: fila.querySelector('.cr-col').value.trim().toUpperCase(), operador: op };
+  const valor = fila.querySelector('.cr-valor');
+  const valores = fila.querySelector('.cr-valores');
+  const destino = fila.querySelector('.cr-destino');
+  const min = fila.querySelector('.cr-min');
+  const max = fila.querySelector('.cr-max');
+  if (valor) out.valor = valor.value;
+  if (valores) out.valores = valores.value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+  if (destino) out.columna_destino = destino.value.trim().toUpperCase();
+  if (min && min.value !== '') out.min_pct = Number(min.value);
+  if (max && max.value !== '') out.max_pct = Number(max.value);
+  return out;
+}
+
+function leerBloqueCondiciones(contenedorId) {
+  return Array.from(document.querySelectorAll('#' + contenedorId + ' > .cr-fila')).map(leerFilaCriterio);
+}
+
+function onCambioTipoAlerta(silencioso) {
+  const tiempo = document.getElementById('crTipoTiempo').checked;
+  if (!silencioso && reglaEnEdicion) {
+    if (tiempo && reglaEnEdicion.alerta_bloqueo && !confirm('Se eliminará la configuración de bloqueo al guardar. ¿Continuar?')) {
+      document.getElementById('crTipoBloqueo').checked = true;
+      return;
+    }
+    if (!tiempo && reglaEnEdicion.regla_tiempo && !confirm('Se eliminará la configuración de plazo al guardar. ¿Continuar?')) {
+      document.getElementById('crTipoTiempo').checked = true;
+      return;
+    }
+  }
+  document.getElementById('crPanelTiempo').classList.toggle('d-none', !document.getElementById('crTipoTiempo').checked);
+  document.getElementById('crPanelBloqueo').classList.toggle('d-none', document.getElementById('crTipoTiempo').checked);
+}
+
+function construirReglaDesdeFormulario() {
+  const base = JSON.parse(JSON.stringify(reglaEnEdicion || {}));
+  base.id_regla = document.getElementById('crId').value.trim();
+  base.nombre = document.getElementById('crNombre').value.trim();
+  base.descripcion = document.getElementById('crDesc').value.trim();
+  base.fase = document.getElementById('crFase').value.trim();
+  base.activa = document.getElementById('crActiva').checked;
+  base.condiciones = { operador_logico: document.getElementById('crOperadorLogico').value, criterios: leerBloqueCondiciones('crCondiciones') };
+  const ex = Array.from(document.querySelectorAll('#crExcepciones > .cr-ex')).map(function(b) {
+    const id = b.querySelector('[id^="ex"]').id;
+    return { operador_logico: b.querySelector('.cr-ex-op').value, criterios: leerBloqueCondiciones(id) };
+  }).filter(function(b) { return b.criterios.length; });
+  if (ex.length) base.excepciones = ex; else delete base.excepciones;
+  if (document.getElementById('crTipoTiempo').checked) {
+    delete base.alerta_bloqueo;
+    const umbrales = ['ROJO', 'NARANJA', 'AMARILLO'].map(function(nivel) {
+      const usar = document.querySelector('.cr-umbral-usar[data-nivel="' + nivel + '"]');
+      if (!usar || !usar.checked) return null;
+      return {
+        nivel: nivel,
+        dias_restantes: Number(document.querySelector('.cr-umbral-dias[data-nivel="' + nivel + '"]').value),
+        mensaje: document.querySelector('.cr-umbral-msg[data-nivel="' + nivel + '"]').value
+      };
+    }).filter(Boolean);
+    base.regla_tiempo = {
+      columna_fecha_inicio: document.getElementById('crFecha').value.trim().toUpperCase(),
+      tipo_dias: document.getElementById('crTipoDias').value,
+      dias_vida_util: Number(document.getElementById('crVida').value),
+      umbrales: umbrales
+    };
+  } else {
+    delete base.regla_tiempo;
+    base.alerta_bloqueo = {
+      nivel: document.getElementById('crBloqueoNivel').value,
+      mensaje: document.getElementById('crBloqueoMensaje').value.trim()
+    };
+  }
+  var seguimiento = leerSeguimientoCorreo();
+  if (seguimiento) base.seguimiento_correo = seguimiento;
+  else delete base.seguimiento_correo;
+  return base;
+}
+
+function validarReglaCliente(regla, indice) {
+  const errores = [];
+  const cols = (metadatosEditorReglas && metadatosEditorReglas.columnas) || [];
+  const ops = (metadatosEditorReglas && metadatosEditorReglas.operadores) || {};
+  if (!regla.nombre) errores.push('El nombre es obligatorio.');
+  const otras = (motorReglasData.ReglasDeNegocio || []).filter(function(_, i) { return i !== indice; });
+  if (otras.some(function(r) { return String(r.nombre || '').trim().toUpperCase() === regla.nombre.toUpperCase(); })) errores.push('Ya existe una regla con ese nombre.');
+  function revisar(criterios, donde) {
+    if (!criterios || !criterios.length) errores.push(donde + ': hace falta al menos un criterio.');
+    (criterios || []).forEach(function(c) {
+      if (!c.columna) errores.push(donde + ': falta la columna.');
+      else if (cols.length && cols.indexOf(c.columna) < 0) errores.push(donde + ': la columna ' + c.columna + ' no está en la matriz.');
+      if (!ops[c.operador]) errores.push(donde + ': operador desconocido.');
+      const params = (ops[c.operador] && ops[c.operador].parametros) || [];
+      if (params.indexOf('valor') >= 0 && String(c.valor) === '') errores.push(donde + ': falta el valor.');
+      if (params.indexOf('valores') >= 0 && (!c.valores || !c.valores.length)) errores.push(donde + ': la lista está vacía.');
+      if (params.indexOf('columna_destino') >= 0 && (!c.columna_destino || cols.indexOf(c.columna_destino) < 0)) errores.push(donde + ': columna destino inválida.');
+      if (c.min_pct !== undefined && c.max_pct !== undefined && Number(c.min_pct) > Number(c.max_pct)) errores.push(donde + ': el mínimo no puede ser mayor que el máximo.');
+    });
+  }
+  revisar(regla.condiciones && regla.condiciones.criterios, 'Condiciones');
+  (regla.excepciones || []).forEach(function(b, i) { revisar(b.criterios, 'Excepción ' + (i + 1)); });
+  if (regla.regla_tiempo) {
+    const rt = regla.regla_tiempo;
+    if (!rt.columna_fecha_inicio || cols.indexOf(rt.columna_fecha_inicio) < 0) errores.push('La columna de fecha no está en la matriz.');
+    if (!(Number(rt.dias_vida_util) > 0)) errores.push('Los días de vida útil deben ser mayores que cero.');
+    if (!rt.umbrales || !rt.umbrales.length) errores.push('Marca al menos un umbral.');
+    let previo = -Infinity;
+    (rt.umbrales || []).forEach(function(u) {
+      if (!String(u.mensaje || '').trim()) errores.push('Cada umbral usado necesita un mensaje.');
+      if (!(Number(u.dias_restantes) > previo)) errores.push('Los días restantes deben ir en orden creciente: ROJO, NARANJA, AMARILLO.');
+      previo = Number(u.dias_restantes);
+    });
+  }
+  if (regla.alerta_bloqueo && (!regla.alerta_bloqueo.nivel || !regla.alerta_bloqueo.mensaje)) errores.push('El bloqueo necesita nivel y mensaje.');
+  var seg = regla.seguimiento_correo || {};
+  ['ROJO', 'NARANJA', 'AMARILLO'].forEach(function(nivel) {
+    var item = seg[nivel];
+    if (!item) return;
+    if (String(item.nota_correo || '').length > 600) errores.push(nivel + ': la nota supera 600 caracteres.');
+    if (String(item.texto_no_uso || '').length > 600) errores.push(nivel + ': el aviso supera 600 caracteres.');
+    if (item.exigir_observacion && !String(item.nota_correo || '').trim()) errores.push(nivel + ': si exiges observación, escribe la nota del correo.');
+    if (item.permitir_no_uso && !item.exigir_observacion) errores.push(nivel + ': no uso solo se permite si también exiges observación.');
+    if (item.permitir_no_uso && !String(item.texto_no_uso || '').trim()) errores.push(nivel + ': si permites no uso, escribe el aviso.');
+  });
+  return errores;
+}
+
+function previsualizarReglaJSON() {
+  const pre = document.getElementById('crPreview');
+  if (!pre || !reglaEnEdicion || !document.getElementById('crNombre')) return;
+  try { pre.textContent = JSON.stringify(construirReglaDesdeFormulario(), null, 2); } catch (e) { pre.textContent = ''; }
+}
+
+function persistirConfigReglas(nuevaConfig, mensajeOk, opciones) {
+  const editor = document.getElementById('editorJSONReglas');
+  const enMemoria = JSON.stringify(motorReglasData, null, 4);
+  if (editor && editor.value.trim() && editor.value.trim() !== enMemoria.trim()) {
+    if (!confirm('Hay cambios sin guardar en el Modo JSON que se descartarán. ¿Continuar?')) return;
+  }
+  const json = JSON.stringify(nuevaConfig, null, 2);
+  if (json.length > 49000) {
+    const msgTope = 'El JSON supera 49.000 caracteres.';
+    if (opciones && opciones.alError) opciones.alError({ error: msgTope });
+    else showToast(msgTope, 'danger');
+    return;
+  }
+  showLoader('Guardando regla...');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      hideLoader();
+      if (res && res.conflicto) {
+        showToast(res.error, 'warning');
+        if (opciones && opciones.alError) opciones.alError(res);
+        cargarJSONenPantalla();
+        return;
+      }
+      if (res && res.success) {
+        showToast(mensajeOk || res.message, 'success');
+        if (opciones && opciones.alExito) opciones.alExito(res);
+        else {
+          const modal = bootstrap.Modal.getInstance(document.getElementById('modalConstructorRegla'));
+          if (modal) modal.hide();
+        }
+        cargarJSONenPantalla();
+      } else {
+        const msg = (res && res.error) || 'No se pudo guardar';
+        if (opciones && opciones.alError) opciones.alError(res || { error: msg });
+        else {
+          const caja = document.getElementById('crErrores');
+          if (caja) caja.textContent = msg; else showToast(msg, 'danger');
+        }
+      }
+    })
+    .withFailureHandler(function(err) {
+      if (opciones && opciones.alError) opciones.alError({ error: String(err && err.message || err) });
+      onError(err);
+    })
+    .guardarReglasJSON(json, currentUser, motorReglasVersion);
+}
+
+function guardarReglaDesdeConstructor() {
+  const regla = construirReglaDesdeFormulario();
+  const errores = validarReglaCliente(regla, indiceReglaEnEdicion);
+  const caja = document.getElementById('crErrores');
+  if (errores.length) { caja.innerHTML = errores.map(function(e) { return '<div>' + escapeHtml(e) + '</div>'; }).join(''); return; }
+  caja.textContent = '';
+  const copia = JSON.parse(JSON.stringify(motorReglasData));
+  if (!Array.isArray(copia.ReglasDeNegocio)) copia.ReglasDeNegocio = [];
+  if (indiceReglaEnEdicion === null) copia.ReglasDeNegocio.push(regla);
+  else copia.ReglasDeNegocio[indiceReglaEnEdicion] = regla;
+  persistirConfigReglas(copia, 'Regla guardada.');
+}
+
+var ETIQUETAS_NIVEL_RETRO = { ROJO: 'Crítica', NARANJA: 'Riesgo', AMARILLO: 'Preventiva' };
+
+function asegurarModalRetroalimentacion() {
+  if (document.getElementById('modalRetroalimentacion')) return;
+  var html = '<div class="modal fade" id="modalRetroalimentacion" tabindex="-1" data-bs-backdrop="static">' +
+    '<div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content">' +
+    '<div class="modal-header bg-dark text-white"><h5 class="modal-title">Retroalimentación por regla</h5>' +
+    '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>' +
+    '<div class="modal-body"><div id="retroErrores" class="text-danger small mb-2"></div><div id="retroReglas"></div></div>' +
+    '<div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>' +
+    '<button type="button" class="btn btn-primary" id="btnGuardarRetroalimentacion">Guardar</button></div>' +
+    '</div></div></div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstElementChild);
+}
+
+function abrirRetroalimentacionAlertas() {
+  if (!motorReglasData) {
+    cargarJSONenPantalla(function() { pintarYAbrirRetroalimentacion(); });
+    return;
+  }
+  pintarYAbrirRetroalimentacion();
+}
+
+function pintarYAbrirRetroalimentacion() {
+  asegurarModalRetroalimentacion();
+  var cont = document.getElementById('retroReglas');
+  var errores = document.getElementById('retroErrores');
+  if (errores) errores.textContent = '';
+  var reglas = (motorReglasData && motorReglasData.ReglasDeNegocio) || [];
+  if (!reglas.length) {
+    cont.innerHTML = '<div class="text-muted">No hay reglas definidas.</div>';
+  } else {
+    cont.innerHTML = reglas.map(function(regla, index) {
+      var seg = regla.seguimiento_correo || {};
+      var filas = ['ROJO', 'NARANJA', 'AMARILLO'].map(function(nivel) {
+        var item = seg[nivel] || {};
+        var avisoOculto = item.permitir_no_uso === true ? '' : ' d-none';
+        return '<div class="border rounded p-2 mt-2"><div class="fw-bold small">' + ETIQUETAS_NIVEL_RETRO[nivel] + '</div>' +
+          '<label class="small me-3"><input type="checkbox" id="retroExigir_' + index + '_' + nivel + '"' + (item.exigir_observacion === true ? ' checked' : '') + '> Exigir comentario</label>' +
+          '<label class="small"><input type="checkbox" class="retro-no-uso" data-index="' + index + '" data-nivel="' + nivel + '" id="retroNoUso_' + index + '_' + nivel + '"' + (item.permitir_no_uso === true ? ' checked' : '') + '> Puede decir que no se va a usar</label>' +
+          (nivel === 'ROJO' ? ' <button type="button" class="btn btn-sm btn-outline-secondary" onclick="pegarTextoAvaluoRetro(' + index + ')">Usar texto de avalúo</button>' : '') +
+          '<textarea id="retroNota_' + index + '_' + nivel + '" class="form-control form-control-sm mt-1" rows="2" maxlength="600" placeholder="Nota que sale en el correo">' + escapeHtml(item.nota_correo || '') + '</textarea>' +
+          '<textarea id="retroAviso_' + index + '_' + nivel + '" class="form-control form-control-sm mt-1 retro-aviso' + avisoOculto + '" rows="2" maxlength="600" placeholder="Aviso si marcan que no se va a usar">' + escapeHtml(item.texto_no_uso || '') + '</textarea></div>';
+      }).join('');
+      return '<div class="border rounded p-2 mb-3"><div class="fw-bold">' + escapeHtml(regla.nombre || 'Sin nombre') + '</div>' +
+        '<label class="small mt-2">Texto inicial del correo</label>' +
+        '<textarea id="retroInicial_' + index + '" class="form-control form-control-sm" rows="4" maxlength="2000" placeholder="Si lo dejas vacío, el correo usa el texto base.">' + escapeHtml(regla.texto_inicial_correo || '') + '</textarea>' +
+        '<button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="usarTextoBaseRetro(' + index + ')">Usar texto base</button>' +
+        filas + '</div>';
+    }).join('');
+  }
+  cont.querySelectorAll('.retro-no-uso').forEach(function(chk) {
+    chk.onchange = function() {
+      var aviso = document.getElementById('retroAviso_' + chk.getAttribute('data-index') + '_' + chk.getAttribute('data-nivel'));
+      if (aviso) aviso.classList.toggle('d-none', !chk.checked);
+    };
+  });
+  document.getElementById('btnGuardarRetroalimentacion').onclick = guardarRetroalimentacionAlertas;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalRetroalimentacion')).show();
+}
+
+function usarTextoBaseRetro(index) {
+  var campo = document.getElementById('retroInicial_' + index);
+  if (campo) campo.value = TEXTO_BASE_CORREO_ALERTAS;
+}
+
+function pegarTextoAvaluoRetro(index) {
+  document.getElementById('retroExigir_' + index + '_ROJO').checked = true;
+  document.getElementById('retroNoUso_' + index + '_ROJO').checked = true;
+  document.getElementById('retroNota_' + index + '_ROJO').value = TEXTO_AVALUO_NOTA;
+  var aviso = document.getElementById('retroAviso_' + index + '_ROJO');
+  aviso.value = TEXTO_AVALUO_AVISO;
+  aviso.classList.remove('d-none');
+}
+
+function seguimientoDesdeRetro(index) {
+  var out = {};
+  var activo = false;
+  ['ROJO', 'NARANJA', 'AMARILLO'].forEach(function(nivel) {
+    var exigir = document.getElementById('retroExigir_' + index + '_' + nivel).checked;
+    var noUso = document.getElementById('retroNoUso_' + index + '_' + nivel).checked;
+    var nota = document.getElementById('retroNota_' + index + '_' + nivel).value.trim();
+    var aviso = document.getElementById('retroAviso_' + index + '_' + nivel).value.trim();
+    if (!(exigir || noUso || nota || aviso)) return;
+    activo = true;
+    out[nivel] = { exigir_observacion: exigir, permitir_no_uso: noUso, nota_correo: nota, texto_no_uso: aviso };
+  });
+  return activo ? out : null;
+}
+
+function validarSoloSeguimiento(seg, nombre) {
+  var errores = [];
+  if (!seg) return errores;
+  ['ROJO', 'NARANJA', 'AMARILLO'].forEach(function(nivel) {
+    var item = seg[nivel];
+    if (!item) return;
+    var donde = (nombre || 'Regla') + ' / ' + ETIQUETAS_NIVEL_RETRO[nivel];
+    if (String(item.nota_correo || '').length > 600) errores.push(donde + ': la nota supera 600 caracteres.');
+    if (String(item.texto_no_uso || '').length > 600) errores.push(donde + ': el aviso supera 600 caracteres.');
+    if (item.exigir_observacion && !String(item.nota_correo || '').trim()) errores.push(donde + ': si exiges comentario, escribe la nota del correo.');
+    if (item.permitir_no_uso && !item.exigir_observacion) errores.push(donde + ': no uso solo se permite si también exiges comentario.');
+    if (item.permitir_no_uso && !String(item.texto_no_uso || '').trim()) errores.push(donde + ': si permites no uso, escribe el aviso.');
+  });
+  return errores;
+}
+
+function guardarRetroalimentacionAlertas() {
+  var caja = document.getElementById('retroErrores');
+  var copia = JSON.parse(JSON.stringify(motorReglasData));
+  if (!Array.isArray(copia.ReglasDeNegocio)) copia.ReglasDeNegocio = [];
+  var errores = [];
+  copia.ReglasDeNegocio.forEach(function(regla, index) {
+    var seg = seguimientoDesdeRetro(index);
+    var donde = regla.nombre || ('Regla ' + (index + 1));
+    errores = errores.concat(validarSoloSeguimiento(seg, donde));
+    var inicial = (document.getElementById('retroInicial_' + index).value || '').trim();
+    if (inicial.length > 2000) errores.push(donde + ': el texto inicial del correo supera 2000 caracteres.');
+    if (seg) regla.seguimiento_correo = seg;
+    else delete regla.seguimiento_correo;
+    if (inicial) regla.texto_inicial_correo = inicial;
+    else delete regla.texto_inicial_correo;
+  });
+  if (errores.length) {
+    caja.innerHTML = errores.map(function(e) { return '<div>' + escapeHtml(e) + '</div>'; }).join('');
+    return;
+  }
+  caja.textContent = '';
+  persistirConfigReglas(copia, 'Retroalimentación guardada.', {
+    alExito: function() {
+      var inst = bootstrap.Modal.getInstance(document.getElementById('modalRetroalimentacion'));
+      if (inst) inst.hide();
+    },
+    alError: function(res) {
+      var msg = (res && res.error) || 'No se pudo guardar';
+      caja.textContent = msg;
+      showToast(msg, 'danger');
+    }
+  });
+}
+
+function alternarActivaRegla(index) {
+  const regla = motorReglasData.ReglasDeNegocio[index];
+  if (!confirm((regla.activa ? 'Desactivar' : 'Activar') + ' la regla "' + (regla.nombre || '') + '"?')) return;
+  const copia = JSON.parse(JSON.stringify(motorReglasData));
+  copia.ReglasDeNegocio[index].activa = !copia.ReglasDeNegocio[index].activa;
+  persistirConfigReglas(copia, 'Estado actualizado.');
+}
+</script>

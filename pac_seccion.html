@@ -1465,12 +1465,34 @@ function pac_sincronizar() {
       var r = JSON.parse(resp);
       pac_mostrarLoader(false);
       if (r.success) {
-        pac_toast('✅ Sync correcto. Cambios: ' + (r.cambios || 0), 'success');
-        if ((r.cambios || 0) > 0 && confirm('Se detectaron cambios. ¿Aprobar borrador ahora?')) {
-          pac_aprobarBorrador();
+        // ✅ [2026-10-06] Tarea S: resumen del borrador (nuevas/eliminadas/modificadas/
+        // duplicados descartados) ANTES de ofrecer aprobar, para que quien sincroniza
+        // pueda juzgar el impacto sin tener que abrir PAC_Borrador a mano.
+        var resumen = 'Nuevas: ' + (r.nuevos || 0) +
+          ' | Eliminadas: ' + (r.eliminados || 0) +
+          ' | Modificadas: ' + (r.modificados || 0) +
+          (r.duplicadosDescartados ? ' | Duplicados descartados de la fuente: ' + r.duplicadosDescartados : '');
+
+        if (r.requiereRevision) {
+          // Guarda de seguridad del backend activada (eliminaría >20% de PAC_Vigente de
+          // golpe) — nunca se ofrece aprobar automáticamente desde aquí en este caso.
+          pac_toast('⚠️ ' + (r.mensaje || 'El borrador requiere revisión manual antes de aprobar.'), 'warning');
+          alert('⚠️ REVISIÓN REQUERIDA ANTES DE APROBAR\n\n' + (r.mensaje || '') +
+            '\n\nResumen: ' + resumen +
+            '\n\nAbra la hoja PAC_Borrador y revise los cambios manualmente antes de aprobar.');
+        } else {
+          pac_toast('✅ Sync correcto. ' + resumen, 'success');
+          if ((r.cambios || 0) > 0 && confirm('Resumen del borrador:\n' + resumen + '\n\n¿Aprobar borrador ahora?')) {
+            pac_aprobarBorrador();
+          }
         }
       } else {
-        pac_toast('❌ Error en sync: ' + r.error, 'danger');
+        // ✅ [2026-10-06] FIX: sincronizarPAC() devuelve el fallo en `mensaje`, no en
+        // `error` — de ahí el "Error en sync: undefined". Se tolera cualquiera de los
+        // nombres de campo que ya usa el backend en distintos puntos (mensaje, error,
+        // msg, message), con un texto explícito si ninguno viene.
+        var detalle = r.mensaje || r.error || r.msg || r.message || 'Error desconocido (sin detalle del servidor)';
+        pac_toast('❌ Error en sync: ' + detalle, 'danger');
       }
     })
     .withFailureHandler(function(e) {

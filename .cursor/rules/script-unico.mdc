@@ -1,0 +1,16 @@
+---
+description: Solo el Apps Script 18vY9 de trabajo. Nunca otro proyecto de Google.
+alwaysApply: true
+---
+
+# Un solo script de Google
+
+El único proyecto Apps Script de esta sesión es:
+
+`18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi`
+
+Editor: https://script.google.com/home/projects/18vY9LSc7K8fL-HErdaCJ0ar9ITO4IpvJ_UDi24rVbFgeGJhzfSny7FGi/edit
+
+Antes de cualquier `clasp push`, `clasp pull`, `clasp deploy` o `clasp clone`, leer `.clasp.json` y confirmar que `scriptId` es exactamente ese valor. Si no coincide, detenerse y avisarlo.
+
+No clonar, empujar ni editar los otros proyectos documentados (`16gqzy…` producción congelada, `17Syj1…` dev/test). No cambiar `scriptId` en `.clasp.json`.

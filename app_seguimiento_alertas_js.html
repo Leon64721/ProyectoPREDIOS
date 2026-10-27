@@ -1,0 +1,134 @@
+<script>
+var seguimientoYaAbierto = false;
+
+function abrirSeguimientoSiHayToken() {
+  if (seguimientoYaAbierto) return;
+  if (typeof SEGUIMIENTO_TOKEN === 'undefined' || !SEGUIMIENTO_TOKEN) return;
+  seguimientoYaAbierto = true;
+  abrirModalSeguimientoAlertas(SEGUIMIENTO_TOKEN);
+}
+
+function asegurarModalSeguimientoAlertas() {
+  var modal = document.getElementById('modalSeguimientoAlertas');
+  if (modal) return modal;
+  var html = '<div class="modal fade" id="modalSeguimientoAlertas" tabindex="-1" data-bs-backdrop="static">' +
+    '<div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">' +
+    '<div class="modal-header bg-dark text-white"><h5 class="modal-title">Observaciones de alertas</h5>' +
+    '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>' +
+    '<div class="modal-body" id="cuerpoSeguimientoAlertas"></div>' +
+    '<div class="modal-footer"><button type="button" class="btn btn-primary" id="btnGuardarSeguimientoAlertas">Enviar observaciones</button></div>' +
+    '</div></div></div>';
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstElementChild);
+  return document.getElementById('modalSeguimientoAlertas');
+}
+
+function etiquetaSemaforoCliente_(nivel) {
+  var n = String(nivel || '').toUpperCase();
+  if (n === 'ROJO') return 'Crítica';
+  if (n === 'NARANJA') return 'Riesgo';
+  if (n === 'AMARILLO') return 'Preventiva';
+  return n || 'Sin nivel';
+}
+
+function pintarFilasSeguimiento_(filas) {
+  var cuerpo = document.getElementById('cuerpoSeguimientoAlertas');
+  cuerpo.innerHTML = filas.map(function(fila) {
+    var previa = fila.observacionVigente
+      ? '<div class="small text-muted mb-1">Observación anterior</div><pre class="small bg-light p-2 border">' + escapeHtml(fila.observacionVigente) + '</pre>'
+      : '';
+    var noUso = fila.permitirNoUso
+      ? '<div class="form-check mt-2"><input class="form-check-input seg-no-uso" type="checkbox" data-id="' + escapeHtml(fila.id) + '" id="noUso_' + escapeHtml(fila.id) + '"><label class="form-check-label" for="noUso_' + escapeHtml(fila.id) + '">No se va a usar</label></div>' +
+        '<div class="seg-aviso d-none border rounded p-2 mt-2 bg-warning-subtle" data-id="' + escapeHtml(fila.id) + '"><div class="small mb-2">' + escapeHtml(fila.textoNoUso || '') + '</div>' +
+        '<label class="small">Concepto jurídico</label><input type="file" class="form-control form-control-sm seg-jur" data-id="' + escapeHtml(fila.id) + '" accept=".pdf,.doc,.docx,image/*">' +
+        '<label class="small mt-1">Concepto técnico</label><input type="file" class="form-control form-control-sm seg-tec" data-id="' + escapeHtml(fila.id) + '" accept=".pdf,.doc,.docx,image/*">' +
+        '<label class="small d-block mt-2"><input type="checkbox" class="seg-aviso-ok" data-id="' + escapeHtml(fila.id) + '"> Leí el aviso y deseo continuar</label></div>'
+      : '';
+    return '<div class="seg-tarjeta border rounded p-2 mb-3" data-id="' + escapeHtml(fila.id) + '"><div class="fw-bold">RT ' + escapeHtml(fila.rt) + ' · ' + escapeHtml(fila.regla) + ' · ' + escapeHtml(etiquetaSemaforoCliente_(fila.nivel)) + '</div><div class="small text-muted">' + escapeHtml(fila.proyecto || '') + '</div>' + previa +
+      '<label class="small mt-2">Agregar observación</label><textarea class="form-control form-control-sm seg-texto" data-id="' + escapeHtml(fila.id) + '" rows="3"></textarea>' + noUso + '</div>';
+  }).join('');
+  cuerpo.querySelectorAll('.seg-no-uso').forEach(function(chk) {
+    chk.onchange = function() {
+      var aviso = cuerpo.querySelector('.seg-aviso[data-id="' + chk.getAttribute('data-id') + '"]');
+      if (aviso) aviso.classList.toggle('d-none', !chk.checked);
+    };
+  });
+}
+
+function leerArchivoSeguimiento_(input) {
+  return new Promise(function(resolve, reject) {
+    var file = input && input.files && input.files[0];
+    if (!file) { resolve(null); return; }
+    if (file.size > 5 * 1024 * 1024) { reject(new Error('Cada anexo debe pesar 5 MB o menos.')); return; }
+    var reader = new FileReader();
+    reader.onload = function() {
+      resolve({ nombre: file.name, mime: file.type || '', base64: String(reader.result || '') });
+    };
+    reader.onerror = function() { reject(new Error('No se pudo leer un archivo.')); };
+    reader.readAsDataURL(file);
+  });
+}
+
+function abrirModalSeguimientoAlertas(token) {
+  var modal = asegurarModalSeguimientoAlertas();
+  document.getElementById('cuerpoSeguimientoAlertas').innerHTML = '<div class="text-muted">Cargando observaciones...</div>';
+  bootstrap.Modal.getOrCreateInstance(modal).show();
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) {
+        document.getElementById('cuerpoSeguimientoAlertas').textContent = (res && res.error) || 'No se pudo abrir el seguimiento.';
+        document.getElementById('btnGuardarSeguimientoAlertas').disabled = true;
+        return;
+      }
+      document.getElementById('btnGuardarSeguimientoAlertas').disabled = false;
+      pintarFilasSeguimiento_(res.filas || []);
+      document.getElementById('btnGuardarSeguimientoAlertas').onclick = function() { enviarSeguimientoAlertas_(token); };
+    })
+    .withFailureHandler(onError)
+    .obtenerSeguimientoPorToken(token);
+}
+
+function enviarSeguimientoAlertas_(token) {
+  var cuerpo = document.getElementById('cuerpoSeguimientoAlertas');
+  var tarjetas = Array.prototype.slice.call(cuerpo.querySelectorAll('.seg-tarjeta'));
+  var trabajos = tarjetas.map(function(tarjeta) {
+    var id = tarjeta.getAttribute('data-id');
+    var noUsoEl = tarjeta.querySelector('.seg-no-uso');
+    var noUso = !!(noUsoEl && noUsoEl.checked);
+    var base = {
+      id: id,
+      observacionNueva: (tarjeta.querySelector('.seg-texto').value || '').trim(),
+      noUso: noUso,
+      avisoAceptado: noUso ? !!(tarjeta.querySelector('.seg-aviso-ok') && tarjeta.querySelector('.seg-aviso-ok').checked) : false
+    };
+    if (!noUso) return Promise.resolve(base);
+    return Promise.all([
+      leerArchivoSeguimiento_(tarjeta.querySelector('.seg-jur')),
+      leerArchivoSeguimiento_(tarjeta.querySelector('.seg-tec'))
+    ]).then(function(archivos) {
+      base.juridico = archivos[0];
+      base.tecnico = archivos[1];
+      return base;
+    });
+  });
+  Promise.all(trabajos).then(function(filas) {
+    showLoader('Guardando observaciones...');
+    google.script.run
+      .withSuccessHandler(function(res) {
+        hideLoader();
+        if (res && res.success) {
+          showToast(res.message || 'Observaciones enviadas', 'success');
+          var inst = bootstrap.Modal.getInstance(document.getElementById('modalSeguimientoAlertas'));
+          if (inst) inst.hide();
+        } else {
+          showToast((res && (res.error || res.message)) || 'No se pudo guardar', 'danger');
+        }
+      })
+      .withFailureHandler(onError)
+      .guardarSeguimientoAlertas({ token: token, filas: filas });
+  }).catch(function(e) {
+    showToast(e.message || 'No se pudieron leer los archivos', 'danger');
+  });
+}
+</script>

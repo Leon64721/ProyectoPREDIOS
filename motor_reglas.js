@@ -1,58 +1,237 @@
 /**
- * ═══════════════════════════════════════════════════════════
- * MOTOR DE REGLAS - ALMACENAMIENTO Y LECTURA
- * ═══════════════════════════════════════════════════════════
+ * MOTOR DE REGLAS - ALMACENAMIENTO Y CONFIGURACIÓN
+ * Única definición de obtenerReglasJSON / guardarReglasJSON.
+ * La evaluación vive en evaluador_alertas.js.
  */
 
-// Función para obtener el JSON actual de las reglas
+function _exigirAdminMotorReglas_(accion) {
+  try {
+    new GestorPermisos().validarPermiso('ADMIN_SISTEMA');
+    return null;
+  } catch (e) {
+    try {
+      logAction(Session.getActiveUser().getEmail() || 'desconocido', accion + '_DENEGADO', e.message);
+    } catch (_) {}
+    return { success: false, error: 'Requiere rol Administrador.' };
+  }
+}
+
+function _obtenerHojaConfigReglas_(ss, crearSiFalta, yaTieneLock) {
+  let hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
+  if (hojaReglas || !crearSiFalta) return hojaReglas;
+
+  const lock = yaTieneLock ? null : LockService.getScriptLock();
+  try {
+    if (!yaTieneLock) lock.waitLock(20000);
+    hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
+    if (!hojaReglas) {
+      hojaReglas = ss.insertSheet('CONFIG_REGLAS');
+      hojaReglas.hideSheet();
+      hojaReglas.getRange('A1').setValue('MOTOR_DE_REGLAS_JSON');
+      hojaReglas.getRange('A1').setFontWeight('bold').setBackground('#34495e').setFontColor('white');
+      hojaReglas.getRange('B1').setValue('{}');
+    }
+    return hojaReglas;
+  } catch (lockError) {
+    console.error('Error adquiriendo lock para crear CONFIG_REGLAS:', lockError);
+    if (yaTieneLock) throw lockError;
+    return null;
+  } finally {
+    if (!yaTieneLock && lock) {
+      try { lock.releaseLock(); } catch (er) {}
+    }
+  }
+}
+
+function _versionReglas_(str) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(str), Utilities.Charset.UTF_8);
+  return bytes.map(function(b) {
+    const n = b < 0 ? b + 256 : b;
+    return n.toString(16).padStart(2, '0');
+  }).join('');
+}
+
+function _leerEncabezadosDatosReglas_() {
+  const fileId = getConfig('DATA_FILES.PRINCIPAL');
+  const ss = SpreadsheetApp.openById(fileId);
+  const hoja = ss.getSheetByName(getConfig('SHEETS.DATOS'));
+  if (!hoja || hoja.getLastColumn() < 1) return [];
+  const fila = hoja.getRange(1, 1, 1, hoja.getLastColumn()).getValues()[0];
+  const vistos = {};
+  const columnas = [];
+  fila.forEach(function(h) {
+    const nombre = String(h || '').trim().toUpperCase();
+    if (!nombre || vistos[nombre]) return;
+    vistos[nombre] = true;
+    columnas.push(nombre);
+  });
+  return columnas;
+}
+
 function obtenerReglasJSON() {
   try {
-    const fileId = getConfig('DATA_FILES.PRINCIPAL'); // Toma el ID de tu config actual
+    const fileId = getConfig('DATA_FILES.PRINCIPAL');
     const ss = SpreadsheetApp.openById(fileId);
-    let hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
-
-    // Si la hoja no existe, la crea (Instalación automática)
+    const hojaReglas = _obtenerHojaConfigReglas_(ss, true, false);
     if (!hojaReglas) {
-      // ✅ SEC-P1.5: LockService para evitar creación duplicada de la hoja bajo concurrencia
-      const lock = LockService.getScriptLock();
-      try {
-        lock.waitLock(20000);
-        // Re-chequear tras adquirir el lock: otro proceso pudo haberla creado mientras esperábamos
-        hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
-        if (!hojaReglas) {
-          hojaReglas = ss.insertSheet('CONFIG_REGLAS');
-          hojaReglas.hideSheet(); // La oculta para que los usuarios no la dañen
-          hojaReglas.getRange("A1").setValue("MOTOR_DE_REGLAS_JSON");
-          hojaReglas.getRange("A1").setFontWeight("bold").setBackground("#34495e").setFontColor("white");
-          hojaReglas.getRange("B1").setValue("{}"); // JSON vacío por defecto
-        }
-      } catch (lockError) {
-        // ✅ CONC-P2.1: diferenciar timeout de lock de otros errores (antes se tragaba en silencio
-        // y caía al TypeError de hojaReglas null, con mensaje técnico confuso)
-        console.error("Error adquiriendo lock para crear CONFIG_REGLAS:", lockError);
-        return { success: false, message: 'El sistema se encuentra ocupado por otro administrador. Por favor intente de nuevo en unos segundos.' };
-      } finally {
-        try { lock.releaseLock(); } catch (er) {}
-      }
+      return { success: false, message: 'El sistema se encuentra ocupado por otro administrador. Por favor intente de nuevo en unos segundos.' };
     }
-
-    const jsonString = hojaReglas.getRange("B1").getValue();
-    return { success: true, data: jsonString };
-
+    const jsonString = String(hojaReglas.getRange('B1').getValue() || '');
+    return { success: true, data: jsonString, version: _versionReglas_(jsonString) };
   } catch (error) {
-    console.error("Error leyendo reglas:", error);
+    console.error('Error leyendo reglas:', error);
     return { success: false, error: error.message };
   }
 }
 
-// Función para que el Administrador guarde cambios en el JSON desde la UI
-function guardarReglasJSON(jsonString, usuario) {
-  // ✅ CONC-P2.1: validar el JSON ANTES de tocar el lock, para que un JSON invalido
-  // nunca se reporte como timeout ni un timeout se reporte como JSON invalido
+function _aliasColumnaRegla_(criterio) {
+  return String((criterio && (criterio.columna_estado || criterio.columna_A || criterio.columna)) || '').trim().toUpperCase();
+}
+
+function _aliasOperadorRegla_(criterio) {
+  return String((criterio && (criterio.operador_estado || criterio.operador)) || '').trim();
+}
+
+function _recorrerBloquesRegla_(regla, visitante) {
+  if (regla.condiciones) visitante(regla.condiciones, 'condiciones');
+  if (Array.isArray(regla.excepciones)) {
+    regla.excepciones.forEach(function(bloque, i) { visitante(bloque, 'excepciones[' + i + ']'); });
+  } else if (regla.excepciones) {
+    visitante(regla.excepciones, 'excepciones');
+  }
+}
+
+function validarConfigReglas_(config, columnasConocidas) {
+  const errores = [];
+  const advertencias = [];
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    errores.push('La configuración debe ser un objeto JSON.');
+    return { errores: errores, advertencias: advertencias };
+  }
+  if (!Array.isArray(config.ReglasDeNegocio)) {
+    errores.push('ReglasDeNegocio debe ser un array.');
+    return { errores: errores, advertencias: advertencias };
+  }
+  const nombres = {};
+  const columnas = Array.isArray(columnasConocidas) ? columnasConocidas : null;
+
+  config.ReglasDeNegocio.forEach(function(regla, idx) {
+    const etiqueta = 'Regla ' + (idx + 1);
+    if (!regla || typeof regla !== 'object') {
+      errores.push(etiqueta + ': no es un objeto.');
+      return;
+    }
+    const nombre = String(regla.nombre || '').trim();
+    if (!nombre) errores.push(etiqueta + ': falta el nombre.');
+    const claveNombre = nombre.toUpperCase();
+    if (nombre && nombres[claveNombre]) errores.push(etiqueta + ': el nombre "' + nombre + '" está repetido.');
+    if (nombre) nombres[claveNombre] = true;
+
+    _recorrerBloquesRegla_(regla, function(bloque, donde) {
+      const criterios = bloque && Array.isArray(bloque.criterios) ? bloque.criterios : [];
+      if (!criterios.length) {
+        errores.push(etiqueta + ' / ' + donde + ': hace falta al menos un criterio. Un bloque vacío haría que la regla aplique a todas las filas o anule todas las alertas.');
+      }
+      criterios.forEach(function(criterio, cidx) {
+        const op = _aliasOperadorRegla_(criterio);
+        if (!op || !OPERADORES_CONDICION_REGLAS[op]) {
+          errores.push(etiqueta + ' / ' + donde + ' criterio ' + (cidx + 1) + ': operador desconocido.');
+          return;
+        }
+        const params = OPERADORES_CONDICION_REGLAS[op].parametros || [];
+        if (params.indexOf('valor') >= 0 && (criterio.valor === undefined || criterio.valor === null || String(criterio.valor) === '')) {
+          errores.push(etiqueta + ' / ' + donde + ' criterio ' + (cidx + 1) + ': falta el valor.');
+        }
+        if (params.indexOf('valores') >= 0 && (!Array.isArray(criterio.valores) || !criterio.valores.length) && (!Array.isArray(criterio.valores_estado) || !criterio.valores_estado.length)) {
+          errores.push(etiqueta + ' / ' + donde + ' criterio ' + (cidx + 1) + ': la lista de valores está vacía.');
+        }
+        if (columnas) {
+          const col = _aliasColumnaRegla_(criterio);
+          if (col && columnas.indexOf(col) < 0) advertencias.push(etiqueta + ': la columna "' + col + '" no está en Datos.');
+          const destino = String(criterio.columna_destino || '').trim().toUpperCase();
+          if (destino && columnas.indexOf(destino) < 0) advertencias.push(etiqueta + ': la columna destino "' + destino + '" no está en Datos.');
+        }
+      });
+    });
+
+    if (regla.alerta_bloqueo) {
+      const nivel = String(regla.alerta_bloqueo.nivel || '').toUpperCase();
+      if (NIVELES_ALERTA_REGLAS.indexOf(nivel) < 0) errores.push(etiqueta + ': nivel de bloqueo inválido.');
+      if (!String(regla.alerta_bloqueo.mensaje || '').trim()) errores.push(etiqueta + ': el bloqueo necesita un mensaje.');
+    }
+    if (regla.regla_tiempo) {
+      if (!Array.isArray(regla.regla_tiempo.umbrales) || !regla.regla_tiempo.umbrales.length) {
+        errores.push(etiqueta + ': la regla de tiempo necesita al menos un umbral.');
+      } else {
+        regla.regla_tiempo.umbrales.forEach(function(umbral, uidx) {
+          const nivel = String((umbral && umbral.nivel) || '').toUpperCase();
+          if (NIVELES_ALERTA_REGLAS.indexOf(nivel) < 0) errores.push(etiqueta + ': umbral ' + (uidx + 1) + ' con nivel inválido.');
+          if (!umbral || typeof umbral.mensaje !== 'string' || !umbral.mensaje.trim()) {
+            errores.push(etiqueta + ': el umbral ' + (uidx + 1) + ' necesita un mensaje.');
+          }
+        });
+      }
+      if (columnas) {
+        const fecha = String(regla.regla_tiempo.columna_fecha_inicio || '').trim().toUpperCase();
+        if (fecha && columnas.indexOf(fecha) < 0) advertencias.push(etiqueta + ': la fecha "' + fecha + '" no está en Datos.');
+      }
+    }
+    if (regla.texto_inicial_correo !== undefined && regla.texto_inicial_correo !== null) {
+      if (typeof regla.texto_inicial_correo !== 'string') errores.push(etiqueta + ': el texto inicial del correo debe ser texto.');
+      else if (regla.texto_inicial_correo.length > 2000) errores.push(etiqueta + ': el texto inicial del correo supera 2000 caracteres.');
+    }
+    if (regla.seguimiento_correo !== undefined && regla.seguimiento_correo !== null) {
+      const seg = regla.seguimiento_correo;
+      if (typeof seg !== 'object' || Array.isArray(seg)) {
+        errores.push(etiqueta + ': seguimiento_correo debe ser un objeto.');
+      } else {
+        Object.keys(seg).forEach(function(nivel) {
+          if (NIVELES_ALERTA_REGLAS.indexOf(nivel) < 0) {
+            errores.push(etiqueta + ': seguimiento con nivel desconocido "' + nivel + '".');
+            return;
+          }
+          const item = seg[nivel] || {};
+          if (item.exigir_observacion !== undefined && typeof item.exigir_observacion !== 'boolean') {
+            errores.push(etiqueta + ': exigir_observacion de ' + nivel + ' debe ser verdadero o falso.');
+          }
+          if (item.permitir_no_uso !== undefined && typeof item.permitir_no_uso !== 'boolean') {
+            errores.push(etiqueta + ': permitir_no_uso de ' + nivel + ' debe ser verdadero o falso.');
+          }
+          const nota = String(item.nota_correo || '');
+          const aviso = String(item.texto_no_uso || '');
+          if (nota.length > 600) errores.push(etiqueta + ': la nota de ' + nivel + ' supera 600 caracteres.');
+          if (aviso.length > 600) errores.push(etiqueta + ': el aviso de no uso de ' + nivel + ' supera 600 caracteres.');
+          if (item.exigir_observacion === true && !nota.trim()) errores.push(etiqueta + ': ' + nivel + ' exige observación y la nota del correo está vacía.');
+          if (item.permitir_no_uso === true && item.exigir_observacion !== true) errores.push(etiqueta + ': ' + nivel + ' no puede permitir no uso sin exigir observación.');
+          if (item.permitir_no_uso === true && !aviso.trim()) errores.push(etiqueta + ': ' + nivel + ' permite no uso y el aviso está vacío.');
+        });
+      }
+    }
+  });
+  return { errores: errores, advertencias: advertencias };
+}
+
+function guardarReglasJSON(jsonString, _usuarioIgnorado, versionEsperada) {
+  const denegado = _exigirAdminMotorReglas_('GUARDAR_REGLAS');
+  if (denegado) return denegado;
+
+  const texto = String(jsonString || '');
+  if (texto.length > 49000) {
+    return { success: false, error: 'El JSON supera 49.000 caracteres. Una celda de Sheets no lo puede guardar. Reduce sangría o reglas.' };
+  }
+
+  let obj;
   try {
-    JSON.parse(jsonString);
+    obj = JSON.parse(texto);
   } catch (parseError) {
-    return { success: false, error: "El formato JSON es inválido. Revisa la sintaxis." };
+    return { success: false, error: 'El formato JSON es inválido. Revisa la sintaxis.' };
+  }
+
+  let columnas = [];
+  try { columnas = _leerEncabezadosDatosReglas_(); } catch (e) { columnas = []; }
+  const validacion = validarConfigReglas_(obj, columnas);
+  if (validacion.errores.length) {
+    return { success: false, error: validacion.errores.join(' | '), errores: validacion.errores, advertencias: validacion.advertencias };
   }
 
   const lock = LockService.getScriptLock();
@@ -65,19 +244,23 @@ function guardarReglasJSON(jsonString, usuario) {
   try {
     const fileId = getConfig('DATA_FILES.PRINCIPAL');
     const ss = SpreadsheetApp.openById(fileId);
-    let hojaReglas = ss.getSheetByName('CONFIG_REGLAS');
-
-    // 2. Guardar en la celda B1
-    hojaReglas.getRange("B1").setValue(jsonString);
-
-    // 3. Registrar en auditoría (usando tu Gestor de Auditoría actual)
+    const hojaReglas = _obtenerHojaConfigReglas_(ss, true, true);
+    const actual = String(hojaReglas.getRange('B1').getValue() || '');
+    if (versionEsperada && _versionReglas_(actual) !== String(versionEsperada)) {
+      return { success: false, conflicto: true, error: 'Otro administrador modificó las reglas. Recarga antes de guardar.' };
+    }
+    hojaReglas.getRange('B1').setValue(texto);
+    const email = Session.getActiveUser().getEmail();
     try {
       const auditoria = new GestorAuditoria(fileId);
-      auditoria.registrarAccion(usuario, 'ACTUALIZAR_MOTOR_REGLAS', 'Se actualizó el JSON maestro de reglas de negocio');
-    } catch(e) { console.warn("No se pudo auditar:", e); }
-
-    return { success: true, message: "Reglas actualizadas correctamente en la base de datos." };
-
+      auditoria.registrarAccion(email, 'ACTUALIZAR_MOTOR_REGLAS', 'Se actualizó el JSON maestro de reglas de negocio');
+    } catch (e) { console.warn('No se pudo auditar:', e); }
+    return {
+      success: true,
+      message: 'Reglas actualizadas correctamente en la base de datos.',
+      version: _versionReglas_(texto),
+      advertencias: validacion.advertencias
+    };
   } catch (error) {
     return { success: false, error: 'Error al guardar las reglas: ' + error.message };
   } finally {
@@ -85,248 +268,18 @@ function guardarReglasJSON(jsonString, usuario) {
   }
 }
 
-/**
- * @typedef {Object} Regla
- * @property {string} id
- * @property {string} nombre
- * @property {string} descripcion
- * @property {string} codigo
- * @property {'ACTIVA'|'INACTIVA'} estado
- * @property {'FINANCIERO'|'PLAZO'|'ESTADO'|'GENERAL'} categoria
- * @property {'INFO'|'ADVERTENCIA'|'ALERTA'|'CRITICA'} severidad
- * @property {number} prioridad
- * @property {Object} parametros
- * @property {string[]} camposRequeridos
- * @property {boolean} activa
- */
-
-/**
- * @typedef {Object} AlertaGenerada
- * @property {string} id
- * @property {string} reglaId
- * @property {string} nombre
- * @property {string} codigo
- * @property {'INFO'|'ADVERTENCIA'|'ALERTA'|'CRITICA'} severidad
- * @property {number} prioridad
- * @property {string} mensaje
- * @property {string} rt
- * @property {string} proyecto
- * @property {string} tramo
- * @property {string} estado
- * @property {string} fechaEvaluacion
- * @property {string} detalle
- * @property {boolean} resuelta
- */
-
-class MotorReglas {
-  constructor(reglas = MotorReglas.reglasBase()) {
-    this.reglas = Array.isArray(reglas) ? reglas.filter(Boolean) : [];
-  }
-
-  static reglasBase() {
-    return [
-      {
-        id: 'REG-001',
-        nombre: 'Inconsistencia Financiera',
-        descripcion: 'Detecta cuando el valor ejecutado supera el valor programado.',
-        codigo: 'INCONSISTENCIA_FINANCIERA',
-        estado: 'ACTIVA',
-        categoria: 'FINANCIERO',
-        severidad: 'ALERTA',
-        prioridad: 100,
-        activa: true,
-        parametros: { umbral: 0 },
-        camposRequeridos: ['VALOR PAGADO', 'ESTIMADO $']
-      },
-      {
-        id: 'REG-002',
-        nombre: 'Alerta de Vencimiento',
-        descripcion: 'Detecta fechas próximas de compromiso o vencimiento.',
-        codigo: 'ALERTA_VENCIMIENTO',
-        estado: 'ACTIVA',
-        categoria: 'PLAZO',
-        severidad: 'ADVERTENCIA',
-        prioridad: 80,
-        activa: true,
-        parametros: { dias: 30 },
-        camposRequeridos: ['FECHA COMPROMISO', 'FECHA ESTIMADA DE ENTREGA']
-      },
-      {
-        id: 'REG-003',
-        nombre: 'Falta de Estado',
-        descripcion: 'Detecta RT activos sin estado definido o no normalizado.',
-        codigo: 'FALTA_DE_ESTADO',
-        estado: 'ACTIVA',
-        categoria: 'ESTADO',
-        severidad: 'INFO',
-        prioridad: 60,
-        activa: true,
-        parametros: { activo: 'ACTIVO' },
-        camposRequeridos: ['ACTIVO/INACTIVO', 'ESTADO PREDIAL AJUSTADO']
-      }
-    ];
-  }
-
-  _normalizarTexto(value) {
-    if (value === null || value === undefined) return '';
-    return String(value).trim();
-  }
-
-  _parseNumber(value) {
-    if (value === null || value === undefined || value === '') return 0;
-    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-    const cleaned = String(value).replace(/[$.\s]/g, '').replace(',', '.');
-    const numeric = Number(cleaned);
-    return Number.isFinite(numeric) ? numeric : 0;
-  }
-
-  _parseDate(value) {
-    if (!value && value !== 0) return null;
-    const str = this._normalizarTexto(value);
-    if (!str) return null;
-
-    const direct = new Date(str);
-    if (!isNaN(direct.getTime())) return direct;
-
-    const match = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-    if (match) {
-      const d = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
-      if (!isNaN(d.getTime())) return d;
-    }
-
-    return null;
-  }
-
-  _coalesceField(rtData, candidateKeys) {
-    if (!rtData || typeof rtData !== 'object') return '';
-    const upperMap = {};
-    Object.keys(rtData).forEach((key) => {
-      upperMap[String(key).toUpperCase().trim()] = rtData[key];
-    });
-
-    for (let i = 0; i < candidateKeys.length; i++) {
-      const key = candidateKeys[i];
-      const normalized = String(key).toUpperCase().trim();
-      if (upperMap[normalized] !== undefined) return upperMap[normalized];
-    }
-    return '';
-  }
-
-  _buildAlerta(regla, rtData, mensaje, detalle, override = {}) {
-    const rt = this._normalizarTexto(this._coalesceField(rtData, ['RT', 'NÚMERO RT', 'NUMERO RT']));
-    const proyecto = this._normalizarTexto(this._coalesceField(rtData, ['PROYECTO', 'NOMBRE PROYECTO']));
-    const tramo = this._normalizarTexto(this._coalesceField(rtData, ['TRAMO', 'CÓDIGO TRAMO', 'CODIGO TRAMO']));
-    const estado = this._normalizarTexto(this._coalesceField(rtData, ['ESTADO PREDIAL AJUSTADO', 'ESTADO PREDIAL', 'ESTADO']));
-
+function obtenerMetadatosEditorReglas() {
+  const denegado = _exigirAdminMotorReglas_('LEER_METADATOS_REGLAS');
+  if (denegado) return denegado;
+  try {
     return {
-      id: `${regla.codigo}-${rt || 'sin-rt'}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-      reglaId: regla.id,
-      nombre: regla.nombre,
-      codigo: regla.codigo,
-      severidad: override.severidad || regla.severidad,
-      prioridad: override.prioridad || regla.prioridad,
-      mensaje,
-      rt,
-      proyecto,
-      tramo,
-      estado,
-      fechaEvaluacion: new Date().toISOString(),
-      detalle,
-      resuelta: false
+      success: true,
+      columnas: _leerEncabezadosDatosReglas_(),
+      operadores: OPERADORES_CONDICION_REGLAS,
+      niveles: NIVELES_ALERTA_REGLAS,
+      tiposDias: TIPOS_DIAS_REGLAS
     };
+  } catch (error) {
+    return { success: false, error: error.message };
   }
-
-  _evalInconsistenciaFinanciera(rtData, regla) {
-    const ejecutado = this._parseNumber(this._coalesceField(rtData, ['VALOR PAGADO', 'VALOR EJECUTADO', 'PAGADO', 'EJECUTADO']));
-    const programado = this._parseNumber(this._coalesceField(rtData, ['ESTIMADO $', 'VALOR PROGRAMADO', 'PROGRAMADO', 'ESTIMADO']));
-    const umbral = Number(regla.parametros && regla.parametros.umbral !== undefined ? regla.parametros.umbral : 0);
-
-    if (programado > 0 && ejecutado > programado + umbral) {
-      return this._buildAlerta(
-        regla,
-        rtData,
-        'El valor ejecutado supera el valor programado.',
-        `Ejecutado: ${ejecutado.toLocaleString('es-CO')} > Programado: ${programado.toLocaleString('es-CO')}`,
-        { severidad: 'ALERTA', prioridad: regla.prioridad }
-      );
-    }
-
-    return null;
-  }
-
-  _evalAlertaVencimiento(rtData, regla) {
-    const diasAlerta = Number(regla.parametros && regla.parametros.dias !== undefined ? regla.parametros.dias : 30);
-    const fechaCompromiso = this._parseDate(this._coalesceField(rtData, ['FECHA COMPROMISO', 'FECHA DE COMPROMISO', 'FECHA VENCIMIENTO', 'FECHA ESTIMADA DE ENTREGA']));
-    if (!fechaCompromiso) return null;
-
-    const diffMs = fechaCompromiso.getTime() - Date.now();
-    const diffDias = diffMs / (1000 * 60 * 60 * 24);
-
-    if (diffDias <= diasAlerta && diffDias >= 0) {
-      return this._buildAlerta(
-        regla,
-        rtData,
-        `Falta poco tiempo para la fecha de compromiso o entrega.`,
-        `Quedan ${Math.ceil(diffDias)} días para la fecha de compromiso: ${fechaCompromiso.toISOString().slice(0, 10)}`,
-        { severidad: diffDias <= 7 ? 'CRITICA' : 'ADVERTENCIA', prioridad: regla.prioridad }
-      );
-    }
-
-    return null;
-  }
-
-  _evalFaltaDeEstado(rtData, regla) {
-    const activoRaw = this._coalesceField(rtData, ['ACTIVO/INACTIVO', 'ACTIVO_INACTIVO', 'ESTADO ACTIVO', 'ESTADO']);
-    const estadoActual = this._normalizarTexto(this._coalesceField(rtData, ['ESTADO PREDIAL AJUSTADO', 'ESTADO PREDIAL', 'ESTADO']));
-    const activo = this._normalizarTexto(activoRaw).toUpperCase();
-    const activoFlag = activo === 'ACTIVO' || activo === 'SI' || activo === 'S' || activo === '1';
-
-    if (activoFlag && (!estadoActual || estadoActual === '')) {
-      return this._buildAlerta(
-        regla,
-        rtData,
-        'El RT está activo pero no tiene estado definido.',
-        'El registro requiere asignar un estado para activar la clasificación operativa.',
-        { severidad: 'INFO', prioridad: regla.prioridad }
-      );
-    }
-
-    return null;
-  }
-
-  _evaluarRegla(regla, rtData) {
-    if (!regla || !regla.activa) return null;
-    const codigo = String(regla.codigo || '').toUpperCase();
-
-    switch (codigo) {
-      case 'INCONSISTENCIA_FINANCIERA':
-        return this._evalInconsistenciaFinanciera(rtData, regla);
-      case 'ALERTA_VENCIMIENTO':
-        return this._evalAlertaVencimiento(rtData, regla);
-      case 'FALTA_DE_ESTADO':
-        return this._evalFaltaDeEstado(rtData, regla);
-      default:
-        return null;
-    }
-  }
-
-  evaluarRegistro(rtData) {
-    if (!rtData || typeof rtData !== 'object') {
-      return [];
-    }
-
-    const resultados = [];
-    for (let i = 0; i < this.reglas.length; i++) {
-      const regla = this.reglas[i];
-      const alerta = this._evaluarRegla(regla, rtData);
-      if (alerta) {
-        resultados.push(alerta);
-      }
-    }
-    return resultados;
-  }
-}
-
-if (typeof globalThis !== 'undefined') {
-  globalThis.MotorReglas = MotorReglas;
 }

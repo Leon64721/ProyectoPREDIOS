@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Responder observaciones</title>
+  <style>
+    body { margin: 0; background: #f4f7fb; color: #1f2937; font-family: Segoe UI, Arial, sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 20px 16px 40px; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    .aviso { margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px solid #d9e2ec; }
+    .aviso.error { border-color: #c0392b; color: #9b1c1c; }
+    .banda { background: #1f3a5f; color: #fff; padding: 18px 16px; }
+    .banda h1 { margin: 0; color: #fff; font-size: 22px; }
+    .tarjeta { background: #fff; border: 1px solid #d9e2ec; border-left-width: 4px; border-radius: 10px; padding: 12px; margin-top: 12px; }
+    .tarjeta.n-ROJO { border-left-color: #c0392b; }
+    .tarjeta.n-NARANJA { border-left-color: #e67e22; }
+    .tarjeta.n-AMARILLO { border-left-color: #f1c40f; }
+    label { display: block; margin-top: 8px; font-size: 13px; }
+    textarea, input[type="file"] { width: 100%; box-sizing: border-box; margin-top: 4px; }
+    textarea { min-height: 72px; font: inherit; }
+    button { width: 100%; margin-top: 16px; background: #1f3a5f; color: #fff; border: 0; border-radius: 8px; padding: 14px; font-size: 16px; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: default; }
+    .aviso-no-uso, .caja-revision { display: none; margin-top: 8px; padding: 8px; border-radius: 8px; background: #fff8e8; border: 1px solid #f1c40f; }
+    .aviso-no-uso.visible, .caja-revision.visible { display: block; }
+    input[type="date"] { margin-top: 4px; }
+  </style>
+</head>
+<body>
+<div class="banda"><h1>Responder observaciones</h1></div>
+<main>
+  <p>La puede registrar el gestor o el articulador. Con una respuesta basta.</p>
+  <p>Escribe un comentario por cada RT. Si marcas que no se va a usar, adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya cumplen y lo que falta es actualizar la base, marca Revisar observación, indica la fecha del documento y deja la evidencia cargada en los repositorios para que se pueda corroborar.</p>
+  <div id="estado" class="aviso" hidden></div>
+  <div id="lista"></div>
+  <button type="button" id="guardar" hidden>Guardar y enviar</button>
+</main>
+<script>
+var TOKEN = <?!= tokenJs ?>;
+
+function escapar(valor) {
+  return String(valor == null ? '' : valor)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function etiqueta(nivel) {
+  var n = String(nivel || '').toUpperCase();
+  if (n === 'ROJO') return 'Crítica';
+  if (n === 'NARANJA') return 'Riesgo';
+  if (n === 'AMARILLO') return 'Preventiva';
+  return n || 'Sin nivel';
+}
+
+function claseNivel(nivel) {
+  var n = String(nivel || '').toUpperCase();
+  if (n === 'ROJO' || n === 'NARANJA' || n === 'AMARILLO') return ' n-' + n;
+  return '';
+}
+
+function mostrar(texto, esError) {
+  var caja = document.getElementById('estado');
+  caja.hidden = !texto;
+  caja.className = 'aviso' + (esError ? ' error' : '');
+  caja.textContent = texto || '';
+}
+
+function cargar() {
+  document.getElementById('lista').innerHTML = '<div class="aviso">Cargando observaciones...</div>';
+  document.getElementById('guardar').hidden = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) {
+        document.getElementById('lista').innerHTML = '';
+        mostrar((res && res.error) || 'No se pudo abrir el seguimiento.', true);
+        return;
+      }
+      pintar(res.filas || []);
+    })
+    .withFailureHandler(function(err) {
+      document.getElementById('lista').innerHTML = '';
+      mostrar((err && err.message) || 'No se pudo abrir el seguimiento.', true);
+    })
+    .obtenerSeguimientoPorToken(TOKEN);
+}
+
+function pintar(filas) {
+  var lista = document.getElementById('lista');
+  if (!filas.length) {
+    lista.innerHTML = '';
+    mostrar('Este enlace ya no tiene observaciones pendientes.', false);
+    return;
+  }
+  mostrar('', false);
+  lista.innerHTML = filas.map(function(fila) {
+    var textoPrevio = fila.observacionVigente ? String(fila.observacionVigente) : '';
+    var notaPrevia = textoPrevio
+      ? '<div class="aviso">Viene la observación anterior. Puedes dejarla o modificarla.</div>'
+      : '';
+    var noUso = fila.permitirNoUso
+      ? '<label><input type="checkbox" class="no-uso" data-id="' + escapar(fila.id) + '"> No se va a usar</label>' +
+        '<div class="aviso-no-uso" data-id="' + escapar(fila.id) + '"><div>' + escapar(fila.textoNoUso || '') + '</div>' +
+        '<label><input type="checkbox" class="aviso-ok" data-id="' + escapar(fila.id) + '"> Leí el aviso</label>' +
+        '<label>Informe técnico / jurídico<input type="file" class="informe" data-id="' + escapar(fila.id) + '" accept=".pdf,.doc,.docx,image/*"></label></div>'
+      : '';
+    var revision = '<label><input type="checkbox" class="revision" data-id="' + escapar(fila.id) + '"> Revisar observación</label>' +
+      '<div class="caja-revision" data-id="' + escapar(fila.id) + '"><p>La gestión o el documento ya cumplen el requisito, pero la base de datos no está actualizada. Indica la fecha del documento. La evidencia debe estar cargada en los repositorios institucionales para poder corroborarla.</p>' +
+      '<label>Fecha del documento<input type="date" class="fecha-doc" data-id="' + escapar(fila.id) + '"></label></div>';
+    var para = fila.dirigidoA ? ' · ' + fila.dirigidoA : '';
+    return '<article class="tarjeta' + claseNivel(fila.nivel) + '" data-id="' + escapar(fila.id) + '"><strong>RT ' + escapar(fila.rt) + ' · ' + escapar(fila.regla) + ' · ' + escapar(etiqueta(fila.nivel)) + escapar(para) + '</strong><div>' + escapar(fila.proyecto || '') + '</div>' +
+      '<label>Observación<textarea class="texto" data-id="' + escapar(fila.id) + '">' + escapar(textoPrevio) + '</textarea></label>' + notaPrevia + revision + noUso + '</article>';
+  }).join('');
+  lista.querySelectorAll('.no-uso').forEach(function(chk) {
+    chk.onchange = function() {
+      var id = chk.getAttribute('data-id');
+      var caja = lista.querySelector('.aviso-no-uso[data-id="' + id + '"]');
+      if (caja) caja.classList.toggle('visible', chk.checked);
+      if (chk.checked) {
+        var rev = lista.querySelector('.revision[data-id="' + id + '"]');
+        var cajaRev = lista.querySelector('.caja-revision[data-id="' + id + '"]');
+        if (rev) rev.checked = false;
+        if (cajaRev) cajaRev.classList.remove('visible');
+      }
+    };
+  });
+  lista.querySelectorAll('.revision').forEach(function(chk) {
+    chk.onchange = function() {
+      var id = chk.getAttribute('data-id');
+      var caja = lista.querySelector('.caja-revision[data-id="' + id + '"]');
+      if (caja) caja.classList.toggle('visible', chk.checked);
+      if (chk.checked) {
+        var no = lista.querySelector('.no-uso[data-id="' + id + '"]');
+        var cajaNo = lista.querySelector('.aviso-no-uso[data-id="' + id + '"]');
+        if (no) no.checked = false;
+        if (cajaNo) cajaNo.classList.remove('visible');
+      }
+    };
+  });
+  var boton = document.getElementById('guardar');
+  boton.hidden = false;
+  boton.disabled = false;
+  boton.onclick = guardar;
+}
+
+function leerArchivo(input) {
+  return new Promise(function(resolve, reject) {
+    var file = input && input.files && input.files[0];
+    if (!file) { resolve(null); return; }
+    if (file.size > 5 * 1024 * 1024) { reject(new Error('Cada anexo debe pesar 5 MB o menos.')); return; }
+    var reader = new FileReader();
+    reader.onload = function() {
+      resolve({ nombre: file.name, mime: file.type || '', base64: String(reader.result || '') });
+    };
+    reader.onerror = function() { reject(new Error('No se pudo leer un archivo.')); };
+    reader.readAsDataURL(file);
+  });
+}
+
+function guardar() {
+  var tarjetas = Array.prototype.slice.call(document.querySelectorAll('.tarjeta'));
+  var error = '';
+  var trabajos = tarjetas.map(function(tarjeta) {
+    var id = tarjeta.getAttribute('data-id');
+    var texto = (tarjeta.querySelector('.texto').value || '').trim();
+    var noUsoEl = tarjeta.querySelector('.no-uso');
+    var revEl = tarjeta.querySelector('.revision');
+    var noUso = !!(noUsoEl && noUsoEl.checked);
+    var revision = !!(revEl && revEl.checked);
+    if (!texto) error = error || 'Cada RT necesita una observación.';
+    if (noUso && revision) error = error || 'Revisar observación y no uso no pueden marcarse en el mismo RT.';
+    var fecha = '';
+    if (revision) {
+      fecha = (tarjeta.querySelector('.fecha-doc').value || '').trim();
+      var hoy = new Date();
+      var tope = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0') + '-' + String(hoy.getDate()).padStart(2, '0');
+      if (!fecha || fecha > tope) error = error || 'Si marcas Revisar observación, indica la fecha del documento. No puede ser posterior a hoy.';
+    }
+    var base = { id: id, observacionNueva: texto, noUso: noUso, revisionEstado: revision, fechaDocumento: fecha, avisoAceptado: false };
+    if (!noUso) return Promise.resolve(base);
+    var aviso = tarjeta.querySelector('.aviso-ok');
+    base.avisoAceptado = !!(aviso && aviso.checked);
+    if (!base.avisoAceptado) error = error || 'Debes confirmar que leíste el aviso de no uso.';
+    var informe = tarjeta.querySelector('.informe');
+    if (!informe || !informe.files[0]) error = error || 'Si no se va a usar, adjunta el informe técnico / jurídico.';
+    return leerArchivo(informe).then(function(archivo) {
+      base.informe = archivo;
+      return base;
+    });
+  });
+  if (error) { mostrar(error, true); return; }
+  var boton = document.getElementById('guardar');
+  boton.disabled = true;
+  mostrar('Guardando y enviando la respuesta...', false);
+  Promise.all(trabajos).then(function(filas) {
+    google.script.run
+      .withSuccessHandler(function(res) {
+        boton.disabled = false;
+        var msg = (res && (res.message || res.error)) || 'No se pudo guardar';
+        var guardado = !!(res && (res.success || msg.indexOf('quedó guardada') >= 0));
+        mostrar(msg, !(res && res.success));
+        if (guardado) cargar();
+      })
+      .withFailureHandler(function(err) {
+        boton.disabled = false;
+        mostrar((err && err.message) || 'No se pudo guardar', true);
+      })
+      .guardarSeguimientoAlertas({ token: TOKEN, filas: filas });
+  }).catch(function(e) {
+    boton.disabled = false;
+    mostrar(e.message || 'No se pudieron leer los archivos', true);
+  });
+}
+
+cargar();
+</script>
+</body>
+</html>

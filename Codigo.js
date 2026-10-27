@@ -156,6 +156,26 @@ function doGet(e) {
     const userEmail = Session.getActiveUser().getEmail() || '';
     console.log(`👤 Usuario: ${userEmail}`);
 
+    var tokenCrudo = (e && e.parameter && e.parameter.sa) ? String(e.parameter.sa) : '';
+    if (tokenCrudo) {
+      if (!/^[A-Za-z0-9-]{20,64}$/.test(tokenCrudo)) {
+        return HtmlService.createHtmlOutput(
+          '<div style="font-family:sans-serif;text-align:center;margin-top:48px;"><h2>Enlace no válido</h2><p>Este enlace de observaciones no se puede abrir.</p></div>'
+        ).setTitle('Enlace no válido');
+      }
+      if (!userEmail) {
+        return HtmlService.createHtmlOutput(
+          '<div style="font-family:sans-serif;text-align:center;margin-top:48px;"><h2>Entra con tu cuenta del IDU</h2><p>Para registrar la observación tienes que abrir el enlace con tu correo institucional.</p></div>'
+        ).setTitle('Entra con tu cuenta del IDU');
+      }
+      var formulario = HtmlService.createTemplateFromFile('seguimiento_formulario');
+      formulario.tokenJs = JSON.stringify(tokenCrudo);
+      return formulario.evaluate()
+        .setTitle('Responder observaciones')
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+        .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    }
+
     // 3️⃣ OBTENER ROL (CON MANEJO DE ERRORES)
     let role = null;
     try {
@@ -197,6 +217,9 @@ function doGet(e) {
       // expresiones complejas dentro de <?!= ... ?>.
       template.userEmail = userEmail;
       template.safeUserEmailJS = JSON.stringify(userEmail || '');
+      var tokenSeguimiento = (e && e.parameter && e.parameter.sa) ? String(e.parameter.sa) : '';
+      if (!/^[A-Za-z0-9-]{20,64}$/.test(tokenSeguimiento)) tokenSeguimiento = '';
+      template.tokenJs = JSON.stringify(tokenSeguimiento);
 
       return template.evaluate()
         .setTitle('Tablero de Gestión Predial - Enterprise Modular')
@@ -534,7 +557,7 @@ function getDashboardData() {
     });
     console.timeEnd('dashboard:sheetRead');
 
-    const alertasResumen = evaluarAlertasDataset(allRecords);
+    const alertasResumen = resumirAlertasActivasParaDashboard_(allRecords);
 
     console.time('dashboard:serialize');
     const cacheableResponse = {
@@ -578,7 +601,7 @@ function getDashboardData() {
       alertasResumen: JSON.stringify({
         success: false,
         totalAlertas: 0,
-        severidades: { CRITICA: 0, ALERTA: 0, ADVERTENCIA: 0, INFO: 0 },
+        severidades: { ROJO: 0, NARANJA: 0, AMARILLO: 0 },
         proyectosImpactados: 0,
         rtImpactados: 0,
         alertas: [],
@@ -1069,42 +1092,81 @@ function getSavedReports(usuario) {
 }
 
 function saveReport(nombre, config, filtros, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS (whitelist de roles que pueden crear)
   try {
-    const gestor = new GestorReportes();
-    return gestor.guardarReporte(nombre, config, filtros, usuario);
-  } catch (e) {
-    console.error(`Error en saveReport: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('REPORTES');
+
+    const rol = gestor.obtenerRol(actualUserEmail);
+    const ROLES_PUEDEN_CREAR_REPORTE = ['Administrador', 'Editor', 'Articulador'];
+    if (ROLES_PUEDEN_CREAR_REPORTE.indexOf(rol) === -1) {
+      throw new Error(
+        `❌ ACCESO DENEGADO — Solo ${ROLES_PUEDEN_CREAR_REPORTE.join(', ')} pueden crear reportes. ` +
+        `Tu rol es: ${rol}.`
+      );
+    }
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'CREAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en saveReport (permisos): ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    return gestorReportes.guardarReporte(nombre, config, filtros, usuario);
+  } catch (eLogica) {
+    console.error(`Error en saveReport (lógica): ${eLogica.message}`);
+    return { success: false, error: eLogica.message };
   }
 }
 
 function executeReport(reporteId, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS
   try {
-    const gestor = new GestorReportes();
-    const resultado = gestor.ejecutarReporte(reporteId, usuario);
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('REPORTES');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'EJECUTAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en executeReport (permisos): ${ePermiso.message}`);
+    return JSON.stringify({ success: false, error: ePermiso.message });
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    const resultado = gestorReportes.ejecutarReporte(reporteId, usuario);
     return JSON.stringify(resultado);
-  } catch (e) {
-    console.error(`Error en executeReport: ${e.message}`);
-    return JSON.stringify({
-      success: false,
-      error: e.message
-    });
+  } catch (eLogica) {
+    console.error(`Error en executeReport (lógica): ${eLogica.message}`);
+    return JSON.stringify({ success: false, error: eLogica.message });
   }
 }
 
 function deleteReport(reporteId, usuario) {
+  const actualUserEmail = Session.getActiveUser().getEmail();
+
+  // ✅ TRY/CATCH 1: PERMISOS (requiere ELIMINAR, solo Admin)
   try {
-    const gestor = new GestorReportes();
-    return gestor.eliminarReporte(reporteId, usuario);
-  } catch (e) {
-    console.error(`Error en deleteReport: ${e.message}`);
-    return {
-      success: false,
-      error: e.message
-    };
+    const gestor = new GestorPermisos();
+    gestor.validarPermiso('ELIMINAR');
+  } catch (ePermiso) {
+    logAction(actualUserEmail, 'ELIMINAR_REPORTE_DENEGADO', { razon: ePermiso.message });
+    console.error(`Error en deleteReport (permisos): ${ePermiso.message}`);
+    return { success: false, error: ePermiso.message };
+  }
+
+  // ✅ TRY/CATCH 2: LÓGICA DE NEGOCIO
+  try {
+    const gestorReportes = new GestorReportes();
+    return gestorReportes.eliminarReporte(reporteId, usuario);
+  } catch (eLogica) {
+    console.error(`Error en deleteReport (lógica): ${eLogica.message}`);
+    return { success: false, error: eLogica.message };
   }
 }
 
@@ -1114,21 +1176,78 @@ function deleteReport(reporteId, usuario) {
  * ═══════════════════════════════════════════════════════════
  */
 
+/**
+ * ✅ SPRINT6-FASE-0: Registra acción en auditoría.
+ * CRÍTICO: Obtiene identidad del usuario SIEMPRE del servidor (Session.getActiveUser),
+ * NUNCA del parámetro 'user' enviado por cliente (que podría ser falsificado).
+ * El parámetro 'user' se mantiene por compatibilidad pero es ignorado.
+ */
 function logAction(user, action, details) {
   try {
+    // ✅ Obtener identidad real del servidor, ignorar el parámetro 'user' del cliente
+    const actualUserEmail = Session.getActiveUser().getEmail();
     const auditoria = new GestorAuditoria();
-    return auditoria.registrarAccion(user, action, details);
+    return auditoria.registrarAccion(actualUserEmail, action, details);
   } catch (e) {
     console.error(`Error en logAction: ${e.message}`);
   }
 }
 
-function getUserLogs(usuario) {
+/**
+ * ✅ [2026-10-06] Tarea R: entrega la URL de la herramienta de Normalización solo a
+ * usuarios con rol Administrador. El valor real vive en la Script Property
+ * NORMALIZACION_URL — nunca en código versionado ni en el frontend (antes estaba
+ * hardcodeada en app_core_js.html, enviada al navegador de cualquiera que abriera la
+ * web app, sin importar su rol). Registra tanto el acceso concedido como el intento
+ * denegado, igual que pac_verificarRolAdmin().
+ */
+function obtenerUrlNormalizacion() {
   try {
+    const actualUserEmail = Session.getActiveUser().getEmail();
+    const gestorPermisos = new GestorPermisos();
+    const rol = gestorPermisos.obtenerRol(actualUserEmail);
+
+    if (rol !== getConfig('ROLES.ADMIN')) {
+      logAction(actualUserEmail, 'INTENTO_ACCESO_NORMALIZACION_DENEGADO', 'Rol actual: ' + rol);
+      return { success: false, mensaje: 'No tiene permiso para acceder a esta herramienta. Requiere rol Administrador.' };
+    }
+
+    const url = getConfigProperty('NORMALIZACION_URL', '');
+    if (!url) {
+      console.warn('⚠️ obtenerUrlNormalizacion: NORMALIZACION_URL no está configurada en Script Properties.');
+      return { success: false, mensaje: 'La herramienta de Normalización no está configurada. Contacte al administrador del sistema.' };
+    }
+
+    logAction(actualUserEmail, 'Acceso a Normalización', 'Abrió CONSOLIDADO Script');
+    return { success: true, url: url };
+  } catch (e) {
+    console.error(`Error en obtenerUrlNormalizacion: ${e.message}`);
+    return { success: false, mensaje: 'Error interno: ' + e.message };
+  }
+}
+
+function getUserLogs(usuario) {
+  const requesterEmail = Session.getActiveUser().getEmail();
+  try {
+    const gestor = new GestorPermisos();
+    const esConsultaPropia = (usuario === requesterEmail);
+
+    // Validar: si no es consulta propia (incluyendo 'ALL'), requerir 'PERMISOS'
+    if (!esConsultaPropia) {
+      gestor.validarPermiso('PERMISOS');
+    }
+
+    // Acceso permitido — proceder a obtener logs
     const auditoria = new GestorAuditoria();
     const logs = auditoria.obtenerLogsUsuario(usuario);
     return JSON.stringify(logs);
+
   } catch (e) {
+    // Log de intento denegado para auditoría
+    logAction(requesterEmail, 'ACCESO_LOGS_DENEGADO', {
+      usuarioSolicitado: usuario,
+      razonRechazo: e.message
+    });
     console.error(`Error en getUserLogs: ${e.message}`);
     return JSON.stringify([]);
   }
@@ -1280,6 +1399,10 @@ function getGeneralStats() {
 
 function initializeSystem() {
   try {
+    // ✅ SPRINT6-FASE-0: Validación RBAC server-side
+    const gestorPermisos = new GestorPermisos();
+    gestorPermisos.validarPermiso('ADMIN_SISTEMA');  // Lanza error si no es ADMIN
+
     validateConfig();
     
     const gestor = new GestorDatos();
@@ -1813,13 +1936,14 @@ function _buildAlertasEmailAttachmentGrid(alertasRows, fileNameBase) {
   const rows = Array.isArray(alertasRows) ? alertasRows : [];
   const headers = [
     'TIMESTAMP', 'NIVEL', 'RT', 'PROYECTO', 'ARTICULADOR', 'ARTICULADOR_EMAIL',
-    'GESTOR_EMAIL', 'FASE', 'REGLA', 'DIAS RESTANTES', 'MENSAJE',
+    'GESTOR_EMAIL', 'FASE', 'REGLA', 'DIAS RESTANTES', 'FECHA_VENCIMIENTO', 'MENSAJE',
     'ESTADO PREDIAL ACTUAL', 'OBSERVACIONES'
   ];
 
   const tableRows = rows.map(function(r) {
     return '<tr>' + headers.map(function(h) {
-      return '<td style="border:1px solid #b7c3d0;padding:6px;vertical-align:top;">' + _escapeHtmlAlertaEmail(r[h]) + '</td>';
+      var valor = h === 'FECHA_VENCIMIENTO' ? _textoFechaAlerta_(r[h]) : r[h];
+      return '<td style="border:1px solid #b7c3d0;padding:6px;vertical-align:top;">' + _escapeHtmlAlertaEmail(valor) + '</td>';
     }).join('') + '</tr>';
   }).join('');
 
@@ -1880,97 +2004,165 @@ function _obtenerObservacionesPorRT(rtsObjetivo) {
   return mapa;
 }
 
-function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino) {
+function _etiquetaSemaforoAlerta_(nivel) {
+  var n = String(nivel || '').toUpperCase();
+  if (n === 'ROJO') return 'Crítica';
+  if (n === 'NARANJA') return 'Riesgo';
+  if (n === 'AMARILLO') return 'Preventiva';
+  return n || 'Sin nivel';
+}
+
+function _diasVigenciaTexto_(valor) {
+  var crudo = String(valor == null ? '' : valor).trim().replace(',', '.');
+  if (!crudo || !/^-?\d+(\.\d+)?$/.test(crudo)) return { orden: 1e15, texto: 'sin dato' };
+  var dias = Math.trunc(Number(crudo));
+  if (dias < 0) return { orden: dias, texto: 'vencido hace ' + Math.abs(dias) + ' días' };
+  return { orden: dias, texto: dias + ' días de vigencia' };
+}
+
+function _datoOSinDato_(valor) {
+  var texto = String(valor == null ? '' : valor).trim();
+  return texto || 'sin dato';
+}
+
+function _textoArticuladorAlerta_(row) {
+  var nombre = String(row.ARTICULADOR || '').trim();
+  var correo = String(row.ARTICULADOR_EMAIL || '').trim();
+  if (nombre && correo && nombre.toLowerCase() !== correo.toLowerCase()) return nombre + ' (' + correo + ')';
+  return nombre || correo || 'sin dato';
+}
+
+function _renglonRtAlerta_(row) {
+  return 'RT ' + _datoOSinDato_(row.RT) +
+    ' · ' + _datoOSinDato_(row.PROYECTO) +
+    ' · ' + _diasVigenciaTexto_(row['DIAS RESTANTES']).texto +
+    ' · Gestor: ' + _datoOSinDato_(row.GESTOR_EMAIL) +
+    ' · Articulador: ' + _textoArticuladorAlerta_(row) +
+    ' · Estado predial: ' + _datoOSinDato_(row['ESTADO PREDIAL ACTUAL']);
+}
+
+function _ordenarRtsPorVigencia_(lista) {
+  return (lista || []).slice().sort(function(a, b) {
+    var da = _diasVigenciaTexto_(a['DIAS RESTANTES']).orden;
+    var db = _diasVigenciaTexto_(b['DIAS RESTANTES']).orden;
+    if (da !== db) return da - db;
+    var ra = String(a.RT || '');
+    var rb = String(b.RT || '');
+    if (ra < rb) return -1;
+    if (ra > rb) return 1;
+    return 0;
+  });
+}
+
+function _botonResponderObservaciones_(url) {
+  if (!url) return '';
+  var href = _escapeHtmlAlertaEmail(url);
+  return '<table role="presentation" cellpadding="0" cellspacing="0" style="margin:16px 0;"><tr><td style="background:#1f3a5f;border-radius:8px;">' +
+    '<a href="' + href + '" style="display:inline-block;background:#1f3a5f;color:#ffffff;padding:14px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px;font-family:Segoe UI,Arial,sans-serif;">Responder observaciones</a>' +
+    '</td></tr></table>';
+}
+
+function _contextoBotonObservaciones_() {
+  return '<p style="margin:12px 0 0 0;">Para cargar las observaciones hay que pulsar el botón Responder observaciones.</p>' +
+    '<p style="margin:8px 0 0 0;">La respuesta es obligatoria en las alertas que la exigen. Este correo se envía a la persona que tiene la asignación.</p>' +
+    '<p style="margin:8px 0 0 0;">Se requiere la respuesta dentro de los próximos tres días hábiles. Si no se cuenta con ella, se remitirá un informe al articulador. Si al séptimo día hábil sigue sin respuesta, se informará a quien remitió la alerta y al jefe inmediato.</p>';
+}
+
+function _avisoAmarilloGestor_() {
+  return '<div style="margin-top:12px;padding:10px 12px;background:#fff8e1;border:1px solid #e6b800;border-radius:8px;color:#5c4813;">Si usted no es el gestor del RT, notifique a su articulador para la actualización de los grupos de trabajo.</div>';
+}
+
+var TEXTO_BASE_CORREO_ALERTAS_ = 'Equipo de seguimiento predial. Este informe relaciona los predios que las reglas de alerta temprana marcaron al contrastar la fecha de inicio y la vida útil configuradas en la base de datos del tablero. Junto a cada RT se muestra el estado predial tal como está registrado, para que el equipo verifique si corresponde a la gestión más reciente. Cuando la alerta lo exige, hay que cargar una observación por cada RT. Si la decisión es que el proceso no se va a usar, se adjunta un solo archivo: el informe técnico / jurídico. Si la gestión o el documento ya existen y lo que falta es actualizar la base, marque Revisar observación, indique la fecha del documento y deje la evidencia cargada en los repositorios institucionales para que pueda corroborarse.';
+
+function _textoFechaAlerta_(valor) {
+  if (valor instanceof Date && !isNaN(valor.getTime())) {
+    return Utilities.formatDate(valor, Session.getScriptTimeZone() || 'America/Bogota', 'yyyy-MM-dd');
+  }
+  var texto = String(valor == null ? '' : valor).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(texto)) return texto.substring(0, 10);
+  return texto || 'Sin fecha';
+}
+
+function _asuntoAlertas_(rows, hoy) {
+  var nombres = {};
+  (rows || []).forEach(function(row) {
+    var nombre = String(row.REGLA || '').trim();
+    if (nombre) nombres[nombre] = true;
+  });
+  var lista = Object.keys(nombres);
+  var etiqueta = lista.length === 1 ? lista[0] : 'Varias reglas';
+  return 'Alerta temprana - ' + etiqueta + ' [' + hoy + ']';
+}
+
+function _introCorreoAlertas_(filas, textos) {
+  var mapa = textos || {};
+  var nombres = {};
+  (filas || []).forEach(function(row) {
+    var nombre = String(row.REGLA || '').trim();
+    if (nombre) nombres[nombre] = true;
+  });
+  var lista = Object.keys(nombres);
+  if (lista.length === 1) {
+    var propio = String(mapa[lista[0].toUpperCase()] || '').trim();
+    return { general: propio || TEXTO_BASE_CORREO_ALERTAS_, porRegla: false };
+  }
+  return { general: TEXTO_BASE_CORREO_ALERTAS_, porRegla: true };
+}
+
+function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino, urlSeguimiento, mapaPolitica, textosIniciales) {
   const filas = Array.isArray(alertasRows) ? alertasRows : [];
   const f = filtros || {};
+  const mapa = mapaPolitica || (typeof mapaPoliticasSeguimiento_ === 'function' ? mapaPoliticasSeguimiento_() : {});
   const total = filas.length;
-
   const count = { ROJO: 0, NARANJA: 0, AMARILLO: 0 };
-  const porTipo = {};
+  const grupos = {};
   filas.forEach(function(row) {
-    const nivel = String(row.NIVEL || '').toUpperCase();
+    const nivel = String(row.NIVEL || '').toUpperCase() || 'SIN NIVEL';
     if (count[nivel] !== undefined) count[nivel]++;
-
     const regla = String(row.REGLA || 'SIN REGLA').trim() || 'SIN REGLA';
-    const tipoKey = nivel + '||' + regla;
-    if (!porTipo[tipoKey]) {
-      porTipo[tipoKey] = {
-        nivel: nivel || 'SIN NIVEL',
-        regla: regla,
-        total: 0,
-        articuladores: {}
-      };
-    }
-    porTipo[tipoKey].total++;
-
-    const articulador = String(row.ARTICULADOR_EMAIL || row.ARTICULADOR || 'ARTICULADOR SIN ASIGNAR').trim() || 'ARTICULADOR SIN ASIGNAR';
-    const gestor = String(row.GESTOR_EMAIL || 'GESTOR SIN ASIGNAR').trim() || 'GESTOR SIN ASIGNAR';
-    if (!porTipo[tipoKey].articuladores[articulador]) {
-      porTipo[tipoKey].articuladores[articulador] = { total: 0, gestores: {} };
-    }
-    porTipo[tipoKey].articuladores[articulador].total++;
-    porTipo[tipoKey].articuladores[articulador].gestores[gestor] = (porTipo[tipoKey].articuladores[articulador].gestores[gestor] || 0) + 1;
+    if (!grupos[nivel]) grupos[nivel] = {};
+    if (!grupos[nivel][regla]) grupos[nivel][regla] = [];
+    grupos[nivel][regla].push(row);
   });
 
   function colorTipo(nivel) {
-    if (nivel === 'ROJO') return { bg: '#fdecec', border: '#c0392b', text: '#9b1c1c', badge: 'rgba(192,57,43,.12)' };
-    if (nivel === 'NARANJA') return { bg: '#fff4ea', border: '#e67e22', text: '#b45309', badge: 'rgba(230,126,34,.14)' };
-    if (nivel === 'AMARILLO') return { bg: '#fffbea', border: '#f1c40f', text: '#8a6d00', badge: 'rgba(241,196,15,.20)' };
-    return { bg: '#eef2f7', border: '#64748b', text: '#334155', badge: 'rgba(100,116,139,.14)' };
+    if (nivel === 'ROJO') return { bg: '#fdecec', border: '#c0392b', text: '#9b1c1c' };
+    if (nivel === 'NARANJA') return { bg: '#fff4ea', border: '#e67e22', text: '#b45309' };
+    if (nivel === 'AMARILLO') return { bg: '#fffbea', border: '#f1c40f', text: '#8a6d00' };
+    return { bg: '#eef2f7', border: '#64748b', text: '#334155' };
   }
 
-  const tiposOrdenados = Object.keys(porTipo).sort(function(a, b) {
-    return porTipo[b].total - porTipo[a].total;
-  });
-
-  const tiposHtml = tiposOrdenados.map(function(tipoKey) {
-    const tipo = porTipo[tipoKey];
-    const c = colorTipo(tipo.nivel);
-    const articuladoresOrdenados = Object.keys(tipo.articuladores).sort(function(a, b) {
-      return tipo.articuladores[b].total - tipo.articuladores[a].total;
-    });
-
-    const articuladoresHtml = articuladoresOrdenados.map(function(articulador) {
-      const dataArt = tipo.articuladores[articulador];
-      const gestoresRows = Object.keys(dataArt.gestores).sort(function(a, b) {
-        return dataArt.gestores[b] - dataArt.gestores[a];
-      }).map(function(gestor) {
-        return '<tr><td style="padding:6px 8px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(gestor) + '</td><td style="padding:6px 8px;border:1px solid #d9e2ec;text-align:right;font-weight:600;">' + dataArt.gestores[gestor] + '</td></tr>';
+  const orden = ['ROJO', 'NARANJA', 'AMARILLO'].concat(Object.keys(grupos).filter(function(n) {
+    return n !== 'ROJO' && n !== 'NARANJA' && n !== 'AMARILLO';
+  }));
+  const intro = _introCorreoAlertas_(filas, textosIniciales);
+  const bloques = [];
+  let hayObligacion = false;
+  orden.forEach(function(nivel) {
+    if (!grupos[nivel]) return;
+    const c = colorTipo(nivel);
+    const reglasHtml = Object.keys(grupos[nivel]).map(function(regla) {
+      const lista = _ordenarRtsPorVigencia_(grupos[nivel][regla]);
+      const pol = typeof politicaSeguimientoDeRegla_ === 'function' ? politicaSeguimientoDeRegla_(regla, nivel, mapa) : null;
+      if (pol && pol.exigir_observacion) hayObligacion = true;
+      const items = lista.map(function(row) {
+        return '<tr><td style="padding:4px 6px;border-top:1px solid #e5e7eb;">' + _escapeHtmlAlertaEmail(_renglonRtAlerta_(row)) + '</td></tr>';
       }).join('');
-
-      return [
-        '<div style="margin-top:10px;border:1px solid #dde6ef;border-radius:8px;overflow:hidden;background:#fff;">',
-        '<div style="padding:8px 10px;background:#f8fafc;color:#1f3a5f;font-weight:700;">',
-        '👤 Articulador: ' + _escapeHtmlAlertaEmail(articulador) + ' <span style="color:#52606d;">(' + dataArt.total + ')</span>',
-        '</div>',
-        '<table style="border-collapse:collapse;width:100%;font-size:12px;">',
-        '<thead><tr><th style="padding:6px 8px;border:1px solid #d9e2ec;background:#f1f5f9;text-align:left;">Gestor</th><th style="padding:6px 8px;border:1px solid #d9e2ec;background:#f1f5f9;text-align:right;">Cantidad</th></tr></thead>',
-        '<tbody>', gestoresRows, '</tbody>',
-        '</table>',
-        '</div>'
-      ].join('');
+      const nota = (pol && pol.nota_correo) ? '<p style="margin:8px 0 0 0;font-weight:700;">' + _escapeHtmlAlertaEmail(pol.nota_correo) + '</p>' : '';
+      const propio = intro.porRegla ? String((textosIniciales || {})[String(regla).trim().toUpperCase()] || '').trim() : '';
+      const textoRegla = propio ? '<p style="margin:8px 0 0 0;white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(propio) + '</p>' : '';
+      return '<div style="margin-top:8px;"><div style="font-weight:700;">' + _escapeHtmlAlertaEmail(regla) + ' · ' + lista.length + '</div>' + textoRegla + '<table style="border-collapse:collapse;width:100%;font-size:12px;">' + items + '</table>' + nota + '</div>';
     }).join('');
-
-    return [
-      '<div style="margin-top:14px;border:1px solid ' + c.border + ';border-radius:10px;overflow:hidden;background:' + c.bg + ';">',
-      '<div style="padding:10px 12px;border-bottom:1px solid ' + c.border + ';display:flex;justify-content:space-between;align-items:center;gap:12px;">',
-      '<div style="color:' + c.text + ';font-weight:800;">',
-      '🔔 ' + _escapeHtmlAlertaEmail(tipo.regla),
-      '</div>',
-      '<div style="background:' + c.badge + ';color:' + c.text + ';padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700;">',
-      _escapeHtmlAlertaEmail(tipo.nivel) + ' · ' + tipo.total,
-      '</div>',
-      '</div>',
-      '<div style="padding:10px 12px;">',
-      articuladoresHtml,
-      '</div>'
-    ].join('');
-  }).join('');
+    bloques.push('<div style="margin-top:14px;border:1px solid ' + c.border + ';border-radius:10px;background:' + c.bg + ';padding:10px 12px;"><div style="color:' + c.text + ';font-weight:800;">' + _escapeHtmlAlertaEmail(_etiquetaSemaforoAlerta_(nivel)) + '</div>' + reglasHtml + '</div>');
+  });
 
   const lblNivel = (!f.nivel || f.nivel === 'ALL') ? 'Todos' : f.nivel;
   const lblRegla = (!f.regla || f.regla === 'ALL') ? 'Todas' : f.regla;
   const lblProyecto = (!f.proyecto || f.proyecto === 'ALL') ? 'Todos' : f.proyecto;
   const lblArt = (!f.articulador || f.articulador === 'ALL') ? 'Todos' : f.articulador;
+  const hayEnlace = hayObligacion && urlSeguimiento;
+  const apertura = hayEnlace ? (_contextoBotonObservaciones_() + _botonResponderObservaciones_(urlSeguimiento) + _avisoAmarilloGestor_()) : '';
+  const cierre = hayEnlace ? _botonResponderObservaciones_(urlSeguimiento) : '';
 
   return [
     '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;max-width:920px;margin:0 auto;">',
@@ -1978,24 +2170,606 @@ function _buildResumenHtmlAgrupado(alertasRows, filtros, etiquetaDestino) {
     '<h2 style="margin:0;font-size:22px;">Informe de Alertas Tempranas</h2>',
     '<div style="margin-top:6px;font-size:13px;opacity:.92;">Destinatario: <b>' + _escapeHtmlAlertaEmail(etiquetaDestino) + '</b></div>',
     '</div>',
-    '<table style="border-collapse:collapse;width:100%;margin-top:12px;font-size:13px;background:#fff;border:1px solid #d9e2ec;border-radius:8px;overflow:hidden;">',
+    apertura,
+    '<div style="margin-top:12px;padding:10px 12px;border:1px solid #d9e2ec;background:#fff;border-radius:8px;"><p style="margin:0;white-space:pre-wrap;">' + _escapeHtmlAlertaEmail(intro.general) + '</p></div>',
+    '<table style="border-collapse:collapse;width:100%;margin-top:12px;font-size:13px;background:#fff;border:1px solid #d9e2ec;">',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Nivel</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblNivel) + '</td></tr>',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Regla</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblRegla) + '</td></tr>',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Proyecto</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblProyecto) + '</td></tr>',
     '<tr><td style="padding:7px;border:1px solid #d9e2ec;background:#f8fafc;"><b>Filtro Articulador</b></td><td style="padding:7px;border:1px solid #d9e2ec;">' + _escapeHtmlAlertaEmail(lblArt) + '</td></tr>',
     '</table>',
     '<div style="margin-top:12px;padding:10px 12px;border:1px solid #d9e2ec;background:#f8fafc;border-radius:8px;">',
-    '<b>Total alertas:</b> ' + total + ' &nbsp;|&nbsp; <b style="color:#9b1c1c;">ROJO:</b> ' + count.ROJO + ' &nbsp;|&nbsp; <b style="color:#b45309;">NARANJA:</b> ' + count.NARANJA + ' &nbsp;|&nbsp; <b style="color:#8a6d00;">AMARILLO:</b> ' + count.AMARILLO,
+    '<b>Total alertas:</b> ' + total + ' &nbsp;|&nbsp; <b style="color:#9b1c1c;">Crítica:</b> ' + count.ROJO + ' &nbsp;|&nbsp; <b style="color:#b45309;">Riesgo:</b> ' + count.NARANJA + ' &nbsp;|&nbsp; <b style="color:#8a6d00;">Preventiva:</b> ' + count.AMARILLO,
     '</div>',
-    '<h3 style="margin:16px 0 8px 0;color:#1f3a5f;">Agrupación por tipo de alerta → articulador → gestor</h3>',
-    tiposHtml,
+    bloques.join(''),
+    cierre,
     '<p style="margin-top:14px;color:#52606d;">Se adjunta archivo tabular con cuadrícula y columna OBSERVACIONES.</p>',
     '</div>'
   ].join('');
 }
 
+function _textoPlanoAlertas_(alertasRows, etiquetaDestino, urlSeguimiento, mapaPolitica, textosIniciales) {
+  const filas = Array.isArray(alertasRows) ? alertasRows : [];
+  const mapa = mapaPolitica || {};
+  const grupos = {};
+  filas.forEach(function(row) {
+    const nivel = String(row.NIVEL || '').toUpperCase() || 'SIN NIVEL';
+    const regla = String(row.REGLA || 'SIN REGLA').trim() || 'SIN REGLA';
+    if (!grupos[nivel]) grupos[nivel] = {};
+    if (!grupos[nivel][regla]) grupos[nivel][regla] = [];
+    grupos[nivel][regla].push(row);
+  });
+  const intro = _introCorreoAlertas_(filas, textosIniciales);
+  const lineas = ['Informe de Alertas Tempranas', 'Destinatario: ' + (etiquetaDestino || ''), '', intro.general];
+  let hayObligacion = false;
+  Object.keys(grupos).forEach(function(nivel) {
+    lineas.push('');
+    lineas.push(_etiquetaSemaforoAlerta_(nivel));
+    Object.keys(grupos[nivel]).forEach(function(regla) {
+      const lista = _ordenarRtsPorVigencia_(grupos[nivel][regla]);
+      const pol = typeof politicaSeguimientoDeRegla_ === 'function' ? politicaSeguimientoDeRegla_(regla, nivel, mapa) : null;
+      if (pol && pol.exigir_observacion) hayObligacion = true;
+      lineas.push(regla + ' (' + lista.length + ')');
+      if (intro.porRegla) {
+        var propio = String((textosIniciales || {})[String(regla).trim().toUpperCase()] || '').trim();
+        if (propio) lineas.push(propio);
+      }
+      lista.forEach(function(row) {
+        lineas.push('- ' + _renglonRtAlerta_(row));
+      });
+      if (pol && pol.nota_correo) lineas.push(pol.nota_correo);
+    });
+  });
+  if (hayObligacion && urlSeguimiento) {
+    lineas.splice(2, 0,
+      '',
+      'Para cargar las observaciones hay que pulsar el botón Responder observaciones.',
+      'La respuesta es obligatoria en las alertas que la exigen. Este correo se envía a la persona que tiene la asignación.',
+      'Se requiere la respuesta dentro de los próximos tres días hábiles. Si no se cuenta con ella, se remitirá un informe al articulador. Si al séptimo día hábil sigue sin respuesta, se informará a quien remitió la alerta y al jefe inmediato.',
+      'Si usted no es el gestor del RT, notifique a su articulador para la actualización de los grupos de trabajo.',
+      'Responder observaciones: ' + urlSeguimiento
+    );
+    lineas.push('', 'Responder observaciones: ' + urlSeguimiento);
+  }
+  lineas.push('', 'Se adjunta el archivo con el detalle.');
+  return lineas.join('\n');
+}
+
+function probarCuerpoAlertas_() {
+  var denegado = _exigirAdminMotorReglas_('PROBAR_CUERPO_ALERTAS');
+  if (denegado) {
+    console.log(denegado.error || 'Requiere rol Administrador.');
+    return denegado;
+  }
+  var base = {
+    NIVEL: 'ROJO',
+    REGLA: 'Regla prueba',
+    PROYECTO: 'Proyecto prueba',
+    GESTOR_EMAIL: 'gestor@idu.gov.co',
+    ARTICULADOR: 'Ana Ruiz',
+    ARTICULADOR_EMAIL: 'ana.ruiz@idu.gov.co',
+    'ESTADO PREDIAL ACTUAL': 'En gestión'
+  };
+  function fila(rt, dias) {
+    var copia = {};
+    Object.keys(base).forEach(function(k) { copia[k] = base[k]; });
+    copia.RT = rt;
+    copia['DIAS RESTANTES'] = dias;
+    return copia;
+  }
+  var filas = [
+    fila('B', 5),
+    fila('A', ''),
+    fila('C', -3),
+    fila('D', 0),
+    fila('E', 5)
+  ];
+  var i;
+  for (i = 1; i <= 150; i++) filas.push(fila('F' + i, 10 + i));
+  var html = _buildResumenHtmlAgrupado(filas, {}, 'prueba', '', {});
+  var texto = _textoPlanoAlertas_(filas, 'prueba', '', {});
+  var faltan = [];
+  filas.forEach(function(f) {
+    if (html.indexOf('RT ' + f.RT + ' ·') < 0 || texto.indexOf('RT ' + f.RT + ' ·') < 0) faltan.push(f.RT);
+  });
+  var marcas = ['RT C ·', 'RT D ·', 'RT B ·', 'RT E ·', 'RT F1 ·', 'RT A ·'].map(function(m) {
+    return texto.indexOf(m);
+  });
+  var ordenOk = marcas.every(function(pos, idx) {
+    return pos >= 0 && (idx === 0 || pos > marcas[idx - 1]);
+  });
+  var frase = html.indexOf('Los demás están') >= 0 || texto.indexOf('Los demás están') >= 0;
+  console.log('RT faltantes: ' + (faltan.length ? faltan.join(', ') : 'ninguno'));
+  console.log('Orden: ' + (ordenOk ? 'correcto' : 'falló'));
+  console.log('Caracteres HTML: ' + html.length);
+  console.log('Frase de adjunto: ' + (frase ? 'apareció' : 'no aparece'));
+  return { success: faltan.length === 0 && ordenOk && !frase, caracteres: html.length, faltantes: faltan.length };
+}
+
+
+function _diasHastaVencimiento_(fechaTexto) {
+  var t = _textoFechaAlerta_(fechaTexto);
+  if (t === 'Sin fecha' || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
+  var hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'America/Bogota', 'yyyy-MM-dd');
+  function aUtc(s) {
+    var p = s.split('-');
+    return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  }
+  return Math.round((aUtc(t) - aUtc(hoy)) / 86400000);
+}
+
+function _diasRestantesNumero_(valor) {
+  var crudo = String(valor == null ? '' : valor).trim().replace(',', '.');
+  if (!/^-?\d+(\.\d+)?$/.test(crudo)) return null;
+  return Math.trunc(Number(crudo));
+}
+
+function _cuboDesdeDias_(dias) {
+  if (dias === null || dias === undefined) return 'sin';
+  if (dias < 0) return null;
+  if (dias <= 30) return 'd30';
+  if (dias <= 60) return 'd60';
+  if (dias <= 90) return 'd90';
+  return 'mas90';
+}
+
+function _cuboVencimiento_(fechaTexto) {
+  return _cuboDesdeDias_(_diasHastaVencimiento_(fechaTexto));
+}
+
+function _historialSeguimientoInforme_(filasEnvio) {
+  var claves = {};
+  (filasEnvio || []).forEach(function(row) {
+    var clave = _claveRtRegla_(row.RT, row.REGLA);
+    if (String(row.RT || '').trim() || String(row.REGLA || '').trim()) claves[clave] = true;
+  });
+  var lectura = (typeof _leerSeguimientoAlertas_ === 'function') ? _leerSeguimientoAlertas_() : { filas: [] };
+  var filas = [];
+  var respondidas = {};
+  var noUso = {};
+  var revision = {};
+  (lectura.filas || []).forEach(function(fila) {
+    var clave = _claveRtRegla_(fila.RT, fila.REGLA);
+    if (!claves[clave]) return;
+    var estado = String(fila.ESTADO || '');
+    if (estado !== 'RESPONDIDA' && estado !== 'PENDIENTE') return;
+    var marcoNoUso = String(fila.NO_USO || '').toUpperCase() === 'SI';
+    var marcoRevision = String(fila.REVISION_ESTADO || '').toUpperCase() === 'SI';
+    if (estado === 'RESPONDIDA') {
+      respondidas[clave] = true;
+      if (marcoNoUso) noUso[clave] = true;
+      if (marcoRevision) revision[clave] = true;
+    }
+    var persona = String(fila.GESTOR_EMAIL || '').trim() || String(fila.ARTICULADOR_EMAIL || '').trim();
+    filas.push({
+      rt: String(fila.RT || ''),
+      regla: String(fila.REGLA || ''),
+      persona: persona,
+      estado: estado,
+      noUso: marcoNoUso ? 'SI' : 'NO',
+      revision: marcoRevision ? 'SI' : 'NO',
+      enlace: String(fila.ARCHIVO_JURIDICO_URL || '').trim()
+    });
+  });
+  var total = Object.keys(claves).length;
+  var nRespondidas = Object.keys(respondidas).length;
+  return {
+    conteo: {
+      total: total,
+      respondidas: nRespondidas,
+      pendientes: total - nRespondidas,
+      noUso: Object.keys(noUso).length,
+      revision: Object.keys(revision).length
+    },
+    filas: filas
+  };
+}
+
+function _reglasDeTiempoInforme_() {
+  var mapa = {};
+  var leido = (typeof obtenerReglasJSON === 'function') ? obtenerReglasJSON() : null;
+  if (!leido || !leido.success) return mapa;
+  var parsed;
+  try { parsed = JSON.parse(leido.data || '{}'); } catch (e) { return mapa; }
+  var reglas = parsed && Array.isArray(parsed.ReglasDeNegocio) ? parsed.ReglasDeNegocio : [];
+  reglas.forEach(function(regla) {
+    var nombre = String(regla && regla.nombre || '').trim().toUpperCase();
+    if (!nombre) return;
+    var tiempo = regla.regla_tiempo || {};
+    mapa[nombre] = {
+      columna: String(tiempo.columna_fecha_inicio || '').trim().toUpperCase(),
+      vida: Number(tiempo.dias_vida_util),
+      tipo: String(tiempo.tipo_dias || 'CALENDARIO').toUpperCase()
+    };
+  });
+  return mapa;
+}
+
+function _parseFechaInforme_(valor) {
+  if (valor instanceof Date && !isNaN(valor.getTime())) {
+    var copia = new Date(valor.getTime());
+    copia.setHours(12, 0, 0, 0);
+    return copia;
+  }
+  var s = String(valor || '').trim();
+  if (!s) return null;
+  var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 12, 0, 0);
+  var partes = s.split(/[-/]/);
+  if (partes.length >= 3 && partes[0].length <= 2) {
+    var dia = parseInt(partes[0], 10);
+    var mes = parseInt(partes[1], 10) - 1;
+    var anioTxt = String(partes[2]).replace(/\D/g, '');
+    var anio = anioTxt.length === 2 ? 2000 + parseInt(anioTxt, 10) : parseInt(anioTxt, 10);
+    var fecha = new Date(anio, mes, dia, 12, 0, 0);
+    if (fecha.getFullYear() === anio && fecha.getMonth() === mes && fecha.getDate() === dia) return fecha;
+  }
+  return null;
+}
+
+function _sumarDiasCalendarioInforme_(fecha, dias) {
+  var d = new Date(fecha.getTime());
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + Math.round(Number(dias) || 0));
+  return d;
+}
+
+function _fechasInicioPorRt_(rts, columnas) {
+  var mapa = {};
+  var ids = (typeof getDataFilesIds === 'function') ? getDataFilesIds() : [];
+  var hojaNombre = getConfig('SHEETS.DATOS');
+  var colRt = String(getConfig('COLUMNS.RT', 'RT') || 'RT').toUpperCase().trim();
+  ids.forEach(function(id) {
+    try {
+      var ss = SpreadsheetApp.openById(id);
+      var ws = ss.getSheetByName(hojaNombre);
+      if (!ws) return;
+      var values = ws.getDataRange().getValues();
+      if (!values || values.length < 2) return;
+      var headers = values[0].map(function(h) { return String(h || '').toUpperCase().trim(); });
+      var idxRt = headers.indexOf(colRt);
+      if (idxRt < 0) return;
+      var idxCols = {};
+      columnas.forEach(function(c) { idxCols[c] = headers.indexOf(c); });
+      for (var r = 1; r < values.length; r++) {
+        var rt = String(values[r][idxRt] || '').trim().toUpperCase();
+        if (!rt || !rts[rt] || mapa[rt]) continue;
+        var dato = {};
+        columnas.forEach(function(c) {
+          if (idxCols[c] >= 0) dato[c] = values[r][idxCols[c]];
+        });
+        mapa[rt] = dato;
+      }
+    } catch (e) {
+      console.warn('No se pudo leer la fecha de la matriz ' + id + ': ' + e.message);
+    }
+  });
+  return mapa;
+}
+
+function _completarFechasVencimiento_(filas) {
+  var lista = Array.isArray(filas) ? filas : [];
+  var reglas = _reglasDeTiempoInforme_();
+  var rts = {};
+  var columnas = { 'FECHA AVALUO': true };
+  lista.forEach(function(row) {
+    var rt = String(row.RT || '').trim().toUpperCase();
+    if (rt) rts[rt] = true;
+    var conf = reglas[String(row.REGLA || '').trim().toUpperCase()];
+    if (conf && conf.columna) columnas[conf.columna] = true;
+  });
+  var fechas = _fechasInicioPorRt_(rts, Object.keys(columnas));
+  var tz = Session.getScriptTimeZone() || 'America/Bogota';
+  var motorHabil = null;
+  lista.forEach(function(row) {
+    var ya = _textoFechaAlerta_(row.FECHA_VENCIMIENTO);
+    if (ya !== 'Sin fecha') {
+      row.FECHA_VENCIMIENTO = ya;
+      return;
+    }
+    var nombre = String(row.REGLA || '').trim().toUpperCase();
+    var conf = reglas[nombre] || {};
+    var esAvaluo = nombre.indexOf('AVALU') >= 0;
+    var columna = conf.columna || (esAvaluo ? 'FECHA AVALUO' : '');
+    var vida = Number(conf.vida);
+    if (!(vida > 0) && esAvaluo) vida = 365;
+    var tipo = conf.tipo || 'CALENDARIO';
+    if (!columna || !(vida > 0)) return;
+    var datoRt = fechas[String(row.RT || '').trim().toUpperCase()] || {};
+    var crudo = datoRt[columna];
+    if ((crudo === undefined || crudo === '' || crudo === null) && esAvaluo && columna !== 'FECHA AVALUO') {
+      crudo = datoRt['FECHA AVALUO'];
+      if (!(Number(conf.vida) > 0)) vida = 365;
+      tipo = Number(conf.vida) > 0 ? tipo : 'CALENDARIO';
+    }
+    var inicio = _parseFechaInforme_(crudo);
+    if (!inicio) return;
+    var fin;
+    if (tipo === 'HABILES' && typeof MotorEvaluadorReglas === 'function') {
+      if (!motorHabil) motorHabil = new MotorEvaluadorReglas();
+      fin = motorHabil._sumarDiasHabiles(inicio, vida);
+    } else {
+      fin = _sumarDiasCalendarioInforme_(inicio, vida);
+    }
+    row.FECHA_VENCIMIENTO = Utilities.formatDate(fin, tz, 'yyyy-MM-dd');
+  });
+}
+
+function _cuboFilaInforme_(row) {
+  var porDias = _diasRestantesNumero_(row && row['DIAS RESTANTES']);
+  if (porDias !== null) return _cuboDesdeDias_(porDias);
+  return _cuboVencimiento_(row && row.FECHA_VENCIMIENTO);
+}
+
+function _conteoVencimientos_(filas) {
+  var c = { d30: 0, d60: 0, d90: 0, mas90: 0, sin: 0 };
+  (filas || []).forEach(function(row) {
+    var cubo = _cuboFilaInforme_(row);
+    if (!cubo || c[cubo] === undefined) return;
+    c[cubo]++;
+  });
+  return c;
+}
+
+function _tortaVencimientos_(filas) {
+  var c = _conteoVencimientos_(filas);
+  var etiquetas = [
+    ['0 a 30', c.d30],
+    ['31 a 60', c.d60],
+    ['61 a 90', c.d90],
+    ['Mayor de 90', c.mas90]
+  ];
+  if (c.sin) etiquetas.push(['Sin fecha', c.sin]);
+  var tabla = Charts.newDataTable()
+    .addColumn(Charts.ColumnType.STRING, 'Estado')
+    .addColumn(Charts.ColumnType.NUMBER, 'Alertas');
+  var alguna = false;
+  etiquetas.forEach(function(par) {
+    if (par[1] > 0) {
+      tabla.addRow(par);
+      alguna = true;
+    }
+  });
+  if (!alguna) return null;
+  return Charts.newPieChart()
+    .setDataTable(tabla.build())
+    .setTitle('Días de vigencia de este envío')
+    .setDimensions(520, 320)
+    .build()
+    .getAs('image/png')
+    .setName('vencimientos.png');
+}
+
+function _agruparInformeJefe_(filas) {
+  var grupos = {};
+  var mostrarSin = false;
+  (filas || []).forEach(function(row) {
+    var cubo = _cuboFilaInforme_(row);
+    if (!cubo) return;
+    var art = String(row.ARTICULADOR || '').trim() || 'Sin articulador';
+    var proy = String(row.PROYECTO || '').trim() || 'Sin proyecto';
+    var clave = art + '||' + proy;
+    if (!grupos[clave]) grupos[clave] = { art: art, proy: proy, d30: 0, d60: 0, d90: 0, mas90: 0, sin: 0 };
+    if (grupos[clave][cubo] === undefined) return;
+    grupos[clave][cubo]++;
+    if (cubo === 'sin') mostrarSin = true;
+  });
+  return { grupos: grupos, mostrarSin: mostrarSin };
+}
+
+function _grupoInformeVisible_(grupo, mostrarSin) {
+  var n = grupo.d30 + grupo.d60 + grupo.d90 + grupo.mas90;
+  if (mostrarSin) n += grupo.sin;
+  return n > 0;
+}
+
+function _reglasDelInforme_(filas) {
+  var vistos = {};
+  var lista = [];
+  (filas || []).forEach(function(row) {
+    var nombre = String(row.REGLA || '').trim();
+    var clave = nombre.toUpperCase();
+    if (!nombre || vistos[clave]) return;
+    vistos[clave] = true;
+    lista.push(nombre);
+  });
+  return lista;
+}
+
+function _textoReglaInformeJefe_(nombre, textos) {
+  var propio = String((textos || {})[String(nombre || '').trim().toUpperCase()] || '').trim();
+  if (propio) return propio;
+  if (/aval[uú]o/i.test(String(nombre || ''))) {
+    return 'Los predios de esta alerta no cuentan, a la fecha, con una oferta notificada. Por esa razón el avalúo aparece sin uso.';
+  }
+  return 'Los predios de este grupo corresponden a la regla «' + nombre + '», de acuerdo con la condición configurada en el tablero.';
+}
+
+function _parrafosInformeJefe_(filas, textos) {
+  var reglas = _reglasDelInforme_(filas);
+  var niveles = {};
+  (filas || []).forEach(function(row) {
+    var nivel = _etiquetaSemaforoAlerta_(row.NIVEL);
+    if (nivel) niveles[nivel] = true;
+  });
+  var parrafos = [
+    'Cordial saludo.',
+    'Se remite el informe consolidado de las alertas tempranas de este envío (' + (filas || []).length + ').',
+    'Tipo de alerta: ' + (reglas.join('; ') || 'Varias') + '. Niveles incluidos: ' + (Object.keys(niveles).join(', ') || 'Varios') + '.'
+  ];
+  reglas.forEach(function(nombre) {
+    parrafos.push(_textoReglaInformeJefe_(nombre, textos));
+  });
+  parrafos.push('Las observaciones que estas alertas exigen las registran los gestores responsables de cada predio. El término para presentarlas es de tres días hábiles, contados desde el día siguiente al envío. Si no se reciben en ese término, se informa al articulador. Si al séptimo día hábil continúan sin respuesta, se informa a quien remitió la alerta y al jefe inmediato.');
+  parrafos.push('El archivo adjunto relaciona cada predio, los días de vigencia y la fecha de vencimiento.');
+  return parrafos;
+}
+
+function _estadoRespuestasInforme_(conteo) {
+  var c = conteo || {};
+  return 'Estado de las respuestas de este envío: respondidas, ' + (c.respondidas || 0) +
+    '; pendientes, ' + (c.pendientes || 0) +
+    '; procesos que no se van a usar, ' + (c.noUso || 0) +
+    '; solicitudes de revisión de estado, ' + (c.revision || 0) + '.';
+}
+
+function _htmlInformeJefatura_(filas, historial, conTorta, textos) {
+  var agrupado = _agruparInformeJefe_(filas);
+  var th = 'style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;"';
+  var td = 'style="border:1px solid #d9e2ec;padding:6px;"';
+  var encabezados = ['Articulador', 'Proyecto', '0 a 30', '31 a 60', '61 a 90', 'Mayor de 90'];
+  if (agrupado.mostrarSin) encabezados.push('Sin fecha');
+  var cabeza = encabezados.map(function(texto) {
+    return '<th ' + th + '>' + texto + '</th>';
+  }).join('');
+  var celdas = Object.keys(agrupado.grupos).sort().filter(function(clave) {
+    return _grupoInformeVisible_(agrupado.grupos[clave], agrupado.mostrarSin);
+  }).map(function(clave) {
+    var g = agrupado.grupos[clave];
+    var valores = [g.art, g.proy, g.d30, g.d60, g.d90, g.mas90];
+    if (agrupado.mostrarSin) valores.push(g.sin);
+    return '<tr>' + valores.map(function(valor, i) {
+      var contenido = i < 2 ? _escapeHtmlAlertaEmail(valor) : valor;
+      return '<td ' + td + '>' + contenido + '</td>';
+    }).join('') + '</tr>';
+  }).join('');
+  var torta = conTorta ? '<p><img src="cid:tortaVencimientos" alt="Días de vigencia de este envío"></p>' : '';
+  var intro = _parrafosInformeJefe_(filas, textos).map(function(parrafo) {
+    return '<p style="margin:0 0 8px;">' + _escapeHtmlAlertaEmail(parrafo) + '</p>';
+  }).join('');
+  return [
+    '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">',
+    '<h2 style="margin:0 0 8px;">Informe de jefe inmediato — alertas tempranas</h2>',
+    intro,
+    torta,
+    '<table style="border-collapse:collapse;font-size:13px;"><tr>' + cabeza + '</tr>',
+    celdas,
+    '</table>',
+    '<p>' + _escapeHtmlAlertaEmail(_estadoRespuestasInforme_(historial.conteo)) + '</p>',
+    '</div>'
+  ].join('');
+}
+
+function _xlsxInformeJefatura_(filas, historial, hoy) {
+  var libro = SpreadsheetApp.create('Informe_Jefe_Inmediato_Alertas_' + hoy + '_' + new Date().getTime());
+  try {
+    var detalle = libro.getSheets()[0];
+    detalle.setName('Detalle');
+    var encabezados = ['TIMESTAMP', 'NIVEL', 'RT', 'PROYECTO', 'ARTICULADOR', 'ARTICULADOR_EMAIL', 'GESTOR_EMAIL', 'FASE', 'REGLA', 'DIAS RESTANTES', 'FECHA_VENCIMIENTO', 'MENSAJE', 'ESTADO PREDIAL ACTUAL', 'OBSERVACIONES', 'ENLACE INFORME'];
+    var enlaces = {};
+    historial.filas.forEach(function(fila) {
+      if (!fila.enlace) return;
+      enlaces[String(fila.rt).trim().toUpperCase() + '||' + String(fila.regla).trim().toUpperCase()] = fila.enlace;
+    });
+    var cuerpo = (filas || []).map(function(row) {
+      var clave = String(row.RT || '').trim().toUpperCase() + '||' + String(row.REGLA || '').trim().toUpperCase();
+      return [
+        row.TIMESTAMP || '', row.NIVEL || '', row.RT || '', row.PROYECTO || '', row.ARTICULADOR || '',
+        row.ARTICULADOR_EMAIL || '', row.GESTOR_EMAIL || '', row.FASE || '', row.REGLA || '',
+        row['DIAS RESTANTES'] === undefined || row['DIAS RESTANTES'] === null ? '' : row['DIAS RESTANTES'],
+        _textoFechaAlerta_(row.FECHA_VENCIMIENTO), row.MENSAJE || '', row['ESTADO PREDIAL ACTUAL'] || '',
+        row.OBSERVACIONES || '', enlaces[clave] || ''
+      ];
+    });
+    var colEnlace = encabezados.indexOf('ENLACE INFORME');
+    detalle.getRange(1, 1, 1, encabezados.length).setValues([encabezados]).setFontWeight('bold');
+    if (cuerpo.length) {
+      detalle.getRange(2, 1, cuerpo.length, encabezados.length).setValues(cuerpo);
+      var formulas = cuerpo.map(function(fila) {
+        var url = String(fila[colEnlace] || '').replace(/"/g, '');
+        return [url ? '=HYPERLINK("' + url + '","Ver informe")' : ''];
+      });
+      detalle.getRange(2, colEnlace + 1, cuerpo.length, 1).setFormulas(formulas);
+    }
+    var totales = libro.insertSheet('Totales');
+    var c = historial.conteo;
+    var agrupado = _agruparInformeJefe_(filas);
+    var encabezadoTotales = ['Articulador', 'Proyecto', '0 a 30', '31 a 60', '61 a 90', 'Mayor de 90'];
+    if (agrupado.mostrarSin) encabezadoTotales.push('Sin fecha');
+    var bloques = [
+      ['Vigencia por articulador y proyecto'],
+      encabezadoTotales
+    ];
+    Object.keys(agrupado.grupos).sort().forEach(function(clave) {
+      var g = agrupado.grupos[clave];
+      if (!_grupoInformeVisible_(g, agrupado.mostrarSin)) return;
+      var filaGrupo = [g.art, g.proy, g.d30, g.d60, g.d90, g.mas90];
+      if (agrupado.mostrarSin) filaGrupo.push(g.sin);
+      bloques.push(filaGrupo);
+    });
+    bloques.push([]);
+    bloques.push(['Respuesta de las alertas de este envío. No cuenta el tablero completo.']);
+    bloques.push(['Alertas del envío', c.total, 'Respondidas', c.respondidas, 'Pendientes', c.pendientes, 'No uso', c.noUso]);
+    bloques.push(['Revisión de estado', c.revision]);
+    bloques.push(['RT', 'Regla', 'Persona', 'Estado', 'No uso', 'Revisión de estado', 'Enlace']);
+    var filaEnlace = bloques.length + 1;
+    historial.filas.forEach(function(fila) {
+      bloques.push([fila.rt, fila.regla, fila.persona, fila.estado, fila.noUso, fila.revision, fila.enlace]);
+    });
+    totales.getRange(1, 1, bloques.length, 8).setValues(bloques.map(function(fila) {
+      var copia = fila.slice();
+      while (copia.length < 8) copia.push('');
+      return copia;
+    }));
+    historial.filas.forEach(function(fila, i) {
+      var url = String(fila.enlace || '').replace(/"/g, '');
+      if (!url) return;
+      totales.getRange(filaEnlace + i, 7).setFormula('=HYPERLINK("' + url + '","Ver informe")');
+    });
+    var conteoTorta = _conteoVencimientos_(filas);
+    var datosTorta = [['Estado', 'Cantidad']];
+    [
+      ['0 a 30', conteoTorta.d30],
+      ['31 a 60', conteoTorta.d60],
+      ['61 a 90', conteoTorta.d90],
+      ['Mayor de 90', conteoTorta.mas90],
+      ['Sin fecha', conteoTorta.sin]
+    ].forEach(function(par) { if (par[1] > 0) datosTorta.push(par); });
+    if (datosTorta.length < 2) datosTorta.push(['Sin datos', 0]);
+    totales.getRange(1, 10, datosTorta.length, 2).setValues(datosTorta);
+    totales.insertChart(totales.newChart()
+      .setChartType(Charts.ChartType.PIE)
+      .addRange(totales.getRange(1, 10, datosTorta.length, 2))
+      .setPosition(1, 12, 0, 0)
+      .setOption('title', 'Días de vigencia de este envío')
+      .build());
+    SpreadsheetApp.flush();
+    var urlExport = 'https://www.googleapis.com/drive/v3/files/' + libro.getId() + '/export?mimeType=' + encodeURIComponent('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    var blob = UrlFetchApp.fetch(urlExport, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    var codigo = blob.getResponseCode();
+    if (codigo !== 200) throw new Error('No se pudo exportar el Excel de jefe inmediato (' + codigo + ').');
+    return blob.getBlob().setName('Informe_Jefe_Inmediato_Alertas_' + hoy + '.xlsx');
+  } finally {
+    try { DriveApp.getFileById(libro.getId()).setTrashed(true); } catch (e) {}
+  }
+}
+
+function _enviarInformeJefatura_(filas, jefeEmail, hoy, textos) {
+  var historial = _historialSeguimientoInforme_(filas);
+  var torta = null;
+  try { torta = _tortaVencimientos_(filas); } catch (e) { torta = null; }
+  var html = _htmlInformeJefatura_(filas, historial, !!torta, textos);
+  var adjunto = _xlsxInformeJefatura_(filas, historial, hoy);
+  var texto = _parrafosInformeJefe_(filas, textos).join('\n\n') + '\n\n' + _estadoRespuestasInforme_(historial.conteo);
+  var opts = { htmlBody: html, attachments: [adjunto] };
+  if (torta) opts.inlineImages = { tortaVencimientos: torta };
+  GmailApp.sendEmail(jefeEmail, _asuntoAlertas_(filas, hoy).replace('Alerta temprana - ', 'Informe de jefe inmediato - '), texto, opts);
+}
+
+function _anexarInformeJefatura_(mensaje, filas, jefeEmail, hoy, textos) {
+  if (!_esCorreoValidoAlertas(jefeEmail)) return mensaje + ' El informe de jefe inmediato no se envió.';
+  try {
+    _enviarInformeJefatura_(filas, jefeEmail, hoy, textos);
+    return mensaje + ' El informe de jefe inmediato se envió a ' + jefeEmail + '.';
+  } catch (e) {
+    return mensaje + ' El informe de jefe inmediato no se envió: ' + e.message;
+  }
+}
+
 function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
   try {
+    const denegado = _exigirAdminMotorReglas_('ENVIAR_REPORTE_ALERTAS');
+    if (denegado) return denegado;
     const config = (emailDestinoOrConfig && typeof emailDestinoOrConfig === 'object' && !Array.isArray(emailDestinoOrConfig))
       ? emailDestinoOrConfig
       : {
@@ -2065,11 +2839,14 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
         FASE: f[idx['FASE']] || '',
         REGLA: f[idx['REGLA']] || '',
         'DIAS RESTANTES': f[idx['DIAS RESTANTES']] || '',
+        FECHA_VENCIMIENTO: idx['FECHA_VENCIMIENTO'] === undefined ? '' : f[idx['FECHA_VENCIMIENTO']],
         MENSAJE: f[idx['MENSAJE']] || '',
         'ESTADO PREDIAL ACTUAL': f[idx['ESTADO PREDIAL ACTUAL']] || '',
         OBSERVACIONES: observacionesRT[rt] || ''
       };
     });
+    try { _completarFechasVencimiento_(filasObj); }
+    catch (fechaError) { console.warn('No se pudo calcular la fecha de vencimiento: ' + fechaError.message); }
 
     const modoEnvio = String(config.modoEnvio || 'EMAIL_UNICO').toUpperCase();
     const ccExtras = _normalizarListaCorreos(config.ccEmails || '').filter(_esCorreoValidoAlertas);
@@ -2077,6 +2854,28 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
     const correoRespaldo = String(config.correoRespaldo || '').trim().toLowerCase();
     const emailUnico = String(config.emailDestino || '').trim().toLowerCase();
     const hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    const remitenteReporte = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    const jefeEmail = String(config.jefeEmail || '').trim().toLowerCase();
+    const revisorNombre = String(config.revisorNombre || '').trim();
+    const revisorEmail = String(config.revisorEmail || '').trim().toLowerCase();
+    const mapaPolitica = mapaPoliticasSeguimiento_();
+    const textosIniciales = textosInicialesSeguimiento_();
+    const exigeJefe = filasObj.some(function(fila) {
+      const pol = politicaSeguimientoDeRegla_(fila.REGLA, fila.NIVEL, mapaPolitica);
+      return pol && pol.permitir_no_uso;
+    });
+    if (exigeJefe && !_esCorreoValidoAlertas(jefeEmail)) {
+      return { success: false, error: 'Indica el correo del jefe inmediato. Hay alertas que permiten declarar que un proceso no se va a usar.' };
+    }
+    const exigeObservacion = filasObj.some(function(fila) {
+      return !!politicaSeguimientoDeRegla_(fila.REGLA, fila.NIVEL, mapaPolitica);
+    });
+    if (exigeObservacion && !revisorNombre) {
+      return { success: false, error: 'Indica el nombre de quien revisa soportes y actualiza estados.' };
+    }
+    if (exigeObservacion && !_esCorreoValidoAlertas(revisorEmail)) {
+      return { success: false, error: 'Indica el correo de quien revisa soportes y actualiza estados.' };
+    }
 
     if (modoEnvio === 'GESTOR_Y_ARTICULADOR') {
       const grupos = {};
@@ -2114,22 +2913,37 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
         const etiquetaGestor = (key === '__GESTOR_SIN_ASIGNAR__') ? 'GESTOR SIN ASIGNAR' : key;
         const nombreBase = 'Reporte_Alertas_' + etiquetaGestor.replace(/[^\w.-]+/g, '_') + '_' + hoy;
         const attachment = _buildAlertasEmailAttachmentGrid(groupRows, nombreBase);
-        const htmlBody = _buildResumenHtmlAgrupado(groupRows, filtros, etiquetaGestor);
-
-        MailApp.sendEmail({
-          to: destinatario,
-          cc: ccStr,
-          subject: '📊 Alertas Tempranas - ' + etiquetaGestor + ' [' + hoy + ']',
-          htmlBody: htmlBody,
-          attachments: [attachment]
-        });
-
-        enviados.push({ to: destinatario, cc: ccList, gestor: etiquetaGestor, total: groupRows.length });
+        try {
+          const envio = despacharCorreoAlertas_({
+            to: destinatario,
+            ccStr: ccStr,
+            subject: _asuntoAlertas_(groupRows, hoy),
+            rows: groupRows,
+            filtros: filtros,
+            etiqueta: etiquetaGestor,
+            attachment: attachment,
+            remitente: remitenteReporte,
+            jefeEmail: jefeEmail,
+            revisorNombre: revisorNombre,
+            revisorEmail: revisorEmail,
+            textos: textosIniciales,
+            mapa: mapaPolitica
+          });
+          if (!envio || !envio.success) {
+            omitidos.push({ gestor: key, motivo: (envio && envio.error) || 'No se pudo enviar' });
+            return;
+          }
+          const aviso = envio.seguimiento && envio.seguimiento.ok === false ? ' Correo enviado, pero el seguimiento no quedó armado.' : '';
+          enviados.push({ to: destinatario, cc: ccList, gestor: etiquetaGestor, total: groupRows.length, aviso: aviso });
+        } catch (envioError) {
+          omitidos.push({ gestor: key, motivo: envioError.message });
+        }
       });
 
+      var mensajeGestor = 'Envíos por gestor completados: ' + enviados.length + '. Omitidos: ' + omitidos.length + '.' + (enviados.some(function(e) { return e.aviso; }) ? ' Revisa el seguimiento: algún correo salió sin dejar filas pendientes.' : '');
       return {
         success: enviados.length > 0,
-        message: 'Envíos por gestor completados: ' + enviados.length + '. Omitidos: ' + omitidos.length + '.',
+        message: enviados.length ? _anexarInformeJefatura_(mensajeGestor, filasObj, jefeEmail, hoy, textosIniciales) : mensajeGestor,
         enviados: enviados,
         omitidos: omitidos
       };
@@ -2141,20 +2955,28 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
 
     const fileNameBase = 'Reporte_Alertas_GP_' + hoy;
     const attachment = _buildAlertasEmailAttachmentGrid(filasObj, fileNameBase);
-    const htmlBody = _buildResumenHtmlAgrupado(filasObj, filtros, emailUnico);
     const ccStr = ccExtras.length ? ccExtras.join(',') : undefined;
-
-    MailApp.sendEmail({
+    const envio = despacharCorreoAlertas_({
       to: emailUnico,
-      cc: ccStr,
-      subject: '📊 Informe de Alertas Tempranas [' + hoy + ']',
-      htmlBody: htmlBody,
-      attachments: [attachment]
+      ccStr: ccStr,
+      subject: _asuntoAlertas_(filasObj, hoy),
+      rows: filasObj,
+      filtros: filtros,
+      etiqueta: emailUnico,
+      attachment: attachment,
+      remitente: remitenteReporte,
+      jefeEmail: jefeEmail,
+      revisorNombre: revisorNombre,
+      revisorEmail: revisorEmail,
+      textos: textosIniciales,
+      mapa: mapaPolitica
     });
+    if (!envio || !envio.success) return { success: false, error: (envio && envio.error) || 'No se pudo enviar' };
+    const aviso = envio.seguimiento && envio.seguimiento.ok === false ? ' El correo salió, pero el seguimiento no quedó armado.' : '';
 
     return {
       success: true,
-      message: 'Informe enviado exitosamente a ' + emailUnico + '.',
+      message: _anexarInformeJefatura_('Informe enviado exitosamente a ' + emailUnico + '.' + aviso, filasObj, jefeEmail, hoy, textosIniciales),
       totalAlertas: filasObj.length
     };
   } catch (e) {

@@ -27,7 +27,7 @@ const CONFIG = {
     STAGING: '', // ID de Dato 2 / Staging para validaciones y promoción manual
     LOGS: '', // ✅ FASE 5b: spreadsheet separado (BD_OPERACIONAL_PREDIOS) para logs de auditoría (registrarAccion/getUserLogs) — ID real en Script Property DATA_FILES_LOGS_ID
     USUARIOS: '', // ✅ SPRINT5-FASE-A: directorio de identidad/rol (EMAIL/ROL/NOMBRE/ACTIVO/COMPONENTE), spreadsheet separado — ver ARCHITECTURE_V4.md Sección 6.1 — ID real en Script Property DATA_FILES_USUARIOS_ID
-    LOGS_ASIGNACION: 'ID_SPREADSHEET_LOGS_ASIGNACION_AQUI' // ⚠️ SPRINT5-FASE-A: placeholder sin reemplazar — crear spreadsheet dedicado y pegar su ID aquí antes de operar en producción (registrarLogAsignacion() se autodeshabilita mientras esto siga así, ver auditoria.js:31 para el mismo patrón)
+    LOGS_ASIGNACION: '' // ✅ [2026-10-06] SEGURIDAD: ya NO se pega el ID aquí en texto plano (ver nota de seguridad [2026-08-19] arriba) — se resuelve en runtime desde la Script Property DATA_FILES_LOGS_ASIGNACION_ID (CONFIG_SENSITIVE_PROPERTY_MAP). Falta crear el spreadsheet dedicado y setear esa Script Property; hasta entonces registrarLogAsignacion() sigue autodeshabilitado.
   },
 
   // ✅ NUEVO: Compatibilidad con código que usa DATA_FILES_IDS
@@ -178,8 +178,9 @@ const CONFIG = {
   },
 
   // ✅ PERMISOS POR ROL — SPRINT5-FASE-A añade Articulador/Gestor
+  // ✅ SPRINT6-FASE-0: agregar ADMIN_SISTEMA, PAC_APROBAR para RBAC server-side
   PERMISOS_POR_ROL: {
-    'Administrador': ['LEER', 'EDITAR', 'ELIMINAR', 'PERMISOS', 'REPORTES'],
+    'Administrador': ['LEER', 'EDITAR', 'ELIMINAR', 'PERMISOS', 'REPORTES', 'ASIGNAR_EQUIPO', 'ADMIN_SISTEMA', 'PAC_APROBAR'],
     'Editor': ['LEER', 'EDITAR', 'REPORTES'],
     'Lector': ['LEER', 'REPORTES'],
     'Articulador': ['LEER', 'EDITAR', 'REPORTES', 'ASIGNAR_EQUIPO'], // alcance recortado a sus proyectos — aplicado en backend, no solo UI
@@ -251,6 +252,7 @@ const CONFIG_SENSITIVE_PROPERTY_MAP = {
   'DATA_FILES.LOGS': 'DATA_FILES_LOGS_ID',
   'DATA_FILES.USUARIOS': 'DATA_FILES_USUARIOS_ID',
   'DATA_FILES.PRINCIPAL': 'DATA_FILES_PRINCIPAL_ID',
+  'DATA_FILES.LOGS_ASIGNACION': 'DATA_FILES_LOGS_ASIGNACION_ID', // ✅ [2026-10-06]: cierra el mismo hueco de seguridad para LOGS_ASIGNACION (antes solo tenía placeholder en texto plano, ver nota en DATA_FILES)
   'MAESTRO_PERMISOS': 'MAESTRO_PERMISOS_ID'
 };
 
@@ -396,7 +398,7 @@ function getConfig(path, defaultValue = null) {
     if (path === 'DATA_FILES.PRINCIPAL' && (value === null || value === undefined || value === '')) {
       try {
         const activeId = SpreadsheetApp.getActiveSpreadsheet().getId();
-        console.log(`✅ DATA_FILES.PRINCIPAL no configurado, usando hoja activa: ${activeId}`);
+        console.log('✅ DATA_FILES.PRINCIPAL no configurado, usando hoja activa.'); // ✅ [2026-10-06] SEGURIDAD: ya no imprime el ID
         return activeId;
       } catch (err) {
         console.warn('⚠️ No se pudo obtener Spreadsheet activo para DATA_FILES.PRINCIPAL: ' + err.message);
@@ -520,7 +522,7 @@ function validateConfig() {
     }
     
     console.log('✅ Configuración válida');
-    console.log(`   DATA_FILES.PRINCIPAL: ${getConfig('DATA_FILES.PRINCIPAL')}`);
+    console.log(`   DATA_FILES.PRINCIPAL: configurado (${getConfig('DATA_FILES.PRINCIPAL') ? 'sí' : 'no'})`); // ✅ [2026-10-06] SEGURIDAD: ya no imprime el ID completo
     console.log(`   DATA_FILES_IDS: ${JSON.stringify(getConfig('DATA_FILES_IDS'))}`);
     
     return true;
@@ -568,7 +570,7 @@ function diagnosticarSistema() {
     }
     const ss = SpreadsheetApp.openById(fileId);
     console.log(`  Nombre: ${ss.getName()}`);
-    console.log(`  ID: ${ss.getId()}`);
+    console.log('  ID: configurado'); // ✅ [2026-10-06] SEGURIDAD: ya no imprime el ID completo
     
     // 5. Listar hojas
     console.log('\n📋 HOJAS DISPONIBLES:');
@@ -648,7 +650,7 @@ function getConfigInfo() {
       sheets: Object.keys(getConfig('SHEETS')),
       columns: Object.keys(getConfig('COLUMNS')),
       roles: Object.keys(getConfig('ROLES')),
-      dataFileId: getConfig('DATA_FILES.PRINCIPAL').substring(0, 15) + '...',
+      dataFileId: getConfig('DATA_FILES.PRINCIPAL') ? 'configurado' : 'no configurado', // ✅ [2026-10-06] SEGURIDAD: ya no devuelve ningún fragmento del ID
       isValid: validateConfig()
     };
   } catch (e) {

@@ -91,7 +91,7 @@
                     <div class="menu-item" onclick="showPage('alertas', this)">
                         <i class="fas fa-bell"></i>
                         <span>Alertas Tempranas</span>
-                        <span class="badge">3</span>
+                        <span class="badge" id="navBadgeAlertas">0</span>
                     </div>
                     <div class="menu-item" onclick="showPage('pac', this)">
                         <i class="fas fa-money-bill-trend-up"></i>
@@ -521,8 +521,11 @@
                         Bandeja de Alertas Tempranas
                     </h2>
                     <div class="page-actions">
-                        <button class="btn-primary-custom bg-danger border-0" onclick="ejecutarMotorManual()">
+                        <button class="btn-primary-custom bg-danger border-0 solo-admin-reglas" onclick="ejecutarMotorManual()">
                             <i class="fas fa-play"></i> Forzar Evaluación (Motor)
+                        </button>
+                        <button class="btn-secondary-custom solo-admin-reglas" onclick="abrirRetroalimentacionAlertas()">
+                            <i class="fas fa-comment-dots"></i> Retroalimentación
                         </button>
                         <button class="btn-success text-white fw-bold border-0" style="padding: 8px 16px; border-radius: 6px;" onclick="exportarAlertasExcel()">
                             <i class="fas fa-paper-plane"></i> Enviar Reporte
@@ -532,6 +535,7 @@
                         </button>
                     </div>
                 </div>
+                <div id="notaAlcanceBandeja" class="alert alert-info small d-none">El tablero muestra las alertas de tus RT. Esta bandeja muestra las de los proyectos que puedes ver.</div>
 
                 <div class="kpi-row" id="kpi-alertas-row">
                     <div class="kpi-card kpi-alerta active" id="kpi-card-rojo" style="border-left-color: #c0392b; cursor: pointer;" onclick="filtrarAlertasPorNivel('ROJO')">
@@ -883,20 +887,7 @@
                         <i class="fas fa-lock"></i>
                         Gestión de Permisos
                     </h2>
-                    <div class="page-actions">
-                        <button class="btn-primary-custom bg-danger border-0" onclick="ejecutarMotorManual()">
-                            <i class="fas fa-play"></i> Forzar Evaluación
-                        </button>
-                        <button class="btn-success text-white fw-bold border-0" style="padding: 8px 16px; border-radius: 6px;" onclick="exportarAlertasExcel()">
-                            <i class="fas fa-paper-plane"></i> Enviar Reporte
-                        </button>
-                        <button class="btn btn-dark text-white fw-bold border-0" style="padding: 8px 16px; border-radius: 6px;" onclick="programarReporte()">
-                            <i class="fas fa-clock"></i> Programar Envío
-                        </button>
-                        <button class="btn-secondary-custom" onclick="cargarAlertasWeb()">
-                            <i class="fas fa-sync"></i> Recargar
-                        </button>
-                    </div>
+                    <div class="page-actions"></div>
                 </div>
 
                 <div class="table-container">
@@ -935,9 +926,6 @@
                         <button class="btn-secondary-custom" onclick="cargarJSONenPantalla()">
                             <i class="fas fa-sync"></i> Recargar Motor
                         </button>
-                        <button class="btn-primary-custom" onclick="guardarJSONdesdePantalla()">
-                            <i class="fas fa-save"></i> Guardar Configuración
-                        </button>
                     </div>
                 </div>
 
@@ -957,7 +945,7 @@
                     </li>
                     <li class="nav-item" role="presentation">
                         <button class="nav-link fw-bold" id="fuentes-tab" data-bs-toggle="tab" data-bs-target="#visual-fuentes" type="button" style="color: #2c3e50;">
-                            <i class="fas fa-database"></i> Bases de Datos Conectadas
+                            <i class="fas fa-database"></i> Fuentes declaradas (no evaluadas)
                         </button>
                     </li>
                     <li class="nav-item" role="presentation">
@@ -972,7 +960,7 @@
                     <div class="tab-pane fade show active" id="visual-reglas" role="tabpanel">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <h5 class="fw-bold text-secondary m-0">Inventario de Reglas Operativas</h5>
-                            <button class="btn btn-sm btn-success fw-bold"><i class="fas fa-plus"></i> Nueva Regla</button>
+                            <button class="btn btn-sm btn-success fw-bold solo-admin-reglas" onclick="abrirConstructorRegla(null)"><i class="fas fa-plus"></i> Nueva Regla</button>
                         </div>
                         <div class="row" id="contenedorTarjetasReglas">
                             <div class="col-12 text-center p-5 text-muted">
@@ -993,7 +981,10 @@
                         <div class="card shadow-sm border-0">
                             <div class="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center">
                                 <span><i class="fas fa-terminal"></i> Código Fuente</span>
-                                <button class="btn btn-sm btn-outline-light py-0" onclick="formatearJSON()">Formatear Código</button>
+                                <span>
+                                    <button class="btn btn-sm btn-outline-light py-0" onclick="formatearJSON()">Formatear Código</button>
+                                    <button class="btn btn-sm btn-warning py-0 solo-admin-reglas" onclick="guardarJSONdesdePantalla()">Guardar JSON</button>
+                                </span>
                             </div>
                             <textarea id="editorJSONReglas" class="form-control border-0" 
                                       style="font-family: monospace; font-size: 13px; height: 450px; background-color: #1e1e1e; color: #d4d4d4; padding: 15px; resize: vertical;" 
@@ -1004,50 +995,59 @@
                 </div>
             </div>
 
-            <div class="modal fade" id="modalEditarReglaVis" tabindex="-1" data-bs-backdrop="static">
-                <div class="modal-dialog modal-lg">
+            <datalist id="dlColumnasDatos"></datalist>
+            <div class="modal fade" id="modalConstructorRegla" tabindex="-1" data-bs-backdrop="static">
+                <div class="modal-dialog modal-xl modal-dialog-scrollable">
                     <div class="modal-content">
                         <div class="modal-header bg-primary text-white">
-                            <h5 class="modal-title"><i class="fas fa-sliders-h"></i> Configurar Regla</h5>
+                            <h5 class="modal-title">Nueva regla</h5>
                             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                         </div>
-                        <div class="modal-body bg-light">
-                            <input type="hidden" id="editReglaIndex">
-                            <div class="row g-3">
-                                <div class="col-md-2">
-                                    <label class="form-label fw-bold small">ID Regla</label>
-                                    <input type="text" class="form-control form-control-sm" id="editReglaId" readonly disabled>
+                        <div class="modal-body" oninput="previsualizarReglaJSON()" onchange="previsualizarReglaJSON()">
+                            <div class="row g-2 mb-3">
+                                <div class="col-md-2"><label class="form-label small fw-bold">ID</label><input id="crId" class="form-control form-control-sm" readonly></div>
+                                <div class="col-md-5"><label class="form-label small fw-bold">Nombre *</label><input id="crNombre" class="form-control form-control-sm"></div>
+                                <div class="col-md-3"><label class="form-label small fw-bold">Fase</label><input id="crFase" class="form-control form-control-sm" list="dlFasesReglas"><datalist id="dlFasesReglas"></datalist></div>
+                                <div class="col-md-2 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="crActiva" checked><label class="form-check-label" for="crActiva">Activa</label></div></div>
+                                <div class="col-12"><label class="form-label small fw-bold">Descripción</label><textarea id="crDesc" class="form-control form-control-sm" rows="2"></textarea></div>
+                            </div>
+                            <div class="border rounded p-2 mb-3">
+                                <div class="d-flex justify-content-between"><strong>Condiciones</strong><select id="crOperadorLogico" class="form-select form-select-sm w-auto"><option value="AND">AND</option><option value="OR">OR</option></select></div>
+                                <div id="crCondiciones"></div>
+                                <button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick="agregarCriterio('crCondiciones')">Añadir criterio</button>
+                            </div>
+                            <div class="border rounded p-2 mb-3">
+                                <strong>Excepciones</strong>
+                                <div id="crExcepciones"></div>
+                                <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="agregarBloqueExcepcion()">Añadir bloque de excepción</button>
+                            </div>
+                            <div class="border rounded p-2 mb-3">
+                                <strong>Tipo de alerta</strong>
+                                <div class="form-check"><input class="form-check-input" type="radio" name="crTipo" id="crTipoTiempo" checked onchange="onCambioTipoAlerta()"><label for="crTipoTiempo">Por plazo</label></div>
+                                <div class="form-check"><input class="form-check-input" type="radio" name="crTipo" id="crTipoBloqueo" onchange="onCambioTipoAlerta()"><label for="crTipoBloqueo">Bloqueo directo</label></div>
+                                <div id="crPanelTiempo" class="mt-2">
+                                    <div class="row g-2">
+                                        <div class="col-md-4"><label class="small">Columna de fecha</label><input id="crFecha" class="form-control form-control-sm" list="dlColumnasDatos"></div>
+                                        <div class="col-md-4"><label class="small">Tipo de días</label><select id="crTipoDias" class="form-select form-select-sm"><option value="HABILES">Hábiles (festivos de Colombia si Calendar responde; si no, lun-vie)</option><option value="CALENDARIO">Calendario</option></select></div>
+                                        <div class="col-md-4"><label class="small">Días de vida útil</label><input id="crVida" type="number" min="1" class="form-control form-control-sm" value="30"></div>
+                                    </div>
+                                    <div class="small text-muted mt-1">{DIAS} se reemplaza por el número de días. El orden debe ser ROJO, luego NARANJA, luego AMARILLO, de menor a mayor.</div>
+                                    <div id="crUmbrales"></div>
                                 </div>
-                                <div class="col-md-8">
-                                    <label class="form-label fw-bold small">Nombre de la Regla</label>
-                                    <input type="text" class="form-control form-control-sm" id="editReglaNombre">
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label fw-bold small">Estado</label>
-                                    <select class="form-select form-select-sm" id="editReglaActiva">
-                                        <option value="true">🟢 Activa</option>
-                                        <option value="false">🔴 Inactiva</option>
-                                    </select>
-                                </div>
-                                <div class="col-12">
-                                    <label class="form-label fw-bold small">Fase del Proceso IDU</label>
-                                    <input type="text" class="form-control form-control-sm" id="editReglaFase">
-                                </div>
-                                <div class="col-12">
-                                    <label class="form-label fw-bold small">Descripción Normativa / Procedimental</label>
-                                    <textarea class="form-control form-control-sm" id="editReglaDesc" rows="3"></textarea>
+                                <div id="crPanelBloqueo" class="mt-2 d-none">
+                                    <div class="row g-2">
+                                        <div class="col-md-3"><label class="small">Nivel</label><select id="crBloqueoNivel" class="form-select form-select-sm"><option>ROJO</option><option>NARANJA</option><option>AMARILLO</option></select></div>
+                                        <div class="col-md-9"><label class="small">Mensaje</label><input id="crBloqueoMensaje" class="form-control form-control-sm"></div>
+                                    </div>
                                 </div>
                             </div>
-                            
-                            <div class="mt-4 p-3 bg-white border rounded" id="editReglaLogicaPreview">
-                                <h6 class="text-primary fw-bold border-bottom pb-2"><i class="fas fa-brain"></i> Lógica de Ejecución (Solo Lectura)</h6>
-                                <pre id="editReglaLogicaCode" style="font-size: 0.75rem; background: #f4f4f4; padding: 10px; border-radius: 5px;"></pre>
-                            </div>
-
+                            <div id="crCruce" class="alert alert-secondary d-none">Se conserva en el JSON; no se evalúa en esta versión.</div>
+                            <pre id="crPreview" class="small bg-light p-2 border"></pre>
+                            <div id="crErrores" class="text-danger small"></div>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                            <button type="button" class="btn btn-primary" onclick="guardarEdicionReglaVisual()">Aplicar Cambios</button>
+                            <button type="button" class="btn btn-primary solo-admin-reglas" onclick="guardarReglaDesdeConstructor()">Guardar regla</button>
                         </div>
                     </div>
                 </div>
@@ -1903,9 +1903,12 @@
          sin lógica compleja ni scriptlet ternario dentro de la plantilla -->
     <script>
       const CURRENT_USER_EMAIL = <?!= safeUserEmailJS ?>;
+      const SEGUIMIENTO_TOKEN = <?!= tokenJs ?>;
     </script>
     <?!= include('app_core_js') ?>
     <?!= include('app_alertas_js') ?>
+    <?!= include('app_reglas_editor_js') ?>
+    <?!= include('app_seguimiento_alertas_js') ?>
     <?!= include('app_permisos_js') ?>
     <?!= include('app_herramientas_js') ?>
     <?!= include('app_normalizacion_js') ?>
