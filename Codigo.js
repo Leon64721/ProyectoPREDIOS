@@ -2563,15 +2563,57 @@ function _grupoInformeVisible_(grupo, mostrarSin) {
   return n > 0;
 }
 
-function _htmlInformeJefatura_(filas, historial, conTorta) {
-  var reglas = {};
+function _reglasDelInforme_(filas) {
+  var vistos = {};
+  var lista = [];
+  (filas || []).forEach(function(row) {
+    var nombre = String(row.REGLA || '').trim();
+    var clave = nombre.toUpperCase();
+    if (!nombre || vistos[clave]) return;
+    vistos[clave] = true;
+    lista.push(nombre);
+  });
+  return lista;
+}
+
+function _textoReglaInformeJefe_(nombre, textos) {
+  var propio = String((textos || {})[String(nombre || '').trim().toUpperCase()] || '').trim();
+  if (propio) return propio;
+  if (/aval[uú]o/i.test(String(nombre || ''))) {
+    return 'Los predios de esta alerta no cuentan, a la fecha, con una oferta notificada. Por esa razón el avalúo aparece sin uso.';
+  }
+  return 'Los predios de este grupo corresponden a la regla «' + nombre + '», de acuerdo con la condición configurada en el tablero.';
+}
+
+function _parrafosInformeJefe_(filas, textos) {
+  var reglas = _reglasDelInforme_(filas);
   var niveles = {};
   (filas || []).forEach(function(row) {
-    var regla = String(row.REGLA || '').trim();
     var nivel = _etiquetaSemaforoAlerta_(row.NIVEL);
-    if (regla) reglas[regla] = true;
     if (nivel) niveles[nivel] = true;
   });
+  var parrafos = [
+    'Cordial saludo.',
+    'Se remite el informe consolidado de las alertas tempranas de este envío (' + (filas || []).length + ').',
+    'Tipo de alerta: ' + (reglas.join('; ') || 'Varias') + '. Niveles incluidos: ' + (Object.keys(niveles).join(', ') || 'Varios') + '.'
+  ];
+  reglas.forEach(function(nombre) {
+    parrafos.push(_textoReglaInformeJefe_(nombre, textos));
+  });
+  parrafos.push('Las observaciones que estas alertas exigen las registran los gestores responsables de cada predio. El término para presentarlas es de tres días hábiles, contados desde el día siguiente al envío. Si no se reciben en ese término, se informa al articulador. Si al séptimo día hábil continúan sin respuesta, se informa a quien remitió la alerta y al jefe inmediato.');
+  parrafos.push('El archivo adjunto relaciona cada predio, los días de vigencia y la fecha de vencimiento.');
+  return parrafos;
+}
+
+function _estadoRespuestasInforme_(conteo) {
+  var c = conteo || {};
+  return 'Estado de las respuestas de este envío: respondidas, ' + (c.respondidas || 0) +
+    '; pendientes, ' + (c.pendientes || 0) +
+    '; procesos que no se van a usar, ' + (c.noUso || 0) +
+    '; solicitudes de revisión de estado, ' + (c.revision || 0) + '.';
+}
+
+function _htmlInformeJefatura_(filas, historial, conTorta, textos) {
   var agrupado = _agruparInformeJefe_(filas);
   var th = 'style="border:1px solid #6b7f95;background:#1f3a5f;color:#fff;padding:6px;"';
   var td = 'style="border:1px solid #d9e2ec;padding:6px;"';
@@ -2591,19 +2633,19 @@ function _htmlInformeJefatura_(filas, historial, conTorta) {
       return '<td ' + td + '>' + contenido + '</td>';
     }).join('') + '</tr>';
   }).join('');
-  var c = historial.conteo;
   var torta = conTorta ? '<p><img src="cid:tortaVencimientos" alt="Días de vigencia de este envío"></p>' : '';
+  var intro = _parrafosInformeJefe_(filas, textos).map(function(parrafo) {
+    return '<p style="margin:0 0 8px;">' + _escapeHtmlAlertaEmail(parrafo) + '</p>';
+  }).join('');
   return [
     '<div style="font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">',
     '<h2 style="margin:0 0 8px;">Informe de jefe inmediato — alertas tempranas</h2>',
-    '<p>Este informe trae solo las alertas de este envío: ' + (filas || []).length + '. Regla: ' + _escapeHtmlAlertaEmail(Object.keys(reglas).join(', ') || 'Varias') + '. Nivel: ' + _escapeHtmlAlertaEmail(Object.keys(niveles).join(', ') || 'Varios') + '.</p>',
-    '<p>La fecha de vencimiento sale de la fecha de inicio de la regla en la matriz más su vida útil. En avalúo, si la regla no trae otra columna, es FECHA AVALUO más 365 días. Los días del tablero van junto a esa fecha en el Excel.</p>',
+    intro,
     torta,
     '<table style="border-collapse:collapse;font-size:13px;"><tr>' + cabeza + '</tr>',
     celdas,
     '</table>',
-    '<p>Respuesta de las alertas de este envío, no del tablero completo. Respondidas: ' + c.respondidas + '. Pendientes: ' + c.pendientes + '. Dijeron que no se va a usar: ' + c.noUso + '. Pidieron revisión de estado: ' + c.revision + '.</p>',
-    '<p>El Excel trae cada RT con los días del tablero, la fecha de vencimiento y el hipervínculo del informe técnico / jurídico.</p>',
+    '<p>' + _escapeHtmlAlertaEmail(_estadoRespuestasInforme_(historial.conteo)) + '</p>',
     '</div>'
   ].join('');
 }
@@ -2702,22 +2744,22 @@ function _xlsxInformeJefatura_(filas, historial, hoy) {
   }
 }
 
-function _enviarInformeJefatura_(filas, jefeEmail, hoy) {
+function _enviarInformeJefatura_(filas, jefeEmail, hoy, textos) {
   var historial = _historialSeguimientoInforme_(filas);
   var torta = null;
   try { torta = _tortaVencimientos_(filas); } catch (e) { torta = null; }
-  var html = _htmlInformeJefatura_(filas, historial, !!torta);
+  var html = _htmlInformeJefatura_(filas, historial, !!torta, textos);
   var adjunto = _xlsxInformeJefatura_(filas, historial, hoy);
-  var texto = 'Informe de jefe inmediato de las alertas de este envío. El detalle está en el Excel adjunto.';
+  var texto = _parrafosInformeJefe_(filas, textos).join('\n\n') + '\n\n' + _estadoRespuestasInforme_(historial.conteo);
   var opts = { htmlBody: html, attachments: [adjunto] };
   if (torta) opts.inlineImages = { tortaVencimientos: torta };
   GmailApp.sendEmail(jefeEmail, _asuntoAlertas_(filas, hoy).replace('Alerta temprana - ', 'Informe de jefe inmediato - '), texto, opts);
 }
 
-function _anexarInformeJefatura_(mensaje, filas, jefeEmail, hoy) {
+function _anexarInformeJefatura_(mensaje, filas, jefeEmail, hoy, textos) {
   if (!_esCorreoValidoAlertas(jefeEmail)) return mensaje + ' El informe de jefe inmediato no se envió.';
   try {
-    _enviarInformeJefatura_(filas, jefeEmail, hoy);
+    _enviarInformeJefatura_(filas, jefeEmail, hoy, textos);
     return mensaje + ' El informe de jefe inmediato se envió a ' + jefeEmail + '.';
   } catch (e) {
     return mensaje + ' El informe de jefe inmediato no se envió: ' + e.message;
@@ -2901,7 +2943,7 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
       var mensajeGestor = 'Envíos por gestor completados: ' + enviados.length + '. Omitidos: ' + omitidos.length + '.' + (enviados.some(function(e) { return e.aviso; }) ? ' Revisa el seguimiento: algún correo salió sin dejar filas pendientes.' : '');
       return {
         success: enviados.length > 0,
-        message: enviados.length ? _anexarInformeJefatura_(mensajeGestor, filasObj, jefeEmail, hoy) : mensajeGestor,
+        message: enviados.length ? _anexarInformeJefatura_(mensajeGestor, filasObj, jefeEmail, hoy, textosIniciales) : mensajeGestor,
         enviados: enviados,
         omitidos: omitidos
       };
@@ -2934,7 +2976,7 @@ function procesarReporteAlertas(emailDestinoOrConfig, filtrosLegacy) {
 
     return {
       success: true,
-      message: _anexarInformeJefatura_('Informe enviado exitosamente a ' + emailUnico + '.' + aviso, filasObj, jefeEmail, hoy),
+      message: _anexarInformeJefatura_('Informe enviado exitosamente a ' + emailUnico + '.' + aviso, filasObj, jefeEmail, hoy, textosIniciales),
       totalAlertas: filasObj.length
     };
   } catch (e) {

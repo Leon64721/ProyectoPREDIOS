@@ -3566,3 +3566,15 @@ El despliegue `AKfycbyGXZ0Dwnu2I_QoyXjVbW6DVST4BKlk0ZNVzjvDIH8iNJHQzd0PrbpfxzXgo
 **Validación:** 55 archivos `.js`, `.html` y `.json` bajados del script coinciden en hash con el proyecto local. El script ya tiene la frase de los tres días hábiles, `INFORME_ARTICULADOR_EN` y «siete días hábiles».
 
 **Auditoría:** Claude Code, sesión claude.ai, solo lectura, con `clasp pull` en una carpeta temporal fuera del repo. Veredicto: **APROBAR**. Local, GitHub y ese script coinciden. No abrió los otros scripts.
+
+## 72. Texto formal del informe al jefe inmediato [2026-10-26]
+
+**Agente:** Cursor. Plan: `PLAN_TEXTO_INFORME_JEFE.md`.
+
+**Qué se encontró:** la frase de los tres días hábiles sí está en el script, en el correo de alertas al gestor, y solo cuando ese envío exige observación y tiene enlace. El correo que se estaba leyendo es el informe al jefe inmediato. Ese texto no se había reescrito y seguía explicando la fecha de vencimiento con FECHA AVALUO más 365 días.
+
+**Funciones:** `Codigo.js`, `_parrafosInformeJefe_`, `_textoReglaInformeJefe_`, `_htmlInformeJefatura_` y `_enviarInformeJefatura_`. El informe saluda, remite el consolidado, nombra el tipo de alerta y pone un párrafo por regla. Si la regla tiene texto inicial, usa ese. Si el nombre habla de avalúo y no hay texto propio, dice que no hay oferta notificada y el avalúo aparece sin uso. El término de tres y siete días hábiles queda en ese correo. La tabla, la gráfica y el Excel siguen igual.
+
+**Validación:** `node --check` en `Codigo.js`.
+
+**Auditoría:** Claude Code leyó el plan y pidió no limitar el término a las alertas críticas, porque la observación se exige por nivel. La ejecución usa «las alertas que exigen observación». Sobre el diff respondió **APROBAR**.
